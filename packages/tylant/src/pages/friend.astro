@@ -1,0 +1,35 @@
+---
+import BaseHead from "virtual:tylant/components/minimal/BaseHead";
+import Footer from "virtual:tylant/components/minimal/Footer";
+import Header from "virtual:tylant/components/minimal/Header";
+
+import { kFriendLinks } from "$consts";
+---
+
+<html lang="en">
+  <head>
+    <BaseHead title="Friend Link" description="Friend Link of Myriad Dreamin" />
+    <style></style>
+  </head>
+  <body>
+    <Header />
+    <main>
+      <h1 style="text-align: center;">Friend Links</h1>
+      <section>
+        <ul>
+          {
+            kFriendLinks.map((link) => (
+              <li>
+                <a href={link.url} target="_blank">
+                  {link.name}
+                </a>
+                <p>{link.desc}</p>
+              </li>
+            ))
+          }
+        </ul>
+      </section>
+    </main>
+    <Footer />
+  </body>
+</html>

@@ -1,0 +1,14 @@
+---
+import MinimalBlogPost from "virtual:tylant/layouts/minimal/BlogPost";
+import { Props as MinimalBlogPostProps } from "virtual:tylant/layouts/minimal/BlogPost";
+// todo: inject data
+import { kArticleStats, kCommentInfo } from "$consts";
+
+type Props = MinimalBlogPostProps;
+---
+
+<MinimalBlogPost
+  kArticleStats={kArticleStats}
+  kCommentInfo={kCommentInfo}
+  {...Astro.props}
+/>

@@ -1,0 +1,119 @@
+---
+import { BaseHead, Footer, Header } from "$components";
+import {
+  kSiteTitle,
+  kSiteIndexTitle,
+  kSiteDescription,
+  kUrlBase,
+  kBaiduVeriCode,
+} from "$consts";
+// @ts-ignore
+import AboutContent from "../../content/other/about.typ?html&body";
+
+import "$styles/IndexPostList.css";
+import { publishedBlogPosts } from "$content";
+
+const lastPost = publishedBlogPosts[0];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <BaseHead title={kSiteTitle} description={kSiteDescription} />
+    <!-- Baidu -->
+    {
+      kBaiduVeriCode && (
+        <meta name="baidu-site-verification" content={kBaiduVeriCode} />
+      )
+    }
+    <style>
+      @media (max-width: 600px) {
+        .posts .heading {
+          display: flex;
+          flex-direction: column;
+        }
+      }
+      .monthly li {
+        font-style: italic;
+      }
+      main {
+        margin-top: 1em;
+        min-height: calc(92vh - 6em);
+      }
+      h1 {
+        font-size: 3.5rem;
+        margin-block-end: 0.5em;
+      }
+      @media (max-width: 767px) {
+        h1 {
+          font-size: 0;
+        }
+      }
+
+      .nav {
+        display: flex;
+        flex-direction: column;
+        list-style: none;
+        gap: 1em;
+        padding: 0;
+        margin: 0;
+        margin-top: 1.5em;
+      }
+      .nav li {
+        padding: 0.2em 1em;
+        display: flex;
+        flex-direction: column;
+        border-left: 2.5px solid var(--main-color);
+      }
+      .nav li > :nth-child(1) {
+        flex: 0 auto;
+      }
+      @media (min-width: 550px) {
+        .nav li {
+          flex-direction: row;
+          justify-content: space-between;
+        }
+        .nav li > :nth-child(1) {
+          flex: 0 0 7em;
+        }
+        .nav li > :nth-child(2) {
+          flex-grow: 1;
+          min-width: 0;
+          overflow: hidden;
+          line-height: 1.7em;
+          max-height: 1.7em;
+          text-align: left;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <Header breadcrumbs="" isHome={true} />
+    <main>
+      <section aria-label="Prelude">
+        <h1 set:html={kSiteIndexTitle} />
+        <AboutContent />
+      </section>
+
+      <section>
+        <ul class="nav">
+          <li>
+            <a href=`${kUrlBase}/article/`>Posts</a>
+            {
+              lastPost && (
+                <a
+                  class="nav-desc"
+                  href={`${kUrlBase}/article/${lastPost.id}`}
+                  title={lastPost.data.title}
+                >
+                  {lastPost.data.title}
+                </a>
+              )
+            }
+          </li>
+        </ul>
+      </section>
+    </main>
+    <Footer isHome={true} />
+  </body>
+</html>

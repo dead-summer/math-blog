@@ -1,0 +1,131 @@
+---
+import ThemeToggle from "virtual:tylant/components/ThemeToggle";
+import { kUrlBase, kSiteLogo, kSiteSourceUrl } from "$consts";
+
+import sunFlower from "../../assets/sun-flower.svg?raw";
+
+interface Props {
+  breadcrumbs: string;
+  isHome?: true;
+}
+
+const { breadcrumbs, isHome } = Astro.props;
+
+const links: Record<string, string> = {
+  Posts: `${kUrlBase}/article/`,
+  About: `${kUrlBase}/about/`,
+};
+---
+
+<style is:global>
+  .emph-dot {
+    color: var(--accent);
+  }
+  .theme-icon-circle {
+    transition: all 0.3s linear;
+  }
+  .theme-icon-petal {
+    transition: all 0.3s ease-in-out;
+  }
+
+  .dark path.theme-icon-petal {
+    d: path(
+      "M256 22h-3a193 193 0 0 1-41-6c-15-2-29-1-42 6-13 6-24 27-34 64s3 62 38 76l82 2m0-142h3a193 193 0 0 0 41-6c15-2 29-1 42 6 13 6 24 28 32 67l-48 78-70-3Zm223 162-1-3a193 193 0 0 1-8-40c-2-16-8-29-18-39-9-11-33-15-72-13-38 3-58 22-60 60l23 79m136-44 1 2a193 193 0 0 0 17 37c8 14 10 28 9 42-2 15-20 32-55 52l-88-22-20-67Zm-85 262 2-2a193 193 0 0 1 36-20c14-7 25-16 31-29 7-12 4-37-10-72-14-36-39-49-75-39l-68 46m84 116-2 1a193 193 0 0 0-30 28 69 69 0 0 1-38 21c-14 3-36-9-65-36l-7-91 58-39Zm-276 0 2 1a193 193 0 0 1 30 28c11 12 24 19 38 21 14 3 36-8 65-32 30-24 34-52 14-84l-65-50m-84 116-2-2a193 193 0 0 0-36-20c-14-7-25-16-31-29-7-12-3-37 13-73l85-35 55 43ZM33 184l-1 2a193 193 0 0 1-17 37c-8 14-10 28-9 42 2 15 19 32 51 53 33 20 61 16 84-13l28-77M33 184l1-3a193 193 0 0 0 8-40c2-16 8-29 18-39 9-11 34-14 74-10l59 70-24 66Z"
+    );
+  }
+
+  .dark path.theme-icon-circle {
+    d: path(
+      "M256 318 a 64 64 0 1 0 0 -128 a 64 64 0 1 0 0 128 z M 256 256 a 0 0 0 1 1 0 0 a 0 0 0 1 1 0 0 z"
+    );
+  }
+  .logo {
+    font-weight: 700;
+    font-style: italic;
+    display: flex;
+  }
+  .spaceless {
+    display: flex;
+  }
+</style>
+<header>
+  <nav>
+    <h2 class="logo spaceless">
+      <a href={`${kUrlBase}/`}>{kSiteLogo.trim()}</a>
+      {
+        breadcrumbs && (
+          <>
+            <span>&nbsp;/&nbsp;</span>
+            {<a href={links[breadcrumbs]}>{breadcrumbs}</a>}
+          </>
+        )
+      }
+    </h2>
+    <div class="social-links">
+      <span style="width: 2em;" aria-hidden="true">&nbsp;</span>
+      <ThemeToggle icon={sunFlower} />
+      {
+        kSiteSourceUrl && (
+          <a
+            href={kSiteSourceUrl}
+            class="icon ls-icon"
+            target="_blank"
+            title="Go to repository"
+          >
+            <span class="sr-only">Go to repository</span>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+          </a>
+        )
+      }
+    </div>
+  </nav>
+</header>
+<style>
+  .icon svg {
+    width: 32px;
+    height: 32px;
+    overflow: visible;
+  }
+  .icon svg path,
+  .icon svg circle {
+    fill: currentColor;
+  }
+  header {
+    margin: 0;
+    padding: 0 1em;
+    background: var(--nav-bg-color);
+    box-shadow: 0 2px 8px rgba(var(--black), 5%);
+  }
+  h2 {
+    margin: 0;
+    font-size: 1em;
+  }
+
+  h2 a,
+  h2 a.active {
+    text-decoration: none;
+  }
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    max-width: min(56rem, calc(100% - 2em));
+    margin: auto;
+    padding: 1em 0;
+  }
+  nav a {
+    text-decoration: underline 1.5px solid var(--accent);
+  }
+  .logo a:hover {
+    color: var(--accent);
+  }
+  nav .icon {
+    padding: 0 0.5em;
+  }
+  .social-links,
+  .social-links a {
+    display: flex;
+  }
+</style>

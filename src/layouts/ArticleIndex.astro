@@ -1,0 +1,108 @@
+---
+import { getCollection } from "astro:content";
+
+import TagList from "virtual:tylant/components/TagList";
+import Search from "virtual:tylant/components/Search";
+
+import { BaseHead, Footer, FormattedDate, Header, Prelude } from "$components";
+import { kUrlBase, kSiteTitle, kSiteDescription, kEnableSearch } from "$consts";
+
+import "$styles/IndexPostList.css";
+import { postLastModified, publishedBlogPosts } from "$content";
+
+const postModified = new Map<string, Date>(
+  (
+    await Promise.all(
+      publishedBlogPosts.map(
+        async (post) =>
+          [post.id, (await postLastModified(post.id))?.date as Date] as const
+      )
+    )
+  ).filter(([, date]) => date)
+);
+
+const posts = publishedBlogPosts.map((post) => {
+  return {
+    id: post.id,
+    data: {
+      ...post.data,
+      modifiedDate: postModified.get(post.id),
+    },
+  };
+});
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <BaseHead
+      title={kSiteTitle}
+      description={kSiteDescription}
+    />
+    <style>
+      .posts.loading {
+        display: none;
+      }
+      main.search-enabled {
+        padding-top: 0;
+      }
+      /*  */
+      @media (max-width: 600px) {
+        .heading {
+          display: flex;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <Header breadcrumbs="Posts" />
+    <Prelude />
+    {kEnableSearch && <Search />}
+    <main class={kEnableSearch ? "search-enabled" : ""}>
+      <section>
+        <ul class={`accent block-list posts${kEnableSearch ? " loading" : ""}`}>
+          {
+            posts.map((post) => (
+              <li
+                data-article-id={post.id}
+                data-article-meta={JSON.stringify(post.data)}
+              >
+                <a
+                  class="heading"
+                  href={`${kUrlBase}/article/${post.id}/`}
+                >
+                  <h2>
+                    <span class="title">{post.data.title}</span>
+                  </h2>
+                  <span class="date">
+                    <FormattedDate date={post.data.date} />
+                  </span>
+                  {post.data.modifiedDate && (
+                    <span class="date last-updated-on">
+                      &nbsp;&#x270e;
+                      <FormattedDate date={post.data.modifiedDate} />
+                    </span>
+                  )}
+                </a>
+                {post.data.tags && (
+                  <TagList
+                    baseUrl={`${kUrlBase}/article`}
+                    tags={post.data.tags}
+                  />
+                )}
+                {post.data.description || ""}
+              </li>
+            ))
+          }
+        </ul>
+        <script is:inline>
+          if (!window.location.search) {
+            document.querySelector(".posts").classList.remove("loading");
+          }
+        </script>
+      </section>
+    </main>
+    <Footer />
+  </body>
+</html>

@@ -1,0 +1,42 @@
+{
+  "name": "@myriaddreamin/tylant",
+  "description": "Create astro blog",
+  "version": "0.0.5",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./src/components/TagList.astro": "./src/components/TagList.astro",
+    "./src/components/PostClick.astro": "./src/components/PostClick.astro",
+    "./src/components/LikeReaction.astro": "./src/components/LikeReaction.astro",
+    "./src/components/Search.astro": "./src/components/Search.astro",
+    "./src/components/CommentList.astro": "./src/components/CommentList.astro",
+    "./src/components/RecentComment.astro": "./src/components/RecentComment.astro",
+    "./src/components/ThemeProvider.astro": "./src/components/ThemeProvider.astro",
+    "./src/components/ThemeToggle.astro": "./src/components/ThemeToggle.astro",
+    "./src/components/ArchiveList.astro": "./src/components/ArchiveList.astro",
+    "./src/components/ArchiveButton.astro": "./src/components/ArchiveButton.astro",
+    "./src/components/ArchiveRef.astro": "./src/components/ArchiveRef.astro",
+    "./src/components/minimal/BaseHead.astro": "./src/components/minimal/BaseHead.astro",
+    "./src/components/minimal/Footer.astro": "./src/components/minimal/Footer.astro",
+    "./src/components/minimal/FormattedDate.astro": "./src/components/minimal/FormattedDate.astro",
+    "./src/components/minimal/Header.astro": "./src/components/minimal/Header.astro",
+    "./src/layouts/minimal/BlogPost.astro": "./src/layouts/minimal/BlogPost.astro"
+  },
+  "files": [
+    "src",
+    "index.ts"
+  ],
+  "keywords": [
+    "astro-component"
+  ],
+  "scripts": {},
+  "dependencies": {
+    "bcp-47": "^2.1.0"
+  },
+  "devDependencies": {
+    "astro": "^5.8.0"
+  },
+  "peerDependencies": {
+    "astro": "^4.0.0 || ^5.0.0"
+  }
+}
