@@ -4,16 +4,11 @@
 #import templates: *
 #import "mod.typ": *
 #import "theme.typ": *
-
+#import "math-macros.typ": *
 #import "@preview/tablem:0.3.0": tablem, three-line-table
-
-// Settings
-// todo: load from env or config?
-#let use-mathyml = true
-
-#import "../packages/mathyml.typ": prelude
-#import "empty.typ" as _empty
-#import if use-mathyml { prelude } else { _empty }: *
+#import "@preview/theorion:0.4.0": *
+#import cosmos.fancy: *
+#import "@preview/numbly:0.1.0": numbly
 
 // Metadata
 #let is-html-target = is-html-target()
@@ -23,7 +18,6 @@
 #let sys-is-html-target = ("target" in dictionary(std))
 
 #let default-kind = "post"
-// #let default-kind = "monthly"
 
 #let build-kind = sys.inputs.at("build-kind", default: default-kind)
 
@@ -70,6 +64,22 @@
   set text(main-size) if sys-is-html-target
   set text(fill: rgb("dfdfd6")) if is-dark-theme and sys-is-html-target
   show link: set text(fill: dash-color)
+  // 将引用转换为 HTML 超链接
+  show ref: it => context if sys-is-html-target {
+    let target-label = it.target
+    let label-id = "label-" + str(make-unique-label(
+      str(target-label),
+      disambiguator: label-disambiguator.at(it.location()).at(str(target-label), default: 0) + 1,
+    ))
+    html.elem(
+      "a",
+      attrs: ("href": "#" + label-id, "class": "ref-link"),
+      { set text(fill: dash-color); it }
+    )
+  } else {
+    set text(fill: dash-color)
+    it
+  }
 
   show heading: it => {
     set text(size: heading-sizes.at(it.level))
@@ -87,6 +97,7 @@
       },
     )
   }
+  set heading(numbering: numbly("{1:1}", default: "1.1"))
 
   body
 }
@@ -94,13 +105,35 @@
 #let equation-rules(body) = {
   show math.equation: set text(weight: 400)
   show math.equation.where(block: true): it => context if shiroa-sys-target() == "html" {
-    theme-frame(
+    // 为带标签的方程式生成 HTML id，使引用可以链接到此处
+    let label-id = if it.has("label") {
+      let lbl = it.label
+      "label-" + str(make-unique-label(
+        str(lbl),
+        disambiguator: label-disambiguator.at(it.location()).at(str(lbl), default: 0) + 1,
+      ))
+    } else { none }
+
+    // theme-frame 会渲染 dark/light 两个版本，id 必须放在外层避免重复
+    let content = theme-frame(
       tag: "div",
       theme => {
         set text(fill: theme.main-color)
-        p-frame(attrs: ("class": "block-equation", "role": "math"), it)
+        p-frame(
+          attrs: (
+            "class": "block-equation",
+            "role": "math",
+          ),
+          it,
+        )
       },
     )
+
+    if label-id != none {
+      html.elem("div", content, attrs: ("id": label-id, "data-typst-label": label-id))
+    } else {
+      content
+    }
   } else {
     it
   }
@@ -115,18 +148,19 @@
   } else {
     it
   }
-  body
-}
 
-// https://codeberg.org/akida/mathyml
-#let mathyml-equation-rules(body) = {
-  import "../packages/mathyml.typ": try-to-mathml
-
-  // math rules
-  show math.equation: set text(weight: 500)
-  // show math.equation: to-mathml
-  show math.equation: try-to-mathml
-
+  set math.equation(numbering: "(1)")
+  // 有 label 时才编号
+  show math.equation.where(block: true): it => {
+    if not it.has("label") {
+      let fields = it.fields()
+      let _ = fields.remove("body")
+      fields.numbering = none
+      [#counter(math.equation).update(v => v - 1)#math.equation(..fields, it.body)<math-equation-without-label>]
+    } else {
+      it
+    }
+  }
 
   body
 }
@@ -229,13 +263,9 @@
   body
 }
 
-#let default-archive-creator = (indices, body) => {
-  indices.map(fname => include "/content/article/" + fname + ".typ").join(pagebreak(weak: true))
-}
-
-/// sub-chapters is only used in monthly (archive) build.
 #let shared-template(
   title: "Untitled",
+  author: "Unknown",
   desc: [This is a blog post.],
   date: "2024-08-15",
   tags: (),
@@ -243,8 +273,6 @@
   lang: none,
   region: none,
   show-outline: true,
-  archive-indices: (),
-  archive-creator: default-archive-creator,
   body,
 ) = {
   let is-same-kind = build-kind == kind
@@ -252,7 +280,7 @@
   show: it => if is-same-kind {
     // set basic document metadata
     set document(
-      author: ("Myriad-Dreamin",),
+      author: (author,),
       ..if not is-web-target { (title: title) },
     )
 
@@ -262,7 +290,7 @@
       region: region,
     )
     // math setting
-    show: if use-mathyml { mathyml-equation-rules } else { equation-rules }
+    show: equation-rules
     // code block setting
     show: code-block-rules
     // visualization setting
@@ -286,74 +314,15 @@
     it
   }
 
-  show: it => if build-kind == "monthly" and is-same-kind {
-    set page(numbering: "i")
-    set heading(numbering: "1.1")
-    it
-  } else if build-kind == "monthly" and kind == "post" {
-    set page(
-      numbering: "1",
-      header: context align(
-        if calc.even(here().page()) { right } else { left },
-        emph[
-          #date -- #title
-        ],
-      ),
-    ) if not sys-is-html-target
-    set heading(offset: 1) if not sys-is-html-target // globally increase offset
-    it
-  } else {
-    it
-  }
-
-  if is-same-kind and kind == "monthly" {
-    align(
-      center,
-      {
-        text(12pt, date)
-        linebreak()
-        strong(text(26pt, title))
-        linebreak()
-        text(16pt, desc)
-      },
-    )
-    v(16pt)
-
-    outline()
-    pagebreak()
-  }
-
-  if build-kind == "monthly" and kind == "post" {
-    show heading: set block(above: 0.2em, below: 0em)
-    show heading: set text(size: 26pt)
-    align(
-      center,
-      {
-        text(12pt, date)
-        linebreak()
-        heading(numbering: none, title)
-        counter(heading).step()
-        linebreak()
-        text(16pt, desc)
-      },
-    )
-    v(16pt)
-  }
-
-
-  // todo monthly hack
-  if kind == "monthly" or is-same-kind [
+  if is-same-kind [
     #metadata((
       title: plain-text(title),
-      author: "Myriad-Dreamin",
+      author: plain-text(author),
       description: plain-text(desc),
       date: date,
       tags: tags,
       lang: lang,
       region: region,
-      ..if kind == "monthly" {
-        (indices: archive-indices)
-      },
     )) <frontmatter>
   ]
 
@@ -384,11 +353,7 @@
     html.elem("hr")
   }
 
-  if kind == "monthly" {
-    archive-creator(archive-indices, body)
-  } else {
-    body
-  }
+  body
 
   context if is-same-kind and sys-is-html-target {
     query(footnote)
