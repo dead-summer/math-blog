@@ -4,8 +4,6 @@
   License MIT: https://github.com/HermanMartinus/bearblog/blob/master/LICENSE.md
  */
 
-@import "../../typ/packages/mathyml/src/mathyml.css";
-
 :root {
   --main-color: #000;
   --main-hover-color: #222939;

@@ -2,6 +2,3 @@
 	path = packages/zebraw
 	url = https://github.com/Myriad-Dreamin/typst-zebraw/
 	branch = better-html
-[submodule "packages/mathyml"]
-	path = packages/mathyml
-	url = https://codeberg.org/akida/mathyml
