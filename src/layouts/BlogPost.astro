@@ -60,11 +60,113 @@ const modifiedTime = id && (await postLastModified(id));
         padding: 1em 0;
         line-height: 1;
       }
-      .outline {
-        margin-top: -2em;
+      /* ===== Outline Container ===== */
+      .outline-container {
+        text-align: left;
       }
-      .outline + hr {
-        margin-bottom: 1em;
+
+      /* ===== Toggle Button ===== */
+      .outline-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.5em;
+        width: 100%;
+        padding: 0.75em 1em;
+        background: transparent;
+        border: none;
+        color: var(--main-color);
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s;
+      }
+
+      .outline-toggle:hover {
+        background: var(--raw-bg-color);
+      }
+
+      /* Arrow indicator */
+      .outline-toggle::after {
+        content: '';
+        display: inline-block;
+        width: 0.5em;
+        height: 0.5em;
+        border-right: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+        transform: rotate(45deg);
+        transition: transform 0.2s;
+        margin-left: auto;
+      }
+
+      .outline-toggle[aria-expanded="true"]::after {
+        transform: rotate(-135deg);
+      }
+
+      /* ===== Outline Content ===== */
+      .outline {
+        overflow: hidden;
+        transition: max-height 0.3s ease, opacity 0.3s ease;
+      }
+
+      /* Collapsed state */
+      .outline-container:not(.expanded) .outline {
+        max-height: 0;
+        opacity: 0;
+      }
+
+      .outline-container.expanded .outline {
+        max-height: 80vh;
+        opacity: 1;
+      }
+
+      /* ===== Wide Screen Layout (≥1200px) ===== */
+      @media (min-width: 1200px) {
+        .outline-container {
+          position: fixed;
+          right: max(1rem, calc((100vw - 56rem) / 2 - 260px));
+          top: 6rem;
+          width: 220px;
+          max-height: calc(100vh - 8rem);
+          overflow-y: auto;
+          border-left: 1px solid var(--raw-bg-color);
+          padding-left: 1rem;
+          background: var(--main-bg-color);
+        }
+
+        /* Wide screen default expanded */
+        .outline-container .outline {
+          max-height: none;
+          opacity: 1;
+        }
+
+        .outline-toggle::after {
+          display: none;
+        }
+      }
+
+      /* ===== Narrow Screen Layout (<1200px) ===== */
+      @media (max-width: 1199px) {
+        .outline-container {
+          position: sticky;
+          top: 0;
+          z-index: 100;
+          background: var(--main-bg-color);
+          border-bottom: 1px solid var(--raw-bg-color);
+          margin-left: calc(-50vw + 50%);
+          margin-right: calc(-50vw + 50%);
+          margin-bottom: 1em;
+          padding: 0;
+          width: 100vw;
+        }
+
+        .outline {
+          padding: 0 1em 1em 1em;
+          background: var(--main-bg-color);
+        }
+
+        .outline-container:not(.expanded) {
+          border-bottom: none;
+        }
       }
       .title h1 {
         margin: 0 0 0.5em 0;
@@ -93,27 +195,38 @@ const modifiedTime = id && (await postLastModified(id));
       .tags a:hover {
         text-decoration: underline;
       }
-      .outline {
-        text-align: left;
-      }
 
+      /* ===== Outline Item Styles ===== */
       .outline-item {
-        line-height: 1.8889;
+        line-height: 1.6;
+        padding: 0.25em 0;
+      }
+      .outline-item a {
+        color: var(--accent);
+        text-decoration: underline;
+      }
+      .outline-item a:hover {
+        color: var(--accent-dark);
+        text-decoration: underline solid 2px;
       }
       .outline-item.x-heading-1 {
-        margin-left: 0em;
+        margin-left: 0;
+        font-weight: 600;
       }
       .outline-item.x-heading-2 {
-        margin-left: 1em;
+        margin-left: 0.75em;
       }
       .outline-item.x-heading-3 {
-        margin-left: 2em;
+        margin-left: 1.5em;
+        font-size: 0.9em;
       }
       .outline-item.x-heading-4 {
-        margin-left: 3em;
+        margin-left: 2.25em;
+        font-size: 0.85em;
       }
       .outline-item.x-heading-5 {
-        margin-left: 4em;
+        margin-left: 3em;
+        font-size: 0.85em;
       }
     </style>
   </head>
@@ -171,5 +284,45 @@ const modifiedTime = id && (await postLastModified(id));
       }
     </main>
     <Footer />
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const container = document.querySelector('.outline-container') as HTMLElement | null;
+        const toggle = document.querySelector('.outline-toggle') as HTMLButtonElement | null;
+
+        if (!container || !toggle) return;
+
+        // Wide screen default expanded
+        const mediaQuery = window.matchMedia('(min-width: 1200px)');
+
+        function updateExpanded() {
+          if (mediaQuery.matches) {
+            container!.classList.add('expanded');
+            toggle!.setAttribute('aria-expanded', 'true');
+          } else {
+            container!.classList.remove('expanded');
+            toggle!.setAttribute('aria-expanded', 'false');
+          }
+        }
+
+        updateExpanded();
+        mediaQuery.addEventListener('change', updateExpanded);
+
+        // Click to toggle
+        toggle.addEventListener('click', () => {
+          const expanded = container!.classList.toggle('expanded');
+          toggle!.setAttribute('aria-expanded', String(expanded));
+        });
+
+        // Close after clicking outline item (narrow screen only)
+        container.querySelectorAll('.outline-item a').forEach(link => {
+          link.addEventListener('click', () => {
+            if (!mediaQuery.matches) {
+              container!.classList.remove('expanded');
+              toggle!.setAttribute('aria-expanded', 'false');
+            }
+          });
+        });
+      });
+    </script>
   </body>
 </html>

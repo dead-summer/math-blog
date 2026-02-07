@@ -1,6 +1,6 @@
 
 #import "../packages/zebraw.typ": *
-#import "@preview/shiroa:0.2.3": is-web-target, is-pdf-target, plain-text, is-html-target, templates
+#import "@preview/shiroa:0.2.3": is-html-target, is-pdf-target, is-web-target, plain-text, templates
 #import templates: *
 #import "mod.typ": *
 #import "theme.typ": *
@@ -67,14 +67,20 @@
   // 将引用转换为 HTML 超链接
   show ref: it => context if sys-is-html-target {
     let target-label = it.target
-    let label-id = "label-" + str(make-unique-label(
-      str(target-label),
-      disambiguator: label-disambiguator.at(it.location()).at(str(target-label), default: 0) + 1,
-    ))
+    let label-id = (
+      "label-"
+        + str(make-unique-label(
+          str(target-label),
+          disambiguator: label-disambiguator.at(it.location()).at(str(target-label), default: 0) + 1,
+        ))
+    )
     html.elem(
       "a",
       attrs: ("href": "#" + label-id, "class": "ref-link"),
-      { set text(fill: dash-color); it }
+      {
+        set text(fill: dash-color)
+        it
+      },
     )
   } else {
     set text(fill: dash-color)
@@ -108,10 +114,13 @@
     // 为带标签的方程式生成 HTML id，使引用可以链接到此处
     let label-id = if it.has("label") {
       let lbl = it.label
-      "label-" + str(make-unique-label(
-        str(lbl),
-        disambiguator: label-disambiguator.at(it.location()).at(str(lbl), default: 0) + 1,
-      ))
+      (
+        "label-"
+          + str(make-unique-label(
+            str(lbl),
+            disambiguator: label-disambiguator.at(it.location()).at(str(lbl), default: 0) + 1,
+          ))
+      )
     } else { none }
 
     // theme-frame 会渲染 dark/light 两个版本，id 必须放在外层避免重复
@@ -291,6 +300,7 @@
     )
     // math setting
     show: equation-rules
+    show: show-theorion
     // code block setting
     show: code-block-rules
     // visualization setting
@@ -343,14 +353,50 @@
         static-heading-link(it.element, body: [#sym.section#context outline-counter.display("1.") #it.element.body])
       },
     )
+
+    // nav.outline-container > button.outline-toggle + div.outline
     html.elem(
-      "div",
+      "nav",
       attrs: (
-        class: "outline",
+        class: "outline-container",
+        "aria-label": "Table of contents",
       ),
-      outline(title: none),
+      {
+        html.elem(
+          "button",
+          attrs: (
+            class: "outline-toggle",
+            type: "button",
+            "aria-expanded": "false",
+            "aria-controls": "outline-content",
+          ),
+          [On this page],
+        )
+        html.elem(
+          "div",
+          attrs: (
+            class: "outline",
+            id: "outline-content",
+          ),
+          outline(title: none),
+        )
+      },
     )
-    html.elem("hr")
+  }
+  
+  context if show-outline and is-same-kind and not sys-is-html-target {
+    if query(heading).len() == 0 {
+      return
+    }
+
+    show heading: align.with(center)
+    show outline.entry: set block(spacing: 1.2em)
+
+    outline(depth: 2, indent: 2em)
+    pagebreak(weak: true)
+
+    counter(page).update(1)
+    set page(numbering: "1")
   }
 
   body
