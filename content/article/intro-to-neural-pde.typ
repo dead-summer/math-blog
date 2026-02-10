@@ -1,10 +1,12 @@
 #import "/typ/templates/blog.typ": *
 #show: main.with(
   title: "神经网络求解PDE入门",
+  author: "summer",
   desc: [神经网络求解PDE入门],
   date: "2025-11-24",
   tags: (
-    blog-tags.misc,
+    blog-tags.machine-learning,
+    blog-tags.pde,
   ),
   show-outline: true,
 )
@@ -22,11 +24,11 @@
 = 问题描述
 
 本次实验求解的方程是泊松方程，其一般形式为：
-$ -Delta u(bold(x)) = f(bold(x)), quad bold(x) in Omega, $
+$ -Delta u(bold(x)) = f(bold(x)), quad bold(x) in Omega, $<eq:poisson>
 并带有狄利克雷边界条件：
 $ u(bold(x)) = g(bold(x)), quad bold(x) in partial Omega. $
 
-- 对于一维 Poisson 方程，设置精确解
+- 对于一维 Poisson 方程 @eq:poisson，设置精确解
   $
   u(x) = sin(pi x) + 1/4 sin(4pi x) - 1/8 sin(8 pi x) + 1/16 sin(16 pi x) + 1/24 sin(24 pi x).
   $
@@ -116,10 +118,10 @@ $ L_"PINN" (theta) = 1/N_"int" sum_(i=1)^(N_"int") ( -Delta hat(u)(bold(x)_i^"in
 
 采用相同的网络结构与两种损失函数进行组合，得到四种实验配置。结果汇总如下：
 
-// #figure(
-//   image("/codes/ritz-pinn/ritz-pinn-fitted-curve.png"),
-//   caption: [一维泊松方程四种组合拟合曲线]
-// )
+#figure(
+  image("/assets/images/intro-to-neural-pde/ritz-pinn-fitted-curve.png"),
+  caption: [一维泊松方程四种组合拟合曲线]
+)
 
 #figure(
   three-line-table(
@@ -228,10 +230,10 @@ $ mat(-Delta[Phi]; sqrt(lambda) Phi_"bc") alpha = mat(f; sqrt(lambda) g) $
 
 TransNet 在二维泊松方程上展现了优异的求解能力。
 
-// #figure(
-//   image("/codes/trans-net/trans-evaluate.png", width: 90%),
-//   caption: [TransNet 误差评估]
-// )
+#figure(
+  image("/assets/images/intro-to-neural-pde/trans-evaluate.png", width: 90%),
+  caption: [TransNet 误差评估]
+)
 
 从误差评估图可以看出：
 - TransNet 能够高精度地逼近精确解 $u(x, y) = sin(pi x) sin(pi y)$
