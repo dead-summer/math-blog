@@ -274,6 +274,13 @@ figcaption {
   width: fit-content;
   margin: 0 0.15em;
 }
+.inline-equation img.typst-frame {
+  /* 补偿 Typst 侧 box inset，保持布局高度不变 */
+  margin-top: -5.5pt;
+  margin-bottom: -5.5pt;
+  /* 移除全局 img border-radius 对公式 SVG 的圆角裁剪 */
+  border-radius: 0;
+}
 .block-equation {
   display: grid;
   place-items: center;
