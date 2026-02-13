@@ -42,15 +42,12 @@
 }
 
 #let blog-tags = (
-  programming: "Programming",
-  software: "Software",
-  network: "Network",
-  software-engineering: "Software Engineering",
-  tooling: "Tooling",
-  linux: "Linux",
-  dev-ops: "DevOps",
-  compiler: "Compiler",
-  typst: "Typst",
+  scientific-computing: "Scientific Computing",
+  machine-learning: "Machine Learning",
+  numerical-methods: "Numerical Methods",
+  pde: "PDE",
+  mechanics: "Mechanics",
+  mathematics: "Mathematics",
   misc: "Miscellaneous",
 )
 

@@ -6,8 +6,6 @@
 #import "theme.typ": *
 #import "math-macros.typ": *
 #import "@preview/tablem:0.3.0": tablem, three-line-table
-#import "@preview/theorion:0.4.0": *
-#import cosmos.fancy: *
 #import "@preview/numbly:0.1.0": numbly
 
 // Metadata
@@ -104,6 +102,15 @@
     )
   }
   set heading(numbering: numbly("{1:1}", default: "1.1"))
+
+  show figure.where(kind: table): set figure.caption(position: top)
+
+  show: it => context if shiroa-sys-target() == "paged" {
+    set page(numbering: "1")
+    it
+  } else {
+    it
+  }
 
   body
 }
@@ -383,12 +390,13 @@
       },
     )
   }
-  
-  context if show-outline and is-same-kind and not sys-is-html-target {
+
+  context if show-outline and is-same-kind and shiroa-sys-target() == "paged" {
     if query(heading).len() == 0 {
       return
     }
 
+    set page(numbering: "I")
     show heading: align.with(center)
     show outline.entry: set block(spacing: 1.2em)
 
@@ -396,7 +404,6 @@
     pagebreak(weak: true)
 
     counter(page).update(1)
-    set page(numbering: "1")
   }
 
   body
