@@ -157,7 +157,7 @@
     theme-frame(
       tag: "span",
       theme => {
-        set text(fill: theme.main-color, size: 0.75em)
+        set text(fill: theme.main-color, size: 0.85em)
         span-frame(
           attrs: (class: "inline-equation"),
           box(inset: (top: 5.5pt, bottom: 5.5pt), it),
