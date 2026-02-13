@@ -117,13 +117,14 @@ const modifiedTime = id && (await postLastModified(id));
       .outline-container.expanded .outline {
         max-height: 80vh;
         opacity: 1;
+        overflow-y: auto;
       }
 
       /* ===== Wide Screen Layout (≥1200px) ===== */
       @media (min-width: 1200px) {
         .outline-container {
           position: fixed;
-          right: max(1rem, calc((100vw - 56rem) / 2 - 260px));
+          right: max(1rem, calc((100vw - 56rem) / 2 - 300px));
           top: 6rem;
           width: 220px;
           max-height: calc(100vh - 8rem);
@@ -134,6 +135,7 @@ const modifiedTime = id && (await postLastModified(id));
         }
 
         /* Wide screen default expanded */
+        .outline-container.expanded .outline,
         .outline-container .outline {
           max-height: none;
           opacity: 1;
@@ -227,6 +229,41 @@ const modifiedTime = id && (await postLastModified(id));
       .outline-item.x-heading-5 {
         margin-left: 3em;
         font-size: 0.85em;
+      }
+
+      /* ===== Custom Scrollbar ===== */
+      .outline-container,
+      .outline-container .outline {
+        scrollbar-width: thin;
+        scrollbar-color: transparent transparent;
+      }
+
+      .outline-container:hover,
+      .outline-container:hover .outline {
+        scrollbar-color: color-mix(in srgb, var(--accent) 25%, white) transparent;
+      }
+
+      /* Webkit (Chrome/Edge/Safari) */
+      .outline-container::-webkit-scrollbar,
+      .outline-container .outline::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      .outline-container::-webkit-scrollbar-thumb,
+      .outline-container .outline::-webkit-scrollbar-thumb {
+        background: transparent;
+        border-radius: 3px;
+        transition: background 0.2s;
+      }
+
+      .outline-container:hover::-webkit-scrollbar-thumb,
+      .outline-container:hover .outline::-webkit-scrollbar-thumb {
+        background: color-mix(in srgb, var(--accent) 25%, white);
+      }
+
+      .outline-container::-webkit-scrollbar-track,
+      .outline-container .outline::-webkit-scrollbar-track {
+        background: transparent;
       }
     </style>
   </head>

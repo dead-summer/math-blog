@@ -293,3 +293,7 @@ figcaption {
 .block-list.accent > li {
   border-left: 4px solid var(--accent);
 }
+main svg {
+  max-width: 100%;
+  height: auto;
+}
