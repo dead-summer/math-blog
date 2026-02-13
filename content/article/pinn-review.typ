@@ -59,4 +59,4 @@ PINN 的发展并非单一模型的线性演进，而是一棵不断分枝的"�
 
 
 
-#bibliography("/assets/reference/pinn-review.bib")
+#bibliography("/public/reference/pinn-review.bib")

@@ -25,7 +25,7 @@ from torch.utils.data import Dataset
 # ---------------------------------------------------------------------------
 # 项目根目录：脚本位于 experments/intro-to-neural-pde/ritz-pinn.py
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-OUTPUT_DIR = PROJECT_ROOT / "assets" / "images" / "intro-to-neural-pde"
+OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "intro-to-neural-pde"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------

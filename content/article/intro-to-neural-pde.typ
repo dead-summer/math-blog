@@ -119,7 +119,7 @@ $ L_"PINN" (theta) = 1/N_"int" sum_(i=1)^(N_"int") ( -Delta hat(u)(bold(x)_i^"in
 采用相同的网络结构与两种损失函数进行组合，得到四种实验配置。结果汇总如下：
 
 #figure(
-  image("/assets/images/intro-to-neural-pde/ritz-pinn-fitted-curve.png"),
+  image("/public/images/intro-to-neural-pde/ritz-pinn-fitted-curve.png"),
   caption: [一维泊松方程四种组合拟合曲线]
 )
 
@@ -231,7 +231,7 @@ $ mat(-Delta[Phi]; sqrt(lambda) Phi_"bc") alpha = mat(f; sqrt(lambda) g) $
 TransNet 在二维泊松方程上展现了优异的求解能力。
 
 #figure(
-  image("/assets/images/intro-to-neural-pde/trans-evaluate.png", width: 90%),
+  image("/public/images/intro-to-neural-pde/trans-evaluate.png", width: 90%),
   caption: [TransNet 误差评估]
 )
 

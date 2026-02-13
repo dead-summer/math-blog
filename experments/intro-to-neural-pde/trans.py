@@ -22,7 +22,7 @@ import torch.nn as nn
 # 路径配置
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-OUTPUT_DIR = PROJECT_ROOT / "assets" / "images" / "intro-to-neural-pde"
+OUTPUT_DIR = PROJECT_ROOT / "apublic" / "images" / "intro-to-neural-pde"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
