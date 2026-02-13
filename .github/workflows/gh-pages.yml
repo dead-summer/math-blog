@@ -4,9 +4,6 @@ on:
   # Runs on pushes targeting the default branch
   push:
     branches: ["main"]
-  # At 0 minutes past the hour, every 6 hours
-  schedule:
-    - cron: "0 */3 * * *"
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -48,8 +45,6 @@ jobs:
       - name: Download Fonts
         run: curl -L https://github.com/Myriad-Dreamin/shiroa/releases/download/v0.1.5/source-han-serif-font-assets.tar.gz | tar -xvz -C /usr/share/fonts
       - run: pnpm install
-      - name: Pull Data from Backend (Optional)
-        run: pnpm run pull-data
       - run: pnpm build
       - name: Setup Pages
         uses: actions/configure-pages@v5
