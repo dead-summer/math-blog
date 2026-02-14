@@ -285,6 +285,25 @@ figcaption {
   display: grid;
   place-items: center;
   overflow-x: auto;
+  overflow-y: clip;
+}
+.block-equation.has-number {
+  grid-template-columns: 1fr auto 1fr;
+}
+.block-equation.has-number > .eq-body {
+  grid-column: 2;
+  justify-self: center;
+}
+.block-equation.has-number > .eq-number {
+  grid-column: 3;
+  justify-self: end;
+}
+.block-equation img.typst-frame {
+  /* 补偿 Typst 侧 box inset，保持布局高度不变 */
+  margin-top: -6pt;
+  margin-bottom: -6pt;
+  /* 移除全局 img border-radius 对公式 SVG 的圆角裁剪 */
+  border-radius: 0;
 }
 .block-list,
 .block-list li {

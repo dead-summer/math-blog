@@ -117,6 +117,9 @@
 
 #let equation-rules(body) = {
   show math.equation: set text(weight: 400)
+
+  show math.equation.where(block: true): it => if sys-is-html-target { it } else { block(width: 100%, it) }
+  
   show math.equation.where(block: true): it => context if shiroa-sys-target() == "html" {
     // 为带标签的方程式生成 HTML id，使引用可以链接到此处
     let label-id = if it.has("label") {
@@ -130,18 +133,51 @@
       )
     } else { none }
 
+    let has-number = it.numbering != none and it.has("label")
+
     // theme-frame 会渲染 dark/light 两个版本，id 必须放在外层避免重复
     let content = theme-frame(
       tag: "div",
       theme => {
         set text(fill: theme.main-color)
-        p-frame(
-          attrs: (
-            "class": "block-equation",
-            "role": "math",
-          ),
-          it,
-        )
+        if has-number {
+          // 编号方程：方程体和编号分离渲染，由 CSS grid 控制布局
+          html.elem("div", attrs: (class: "block-equation has-number", role: "math"), {
+            // 方程体（显示模式，无编号）
+            html.elem(
+              "span",
+              html.frame({
+                set text(weight: 400, fill: theme.main-color)
+                // html.frame 内部目标为 "paged"，外层 inline equation HTML show rule 不会触发
+                box(
+                  inset: (top: 6pt, bottom: 6pt),
+                  math.equation(math.display(it.body), block: false, numbering: none),
+                )
+              }),
+              attrs: (class: "eq-body"),
+            )
+            // 方程编号
+            html.elem(
+              "span",
+              html.frame({
+                set text(fill: theme.main-color)
+                box(
+                  inset: (top: 6pt, bottom: 6pt),
+                  context counter(math.equation).display(it.numbering),
+                )
+              }),
+              attrs: (class: "eq-number"),
+            )
+          })
+        } else {
+          p-frame(
+            attrs: (
+              "class": "block-equation",
+              "role": "math",
+            ),
+            box(inset: (top: 6pt, bottom: 6pt), it),
+          )
+        }
       },
     )
 
