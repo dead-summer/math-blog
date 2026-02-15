@@ -72,11 +72,11 @@ $
 
 根据静态平衡，作用于弹性体内任意一微元体积 $V subset Omega$ 的合力应为零。这包括体力和面力：
 $
-  integral_(partial V) bold(sigma) dot bold(n) dif S + integral_V bold(f) dif V = 0,
+  integral_(partial V) bold(sigma) dot bold(n) dif S + integral_V bold(f) dif bold(x) = 0,
 $
 其中 $bold(f)$ 是单位体积的体力，$bold(sigma) dot bold(n)$ 是在边界面 $partial V$ 上的面力密度，$bold(n)$ 为外法向矢量。根据 Gauss 散度定理，可将面积分转化为体积分：
 $
-  integral_V (nabla dot bold(sigma) + bold(f)) dif V = 0.
+  integral_V (nabla dot bold(sigma) + bold(f)) dif bold(x) = 0.
 $
 由于上述等式对任意体积 $V subset Omega$ 均成立，被积函数必须在 $Omega$ 上几乎处处为零，得到平衡方程的微分形式（亦称强形式）：
 $
@@ -89,33 +89,33 @@ $
 
 == 变分原理
 
-在处理连续介质力学问题时，除了上述微分形式（强形式），我们常采用积分形式（弱形式）或能量最小化形式。定义容许位移场空间 $cal(V)$，对于固支问题，容许函数在边界上为零：
+在处理连续介质力学问题时，除了上述微分形式（强形式），我们常采用积分形式（弱形式）或能量最小化形式。定义容许位移场空间 $bold(V)$，对于固支问题，容许函数在边界上为零：
 $
-  cal(V) = { bold(v) in [H^1(Omega)]^3 : bold(v) = bold(0) "on" partial Omega }.
+  bold(V) = { bold(v) in [H^1(Omega)]^3 : bold(v) = bold(0) "on" partial Omega }.
 $
 
 === 虚功原理
 
 虚功原理指出：对于一个处于平衡状态的变形体，在外力作用下，对于任意满足位移边界条件的虚位移，外力所做的虚功等于物体内部储存的虚应变能。
 
-设 $bold(v) in cal(V)$ 为任意虚位移场（测试函数）。
+设 $bold(v) in bold(V)$ 为任意虚位移场（测试函数）。
 - *外力虚功*：仅由体力 $bold(f)$ 产生（因边界固支，面力不做功）：
-  $ integral_Omega bold(f) dot bold(v) dif V. $
+  $ integral_Omega bold(f) dot bold(v) dif bold(x). $
 - *内力虚功*：应力在虚应变 $bold(epsilon)(bold(v))$ 上所做的功：
   $
-    integral_Omega bold(sigma)(bold(u)) : bold(epsilon)(bold(v)) dif V = integral_Omega sigma_(i j) epsilon_(i j)(bold(v)) dif V.
+    integral_Omega bold(sigma)(bold(u)) : bold(epsilon)(bold(v)) dif bold(x) = integral_Omega sigma_(i j)(bold(u)) epsilon_(i j)(bold(v)) dif bold(x).
   $
 
-根据虚功原理，我们得到平衡方程的弱形式：寻找 $bold(u) in cal(V)$ 使得
+根据虚功原理，我们得到平衡方程的弱形式：寻找 $bold(u) in bold(V)$ 使得
 $
-  integral_Omega sigma_(i j)(bold(u)) epsilon_(i j)(bold(v)) dif V = integral_Omega f_i v_i dif V, quad forall bold(v) in cal(V).
+  integral_Omega sigma_(i j)(bold(u)) epsilon_(i j)(bold(v)) dif bold(x) = integral_Omega f_i v_i dif bold(x), quad forall bold(v) in bold(V).
 $
 定义双线性形式 $D(bold(u), bold(v))$ 和线性泛函 $F(bold(v))$：
 $
-  D(bold(u), bold(v)) & := integral_Omega sigma_(i j)(bold(u)) epsilon_(i j)(bold(v)) dif V, \
-           F(bold(v)) & := integral_Omega f_i v_i dif V.
+  D(bold(u), bold(v)) & := integral_Omega sigma_(i j)(bold(u)) epsilon_(i j)(bold(v)) dif bold(x), \
+           F(bold(v)) & := integral_Omega f_i v_i dif bold(x).
 $
-则问题表述为：寻找 $bold(u) in cal(V)$ 使得 $D(bold(u), bold(v)) = F(bold(v)), forall bold(v) in cal(V)$。
+则问题表述为：寻找 $bold(u) in bold(V)$ 使得 $D(bold(u), bold(v)) = F(bold(v)), forall bold(v) in bold(V)$。
 
 === 最小势能原理
 
@@ -127,16 +127,16 @@ $
 $
 其中：
 $
-  U(bold(u)) &= 1/2 integral_Omega bold(sigma)(bold(u)) : bold(epsilon)(bold(u)) dif V = 1/2 integral_Omega sigma_(i j)(bold(u)) epsilon_(i j)(bold(u)) dif V, \
-  W(bold(u)) &= integral_Omega bold(f) dot bold(u) dif V.
+  U(bold(u)) &= 1/2 integral_Omega bold(sigma)(bold(u)) : bold(epsilon)(bold(u)) dif bold(x) = 1/2 integral_Omega sigma_(i j)(bold(u)) epsilon_(i j)(bold(u)) dif bold(x), \
+  W(bold(u)) &= integral_Omega bold(f) dot bold(u) dif bold(x).
 $
 因此，总势能泛函为：
 $
   J (bold(u)) = 1/2 D(bold(u), bold(u)) - F(bold(u)).
 $
-最小势能原理表述为变分问题：寻找 $bold(u) in cal(V)$ 使得
+最小势能原理表述为变分问题：寻找 $bold(u) in bold(V)$ 使得
 $
-  J (bold(u)) = min_(bold(v) in cal(V)) J (bold(v)).
+  J (bold(u)) = min_(bold(v) in bold(V)) J (bold(v)).
 $
 
 === 变分原理与平衡方程
@@ -144,11 +144,11 @@ $
 下面证明上述三个问题在数学上是等价的。
 
 #proposition[
-  位移场 $bold(u) in cal(V)$ 是总势能泛函 $J (bold(u))$ 的极小值点，当且仅当它满足虚功原理方程 $D(bold(u), bold(v)) = F(bold(v))$。
+  位移场 $bold(u) in bold(V)$ 是总势能泛函 $J (bold(u))$ 的极小值点，当且仅当它满足虚功原理方程 $D(bold(u), bold(v)) = F(bold(v))$。
 ]
 
 #proof[
-  考虑泛函 $J (bold(u))$ 在方向 $bold(v) in cal(V)$ 上的 Gâteaux 导数。令 $theta in RR$，考察函数 $J (bold(u) + theta bold(v))$：
+  考虑泛函 $J (bold(u))$ 在方向 $bold(v) in bold(V)$ 上的 Gâteaux 导数。令 $theta in RR$，考察函数 $J (bold(u) + theta bold(v))$：
   $
     J (bold(u) + theta bold(v)) &= 1/2 D(bold(u) + theta bold(v), bold(u) + theta bold(v)) - F(bold(u) + theta bold(v)) \
     &= 1/2 [D(bold(u), bold(u)) + theta D(bold(u), bold(v)) + theta D(bold(v), bold(u)) + theta^2 D(bold(v), bold(v))] - F(bold(u)) - theta F(bold(v)).
@@ -163,20 +163,20 @@ $
   $
   根据变分法原理，$bold(u)$ 使 $J$ 取驻值的必要条件是对于任意 $bold(v)$，一阶变分为零：
   $
-    delta J = 0 arrow.l.r.double D(bold(u), bold(v)) = F(bold(v)), quad forall bold(v) in cal(V).
+    delta J = 0 arrow.l.r.double D(bold(u), bold(v)) = F(bold(v)), quad forall bold(v) in bold(V).
   $
   这正是虚功原理的表达式。
   此外，由于弹性张量正定，应变能 $1/2 D(bold(v), bold(v)) >= 0$。二阶变分 $delta^2 J = D(bold(v), bold(v))$ 非负，说明 $J (bold(u))$ 是凸泛函。因此，驻值点即为全局极小值点。证毕。
 ]
 
 #proposition[
-  如果足够光滑的位移场 $bold(u) in cal(V)$ 满足虚功原理（或最小势能原理），则它满足微分形式的平衡方程 $sigma_(i j, j) + f_i = 0$。
+  如果足够光滑的位移场 $bold(u) in bold(V)$ 满足虚功原理（或最小势能原理），则它满足微分形式的平衡方程 $sigma_(i j, j) + f_i = 0$。
 ]
 
 #proof[
   从虚功原理出发：
   $
-    integral_Omega sigma_(i j) epsilon_(i j)(bold(v)) dif V = integral_Omega f_i v_i dif V, quad forall bold(v) in cal(V).
+    integral_Omega sigma_(i j) epsilon_(i j)(bold(v)) dif bold(x) = integral_Omega f_i v_i dif bold(x), quad forall bold(v) in bold(V).
   $
   利用应力张量的对称性 $sigma_(i j) = sigma_(j i)$，我们有
   $
@@ -186,18 +186,18 @@ $
   $
   将上式代入积分，并对第一项进行分部积分：
   $
-    integral_Omega sigma_(i j) partial_j v_i dif V
-    &= integral_Omega [partial_j (sigma_(i j) v_i) - sigma_(i j, j) v_i] dif V \
-    &= integral_(partial Omega) sigma_(i j) n_j v_i dif S - integral_Omega sigma_(i j, j) v_i dif V.
+    integral_Omega sigma_(i j) partial_j v_i dif bold(x)
+    &= integral_Omega [partial_j (sigma_(i j) v_i) - sigma_(i j, j) v_i] dif bold(x) \
+    &= integral_(partial Omega) sigma_(i j) n_j v_i dif S - integral_Omega sigma_(i j, j) v_i dif bold(x).
   $
   由于测试函数 $bold(v)$ 在固支边界 $partial Omega$ 上为零，即 $v_i = 0$。因此，边界积分项消失。
   虚功方程变形为：
   $
-    - integral_Omega sigma_(i j, j) v_i dif V = integral_Omega f_i v_i dif V.
+    - integral_Omega sigma_(i j, j) v_i dif bold(x) = integral_Omega f_i v_i dif bold(x).
   $
   移项合并：
   $
-    integral_Omega (sigma_(i j, j) + f_i) v_i dif V = 0, quad forall bold(v) in cal(V).
+    integral_Omega (sigma_(i j, j) + f_i) v_i dif bold(x) = 0, quad forall bold(v) in bold(V).
   $
   根据变分法基本引理，由于积分对任意 $v_i$ 均成立，则括号内的项必须在 $Omega$ 内几乎处处为零：
   $
@@ -211,19 +211,19 @@ $
 === 鞍点问题
 
 在经典的位移法中，应力是位移的导出量。而在混合形式中，我们将应力 $bold(sigma)$ 与位移 $bold(u)$ 同时视为独立的未知量。
-首先引入柔度张量$bold(A) = bold(C)^(-1)$。本构关系 $bold(sigma) = bold(C) : bold(epsilon)$ 可重写为：
+首先引入柔度张量$bold(S) = bold(C)^(-1)$。本构关系 $bold(sigma) = bold(C) : bold(epsilon)$ 可重写为：
 $
-  bold(A) bold(sigma) = bold(epsilon)(bold(u)).
+  bold(S) : bold(sigma) = bold(epsilon)(bold(u)).
 $
 对于各向同性材料，柔度张量的作用形式为：
 $
-  bold(A) bold(sigma) = 1/(2 mu) bold(sigma) - lambda/(2 mu (2 mu + 3 lambda)) tr(bold(sigma)) bold(I).
+  bold(S) : bold(sigma) = 1/(2 mu) bold(sigma) - lambda/(2 mu (2 mu + 3 lambda)) tr(bold(sigma)) bold(I).
 $
 
 考虑齐次位移边界条件，线弹性问题的*强形式*方程组为：
 $
   cases(
-    bold(A) bold(sigma) - bold(epsilon)(bold(u)) & = 0 & quad "in" Omega,
+    bold(S) : bold(sigma) - bold(epsilon)(bold(u)) & = 0 & quad "in" Omega,
     nabla dot bold(sigma) + bold(f) & = 0 & quad "in" Omega,
     bold(u) & = 0 & quad "on" partial Omega.
   )
@@ -232,42 +232,42 @@ $
 为了建立变分形式，我们需要为应力和位移选择合适的函数空间。在混合方法中，通常要求应力的散度平方可积，而放宽对位移连续性的要求：
 $
   bold(Sigma) &:= bold(H)(div, Omega; SS) := { bold(tau) in (L^2(Omega))^(3 times 3) : bold(tau)=bold(tau)^T, nabla dot bold(tau) in (L^2(Omega))^3 }, \
-  bold(Q) &:= (L^2(Omega))^3 .
+  bold(U) &:= (L^2(Omega))^3 .
 $
-定义如下双线性形式 $a: bold(Sigma) times bold(Sigma) -> RR$ 与 $b: bold(Sigma) times bold(Q) -> RR$：
+定义如下双线性形式 $a: bold(Sigma) times bold(Sigma) -> RR$ 与 $b: bold(Sigma) times bold(U) -> RR$：
 $
-  a(bold(sigma), bold(tau)) & := integral_Omega (bold(A) bold(sigma)) : bold(tau) dif V, \
-      b(bold(tau), bold(v)) & := integral_Omega (nabla dot bold(tau)) dot bold(v) dif V.
+  a(bold(sigma), bold(tau)) & := integral_Omega (bold(S) : bold(sigma)) : bold(tau) dif bold(x), \
+      b(bold(tau), bold(v)) & := integral_Omega (nabla dot bold(tau)) dot bold(v) dif bold(x).
 $
 下面推导混合弱形式：
 1. 对本构方程点乘测试函数 $bold(tau) in bold(Sigma)$ 并积分：
   $
-    integral_Omega (bold(A) bold(sigma)) : bold(tau) dif V - integral_Omega bold(epsilon)(bold(u)) : bold(tau) dif V = 0.
+    integral_Omega (bold(S) : bold(sigma)) : bold(tau) dif bold(x) - integral_Omega bold(epsilon)(bold(u)) : bold(tau) dif bold(x) = 0.
   $
   利用分部积分公式，考虑到 $bold(u)|_(partial Omega) = 0$：
   $
-    integral_Omega bold(epsilon)(bold(u)) : bold(tau) dif V = - integral_Omega u_i tau_(i j, j) dif V + integral_(partial Omega) u_i tau_(i j) n_j dif S = - b(bold(tau), bold(u)).
+    integral_Omega bold(epsilon)(bold(u)) : bold(tau) dif bold(x) = - integral_Omega u_i tau_(i j, j) dif bold(x) + integral_(partial Omega) u_i tau_(i j) n_j dif S = - b(bold(tau), bold(u)).
   $
   因此第一式变为：$a(bold(sigma), bold(tau)) + b(bold(tau), bold(u)) = 0$。
 
-2. 对平衡方程点乘测试函数 $bold(v) in bold(Q)$ 并积分：
+2. 对平衡方程点乘测试函数 $bold(v) in bold(U)$ 并积分：
   $
-    integral_Omega (nabla dot bold(sigma)) dot bold(v) dif V + integral_Omega bold(f) dot bold(v) dif V = 0,
+    integral_Omega (nabla dot bold(sigma)) dot bold(v) dif bold(x) + integral_Omega bold(f) dot bold(v) dif bold(x) = 0,
   $
   从而有 $b(bold(sigma), bold(v)) = - (bold(f), bold(v))$.
 
-综上，*混合弱形式*为：求 $(bold(sigma), bold(u)) in bold(Sigma) times bold(Q)$ 使得
+综上，*混合弱形式*为：求 $(bold(sigma), bold(u)) in bold(Sigma) times bold(U)$ 使得
 $
   cases(
     a(bold(sigma), bold(tau)) + & b(bold(tau), bold(u)) = 0 & quad forall bold(tau) in bold(Sigma),
-    & b(bold(sigma), bold(v)) = - (bold(f), bold(v)) & quad forall bold(v) in bold(Q).
+    & b(bold(sigma), bold(v)) = - (bold(f), bold(v)) & quad forall bold(v) in bold(U).
   )
 $
 这是一个典型的 KKT 系统（Karush-Kuhn-Tucker system）。
 
 === Hellinger-Reissner 准则
 
-上述混合弱形式方程组恰好对应于一个拉格朗日泛函的驻值点条件。定义 Hellinger-Reissner 泛函 $Pi: bold(Sigma) times bold(Q) -> RR$ 为：
+上述混合弱形式方程组恰好对应于一个拉格朗日泛函的驻值点条件。定义 Hellinger-Reissner 泛函 $Pi: bold(Sigma) times bold(U) -> RR$ 为：
 $
   Pi(bold(tau), bold(v)) := 1/2 a(bold(tau), bold(tau)) + b(bold(tau), bold(v)) + (bold(f), bold(v)).
 $
@@ -275,11 +275,11 @@ $
 
 *Hellinger-Reissner 变分原理*可表述为：混合弱形式的解 $(bold(sigma), bold(u))$ 是泛函 $Pi$ 的鞍点。即：
 $
-  Pi(bold(sigma), bold(u)) = min_(bold(tau) in bold(Sigma)) max_(bold(v) in bold(Q)) Pi(bold(tau), bold(v)).
+  Pi(bold(sigma), bold(u)) = min_(bold(tau) in bold(Sigma)) max_(bold(v) in bold(U)) Pi(bold(tau), bold(v)).
 $
 
 #proposition[
-  若 $(bold(sigma), bold(u)) in bold(Sigma) times bold(Q)$ 是 Hellinger-Reissner 泛函的鞍点（即满足混合弱形式），且解具有足够的正则性，则它们满足强形式的平衡方程和本构方程。
+  若 $(bold(sigma), bold(u)) in bold(Sigma) times bold(U)$ 是 Hellinger-Reissner 泛函的鞍点（即满足混合弱形式），且解具有足够的正则性，则它们满足强形式的平衡方程和本构方程。
 ]
 
 #proof[
@@ -297,38 +297,38 @@ $
     $
     代入具体积分表达式：
     $
-      integral_Omega (bold(A) bold(sigma)) : delta bold(tau) dif V + integral_Omega (nabla dot delta bold(tau)) dot bold(u) dif V = 0.
+      integral_Omega (bold(S) : bold(sigma)) : delta bold(tau) dif bold(x) + integral_Omega (nabla dot delta bold(tau)) dot bold(u) dif bold(x) = 0.
     $
     若解 $bold(u)$ 具有足够的正则性，则对第二项进行逆向分部积分（注意 $bold(u)|_(partial Omega)=0$）：
     $
-      integral_Omega (nabla dot delta bold(tau)) dot bold(u) dif V = - integral_Omega delta bold(tau) : bold(epsilon)(bold(u)) dif V.
+      integral_Omega (nabla dot delta bold(tau)) dot bold(u) dif bold(x) = - integral_Omega delta bold(tau) : bold(epsilon)(bold(u)) dif bold(x).
     $
     于是：
     $
-      integral_Omega [ bold(A) bold(sigma) - bold(epsilon)(bold(u)) ] : delta bold(tau) dif V = 0.
+      integral_Omega [ bold(S) : bold(sigma) - bold(epsilon)(bold(u)) ] : delta bold(tau) dif bold(x) = 0.
     $
     由 $delta bold(tau)$ 的任意性，可得本构方程：
     $
-      bold(A) bold(sigma) = bold(epsilon)(bold(u)).
+      bold(S) : bold(sigma) = bold(epsilon)(bold(u)).
     $
 
   2. *对位移变量 $bold(v)$ 的变分：*
     计算泛函关于第二个变量 $bold(v)$ 的变分。对于任意 $bold(tau), bold(v)$，变分结果为：
     $
       delta_(bold(v)) Pi(bold(tau), bold(v)) &= lr(partial/(partial theta) [b(bold(tau), bold(v) + theta delta bold(v)) + (bold(f), bold(v) + theta delta bold(v))] |)_(theta=0) \
-      &= b(bold(tau), delta bold(v)) + integral_Omega bold(f) dot delta bold(v) dif V.
+      &= b(bold(tau), delta bold(v)) + integral_Omega bold(f) dot delta bold(v) dif bold(x).
     $
     令 $(bold(tau), bold(v))$ 取驻值点 $(bold(sigma), bold(u))$，并令变分为零：
     $
-      b(bold(sigma), delta bold(v)) + integral_Omega bold(f) dot delta bold(v) dif V = 0, quad forall delta bold(v) in bold(Q).
+      b(bold(sigma), delta bold(v)) + integral_Omega bold(f) dot delta bold(v) dif bold(x) = 0, quad forall delta bold(v) in bold(U).
     $
     展开 $b(dot, dot)$：
     $
-      integral_Omega (nabla dot bold(sigma)) dot delta bold(v) dif V + integral_Omega bold(f) dot delta bold(v) dif V = 0.
+      integral_Omega (nabla dot bold(sigma)) dot delta bold(v) dif bold(x) + integral_Omega bold(f) dot delta bold(v) dif bold(x) = 0.
     $
     合并同类项：
     $
-      integral_Omega (nabla dot bold(sigma) + bold(f)) dot delta bold(v) dif V = 0.
+      integral_Omega (nabla dot bold(sigma) + bold(f)) dot delta bold(v) dif bold(x) = 0.
     $
     由 $delta bold(v)$ 的任意性，可得平衡方程：
     $
@@ -413,12 +413,12 @@ $
 
 定义容许位移空间：
 $
-  cal(V) = { bold(v) in [H^1(Omega)]^2 : bold(v) = bold(0) "on" partial Omega }.
+  bold(V) = { bold(v) in [H^1(Omega)]^2 : bold(v) = bold(0) "on" partial Omega }.
 $
 
 === 虚功原理
 
-令 $bold(v) in cal(V)$ 为任意虚位移场。则
+令 $bold(v) in bold(V)$ 为任意虚位移场。则
 - *外力虚功*：
   $ integral_Omega bold(f) dot bold(v) dif S. $
 - *内力虚功*：
@@ -428,20 +428,20 @@ $
     quad alpha, beta = 1, 2.
   $
 
-虚功原理的弱形式为：求 $bold(u) in cal(V)$ 使得
+虚功原理的弱形式为：求 $bold(u) in bold(V)$ 使得
 $
   integral_Omega sigma_(alpha beta)(bold(u)) epsilon_(alpha beta)(bold(v)) dif S
   = integral_Omega f_alpha v_alpha dif S,
-  quad forall bold(v) in cal(V).
+  quad forall bold(v) in bold(V).
 $
 定义双线性形式与线性泛函：
 $
   D(bold(u), bold(v)) & := integral_Omega bold(sigma)(bold(u)) : bold(epsilon)(bold(v)) dif S, \
            F(bold(v)) & := integral_Omega bold(f) dot bold(v) dif S,
 $
-则弱形式为：寻找 $bold(u) in cal(V)$ 使得
+则弱形式为：寻找 $bold(u) in bold(V)$ 使得
 $
-  D(bold(u), bold(v)) = F(bold(v)), quad forall bold(v) in cal(V).
+  D(bold(u), bold(v)) = F(bold(v)), quad forall bold(v) in bold(V).
 $
 
 === 最小势能原理
@@ -460,17 +460,17 @@ $
 $
   J(bold(u)) = 1/2 D(bold(u), bold(u)) - F(bold(u)).
 $
-最小势能原理表述为：寻找 $bold(u) in cal(V)$ 使得
+最小势能原理表述为：寻找 $bold(u) in bold(V)$ 使得
 $
-  J(bold(u)) = min_(bold(v) in cal(V)) J(bold(v)).
+  J(bold(u)) = min_(bold(v) in bold(V)) J(bold(v)).
 $
 
 === 变分原理与平衡方程
 
 #proposition[
-  位移场 $bold(u) in cal(V)$ 是总势能泛函 $J(bold(u))$ 的极小值点，当且仅当它满足虚功原理方程
+  位移场 $bold(u) in bold(V)$ 是总势能泛函 $J(bold(u))$ 的极小值点，当且仅当它满足虚功原理方程
   $
-    D(bold(u), bold(v)) = F(bold(v)), quad forall bold(v) in cal(V).
+    D(bold(u), bold(v)) = F(bold(v)), quad forall bold(v) in bold(V).
   $
 ]
 
@@ -485,7 +485,7 @@ $
 ]
 
 #proposition[
-  若足够光滑的位移场 $bold(u) in cal(V)$ 满足虚功原理（或最小势能原理），则它满足强形式的平衡方程
+  若足够光滑的位移场 $bold(u) in bold(V)$ 满足虚功原理（或最小势能原理），则它满足强形式的平衡方程
   $
     sigma_(alpha beta, beta) + f_alpha = 0, quad alpha=1,2.
   $
@@ -495,7 +495,7 @@ $
   从虚功原理出发：
   $
     integral_Omega sigma_(alpha beta) epsilon_(alpha beta)(bold(v)) dif S
-    = integral_Omega f_alpha v_alpha dif S, quad forall bold(v) in cal(V).
+    = integral_Omega f_alpha v_alpha dif S, quad forall bold(v) in bold(V).
   $
   由于 $sigma_(alpha beta)=sigma_(beta alpha)$ 且 $alpha,beta=1,2$，有
   $
@@ -513,7 +513,7 @@ $
   $
   即
   $
-    integral_Omega (sigma_(alpha beta, beta) + f_alpha) v_alpha dif S = 0, quad forall bold(v) in cal(V).
+    integral_Omega (sigma_(alpha beta, beta) + f_alpha) v_alpha dif S = 0, quad forall bold(v) in bold(V).
   $
   由变分法基本引理，得到
   $
@@ -526,22 +526,22 @@ $
 
 === 鞍点问题
 
-在平面应力的混合方法中，将应力 $bold(sigma)$ 与位移 $bold(u)$ 同时视为未知量。定义平面应力弹性张量 $bold(C)$ 及其逆 $bold(A)=bold(C)^(-1)$，使得
+在平面应力的混合方法中，将应力 $bold(sigma)$ 与位移 $bold(u)$ 同时视为未知量。定义平面应力弹性张量 $bold(C)$ 及其逆 $bold(S)=bold(C)^(-1)$，使得
 $
   bold(sigma) = bold(C) : bold(epsilon)(bold(u)),
   quad
-  bold(A) bold(sigma) = bold(epsilon)(bold(u)).
+  bold(S) : bold(sigma) = bold(epsilon)(bold(u)).
 $
-对于各向同性材料，$bold(A)$ 的作用形式可写为：
+对于各向同性材料，$bold(S)$ 的作用形式可写为：
 $
-  bold(A) bold(sigma)
+  bold(S) : bold(sigma)
   = 1/(2 mu) bold(sigma) - lambda_"plane"/(4 mu (mu + lambda_"plane")) tr(bold(sigma)) bold(I).
 $
 
 考虑齐次位移边界条件，平面应力问题的强形式可写为：
 $
   cases(
-    bold(A) bold(sigma) - bold(epsilon)(bold(u)) & = 0 & quad "in" Omega,
+    bold(S) : bold(sigma) - bold(epsilon)(bold(u)) & = 0 & quad "in" Omega,
     nabla dot bold(sigma) + bold(f) & = 0 & quad "in" Omega,
     bold(u) & = bold(0) & quad "on" partial Omega.
   )
@@ -551,11 +551,11 @@ $
 $
   bold(Sigma) &:= bold(H)(div, Omega; SS)
   := { bold(tau) in (L^2(Omega))^(2 times 2) : bold(tau)=bold(tau)^T, nabla dot bold(tau) in (L^2(Omega))^2 }, \
-  bold(Q) &:= (L^2(Omega))^2 .
+  bold(U) &:= (L^2(Omega))^2 .
 $
-定义双线性形式 $a: bold(Sigma) times bold(Sigma) -> RR$ 与 $b: bold(Sigma) times bold(Q) -> RR$：
+定义双线性形式 $a: bold(Sigma) times bold(Sigma) -> RR$ 与 $b: bold(Sigma) times bold(U) -> RR$：
 $
-  a(bold(sigma), bold(tau)) & := integral_Omega (bold(A) bold(sigma)) : bold(tau) dif S, \
+  a(bold(sigma), bold(tau)) & := integral_Omega (bold(S) : bold(sigma)) : bold(tau) dif S, \
       b(bold(tau), bold(v)) & := integral_Omega (nabla dot bold(tau)) dot bold(v) dif S.
 $
 
@@ -563,7 +563,7 @@ $
 
 1. 对本构方程与测试函数 $bold(tau) in bold(Sigma)$ 作内积并积分：
   $
-    integral_Omega (bold(A) bold(sigma)) : bold(tau) dif S
+    integral_Omega (bold(S) : bold(sigma)) : bold(tau) dif S
     - integral_Omega bold(epsilon)(bold(u)) : bold(tau) dif S = 0.
   $
   利用分部积分并注意 $bold(u)|_(partial Omega)=0$：
@@ -578,7 +578,7 @@ $
     a(bold(sigma), bold(tau)) + b(bold(tau), bold(u)) = 0.
   $
 
-2. 对平衡方程与测试函数 $bold(v) in bold(Q)$ 作内积并积分：
+2. 对平衡方程与测试函数 $bold(v) in bold(U)$ 作内积并积分：
   $
     integral_Omega (nabla dot bold(sigma)) dot bold(v) dif S + integral_Omega bold(f) dot bold(v) dif S = 0,
   $
@@ -587,29 +587,29 @@ $
     b(bold(sigma), bold(v)) = - (bold(f), bold(v)).
   $
 
-综上，*混合弱形式*为：求 $(bold(sigma), bold(u)) in bold(Sigma) times bold(Q)$ 使得
+综上，*混合弱形式*为：求 $(bold(sigma), bold(u)) in bold(Sigma) times bold(U)$ 使得
 $
   cases(
     a(bold(sigma), bold(tau)) + & b(bold(tau), bold(u)) = 0 & quad forall bold(tau) in bold(Sigma),
-    & b(bold(sigma), bold(v)) = - (bold(f), bold(v)) & quad forall bold(v) in bold(Q).
+    & b(bold(sigma), bold(v)) = - (bold(f), bold(v)) & quad forall bold(v) in bold(U).
   )
 $
 
 === Hellinger-Reissner 准则
 
-定义 Hellinger-Reissner 泛函 $Pi: bold(Sigma) times bold(Q) -> RR$：
+定义 Hellinger-Reissner 泛函 $Pi: bold(Sigma) times bold(U) -> RR$：
 $
   Pi(bold(tau), bold(v)) := 1/2 a(bold(tau), bold(tau)) + b(bold(tau), bold(v)) + (bold(f), bold(v)).
 $
 Hellinger-Reissner 变分原理表述为：混合弱形式的解 $(bold(sigma), bold(u))$ 是 $Pi$ 的鞍点：
 $
-  Pi(bold(sigma), bold(u)) = min_(bold(tau) in bold(Sigma)) max_(bold(v) in bold(Q)) Pi(bold(tau), bold(v)).
+  Pi(bold(sigma), bold(u)) = min_(bold(tau) in bold(Sigma)) max_(bold(v) in bold(U)) Pi(bold(tau), bold(v)).
 $
 
 #proposition[
-  若 $(bold(sigma), bold(u)) in bold(Sigma) times bold(Q)$ 是 Hellinger-Reissner 泛函的鞍点（即满足混合弱形式），且解具有足够的正则性，则它们满足强形式的本构方程与平衡方程：
+  若 $(bold(sigma), bold(u)) in bold(Sigma) times bold(U)$ 是 Hellinger-Reissner 泛函的鞍点（即满足混合弱形式），且解具有足够的正则性，则它们满足强形式的本构方程与平衡方程：
   $
-    bold(A) bold(sigma) = bold(epsilon)(bold(u)), quad nabla dot bold(sigma) + bold(f) = 0.
+    bold(S) : bold(sigma) = bold(epsilon)(bold(u)), quad nabla dot bold(sigma) + bold(f) = 0.
   $
 ]
 
@@ -627,13 +627,13 @@ $
     $
     展开并对第二项逆向分部积分（注意 $bold(u)|_(partial Omega)=0$）：
     $
-      0 = integral_Omega (bold(A) bold(sigma)) : delta bold(tau) dif S
+      0 = integral_Omega (bold(S) : bold(sigma)) : delta bold(tau) dif S
       + integral_Omega (nabla dot delta bold(tau)) dot bold(u) dif S
-      = integral_Omega [bold(A) bold(sigma) - bold(epsilon)(bold(u))] : delta bold(tau) dif S,
+      = integral_Omega [bold(S) : bold(sigma) - bold(epsilon)(bold(u))] : delta bold(tau) dif S,
     $
     由 $delta bold(tau)$ 任意性得
     $
-      bold(A) bold(sigma) = bold(epsilon)(bold(u)).
+      bold(S) : bold(sigma) = bold(epsilon)(bold(u)).
     $
 
   2. *对位移变量的变分：*
@@ -643,11 +643,11 @@ $
     $
     在驻值点令其为零，得
     $
-      b(bold(sigma), delta bold(v)) + integral_Omega bold(f) dot delta bold(v) dif S = 0, quad forall delta bold(v) in bold(Q),
+      b(bold(sigma), delta bold(v)) + integral_Omega bold(f) dot delta bold(v) dif S = 0, quad forall delta bold(v) in bold(U),
     $
     即
     $
-      integral_Omega (nabla dot bold(sigma) + bold(f)) dot delta bold(v) dif S = 0, quad forall delta bold(v) in bold(Q).
+      integral_Omega (nabla dot bold(sigma) + bold(f)) dot delta bold(v) dif S = 0, quad forall delta bold(v) in bold(U).
     $
     由任意性得到
     $
@@ -797,12 +797,12 @@ $
 
 在薄板弯曲问题中，应变能包含挠度的二阶导数，因此容许位移场空间需要更高的正则性。对于固支边界条件，取容许空间为：
 $
-  cal(V) = { v in H^2(Omega) : v = 0, (partial v)/(partial n) = 0 "on" partial Omega } = H_0^2(Omega).
+  bold(V) = { v in H^2(Omega) : v = 0, (partial v)/(partial n) = 0 "on" partial Omega } = H_0^2(Omega).
 $
 
 === 虚功原理
 
-令 $v in cal(V)$ 为虚挠度场。
+令 $v in bold(V)$ 为虚挠度场。
 - *外力虚功*：
   $ integral_Omega f v dif S. $
 - *内力虚功*：弯矩在虚曲率 $K_(alpha beta)(v)$ 上所做的功：
@@ -810,9 +810,9 @@ $
     integral_Omega M_(alpha beta)(omega) K_(alpha beta)(v) dif S, quad alpha, beta = 1, 2.
   $
 
-虚功原理指出：求 $omega in cal(V)$ 使得
+虚功原理指出：求 $omega in bold(V)$ 使得
 $
-  integral_Omega M_(alpha beta)(omega) K_(alpha beta)(v) dif S = integral_Omega f v dif S, quad forall v in cal(V), quad alpha, beta = 1, 2.
+  integral_Omega M_(alpha beta)(omega) K_(alpha beta)(v) dif S = integral_Omega f v dif S, quad forall v in bold(V), quad alpha, beta = 1, 2.
 $
 定义双线性形式 $D(omega, v)$ 和线性泛函 $F(v)$：
 $
@@ -837,16 +837,16 @@ $
 $
 最小势能原理表述为：
 $
-  J(omega) = min_(v in cal(V)) J(v).
+  J(omega) = min_(v in bold(V)) J(v).
 $
 
 === 变分原理与平衡方程
 
 #proposition[
-  位移场 $omega in cal(V)$ 是总势能泛函 $J(omega)$ 的极小值点，当且仅当它满足虚功原理方程 $D(omega, v) = F(v)$。
+  位移场 $omega in bold(V)$ 是总势能泛函 $J(omega)$ 的极小值点，当且仅当它满足虚功原理方程 $D(omega, v) = F(v)$。
 ]
 #proof[
-  与三维与平面应力情形相同。对任意 $v in cal(V)$，考察 $J(omega + theta v)$：
+  与三维与平面应力情形相同。对任意 $v in bold(V)$，考察 $J(omega + theta v)$：
   $
     J(omega + theta v)
     = 1/2 D(omega + theta v, omega + theta v) - F(omega + theta v).
@@ -866,12 +866,12 @@ $
 ]
 
 #proposition[
-  若足够光滑的位移场 $omega in cal(V)$ 满足虚功原理，则它满足强形式的平衡方程 $M_(alpha beta, alpha beta) + f = 0, alpha, beta = 1, 2$。
+  若足够光滑的位移场 $omega in bold(V)$ 满足虚功原理，则它满足强形式的平衡方程 $M_(alpha beta, alpha beta) + f = 0, alpha, beta = 1, 2$。
 ]
 #proof[
   从虚功原理出发：
   $
-    integral_Omega M_(alpha beta) (- partial_(alpha beta) v) dif S = integral_Omega f v dif S, quad forall v in cal(V), quad alpha, beta = 1, 2.
+    integral_Omega M_(alpha beta) (- partial_(alpha beta) v) dif S = integral_Omega f v dif S, quad forall v in bold(V), quad alpha, beta = 1, 2.
   $
   对左端项进行两次分部积分。第一次分部积分：
   $
@@ -903,13 +903,13 @@ $
 $
   bold(M) = bold(C) : bold(K)(omega),
 $
-其中 $bold(K)(omega)$ 表示对称曲率张量 $K_(alpha beta)(omega)$，$bold(C)$ 为薄板弯曲刚度算子。引入柔度算子 $bold(A) = bold(C)^(-1)$，使得
+其中 $bold(K)(omega)$ 表示对称曲率张量 $K_(alpha beta)(omega)$，$bold(C)$ 为薄板弯曲刚度算子。引入柔度算子 $bold(S) = bold(C)^(-1)$，使得
 $
-  bold(A) bold(M) = bold(K)(omega).
+  bold(S) : bold(M) = bold(K)(omega).
 $
-对各向同性薄板，$bold(A)$ 的作用可显式写为
+对各向同性薄板，$bold(S)$ 的作用可显式写为
 $
-  bold(A) bold(M)
+  bold(S) : bold(M)
   = 1/(D(1-nu)) bold(M) - nu/(D(1-nu)(1+nu)) tr(bold(M)) bold(I),
 $
 其中 $tr(bold(M)) = M_(gamma gamma)$，$bold(I)$ 为 $2 times 2$ 单位阵。
@@ -917,7 +917,7 @@ $
 考虑齐次固支边界条件，薄板弯曲的*强形式*系统为
 $
   cases(
-    bold(A) bold(M) - bold(K)(omega) = 0 & quad "in" Omega,
+    bold(S) : bold(M) - bold(K)(omega) = 0 & quad "in" Omega,
     nabla dot (nabla dot bold(M)) + f = 0 & quad "in" Omega,
     omega = 0 & quad "on" partial Omega,
     partial_n omega = 0 & quad "on" partial Omega.
@@ -934,11 +934,11 @@ $
   &:= bold(H)(div div, Omega; SS)
   := { bold(tau) in (L^2(Omega))^(2 times 2) : bold(tau)=bold(tau)^T, tau_(alpha beta, alpha beta) in L^2(Omega) },
   \
-  bold(Q) &:= L^2(Omega).
+  bold(U) &:= L^2(Omega).
 $
-定义双线性形式 $a: bold(Sigma) times bold(Sigma) -> RR$ 与 $b: bold(Sigma) times bold(Q) -> RR$：
+定义双线性形式 $a: bold(Sigma) times bold(Sigma) -> RR$ 与 $b: bold(Sigma) times bold(U) -> RR$：
 $
-  a(bold(M), bold(tau)) & := integral_Omega (bold(A) bold(M)) : bold(tau) dif S, \
+  a(bold(M), bold(tau)) & := integral_Omega (bold(S) : bold(M)) : bold(tau) dif S, \
         b(bold(tau), v) & := integral_Omega (nabla dot (nabla dot bold(tau))) v dif S
                           = integral_Omega tau_(alpha beta, alpha beta) v dif S.
 $
@@ -947,7 +947,7 @@ $
 
 1. 对本构方程与测试函数 $bold(tau) in bold(Sigma)$ 作内积并积分：
   $
-    integral_Omega (bold(A) bold(M)) : bold(tau) dif S
+    integral_Omega (bold(S) : bold(M)) : bold(tau) dif S
     - integral_Omega bold(K)(omega) : bold(tau) dif S = 0.
   $
   注意 $bold(K)(omega):bold(tau) = K_(alpha beta)(omega) tau_(alpha beta) = - omega_(,alpha beta) tau_(alpha beta)$。
@@ -962,7 +962,7 @@ $
     a(bold(M), bold(tau)) + b(bold(tau), omega) = 0.
   $
 
-2. 对平衡方程与测试函数 $v in bold(Q)$ 相乘并积分：
+2. 对平衡方程与测试函数 $v in bold(U)$ 相乘并积分：
   $
     integral_Omega (nabla dot (nabla dot bold(M))) v dif S + integral_Omega f v dif S = 0,
   $
@@ -971,17 +971,17 @@ $
     b(bold(M), v) = - (f, v).
   $
 
-综上，*混合弱形式*为：求 $(bold(M), omega) in bold(Sigma) times bold(Q)$ 使得
+综上，*混合弱形式*为：求 $(bold(M), omega) in bold(Sigma) times bold(U)$ 使得
 $
   cases(
     a(bold(M), bold(tau)) + & b(bold(tau), omega) = 0 & quad forall bold(tau) in bold(Sigma),
-    & b(bold(M), v) = - (f, v) & quad forall v in bold(Q).
+    & b(bold(M), v) = - (f, v) & quad forall v in bold(U).
   )
 $
 
 === Hellinger-Reissner 准则
 
-上述混合弱形式同样对应一个鞍点泛函。定义 Hellinger-Reissner 泛函 $Pi: bold(Sigma) times bold(Q) -> RR$：
+上述混合弱形式同样对应一个鞍点泛函。定义 Hellinger-Reissner 泛函 $Pi: bold(Sigma) times bold(U) -> RR$：
 $
   Pi(bold(tau), v)
   := 1/2 a(bold(tau), bold(tau)) + b(bold(tau), v) + (f, v).
@@ -991,11 +991,11 @@ $
 *Hellinger-Reissner 变分原理*表述为：混合弱形式的解 $(bold(M), omega)$ 是 $Pi$ 的鞍点：
 $
   Pi(bold(M), omega)
-  = min_(bold(tau) in bold(Sigma)) max_(v in bold(Q)) Pi(bold(tau), v).
+  = min_(bold(tau) in bold(Sigma)) max_(v in bold(U)) Pi(bold(tau), v).
 $
 
 #proposition[
-  若 $(bold(M), omega) in bold(Sigma) times Q$ 是 Hellinger-Reissner 泛函的鞍点，则它们满足强形式的本构方程与平衡方程。
+  若 $(bold(M), omega) in bold(Sigma) times bold(U)$ 是 Hellinger-Reissner 泛函的鞍点，则它们满足强形式的本构方程与平衡方程。
 ]
 
 #proof[
@@ -1013,7 +1013,7 @@ $
     $
     展开积分：
     $
-      integral_Omega (bold(A) bold(M)) : delta bold(tau) dif S
+      integral_Omega (bold(S) : bold(M)) : delta bold(tau) dif S
       + integral_Omega (nabla dot (nabla dot delta bold(tau))) omega dif S = 0.
     $
     对第二项作逆向两次分部积分，并利用固支边界条件使边界项消失，可得
@@ -1023,9 +1023,9 @@ $
     $
     于是
     $
-      integral_Omega [bold(A) bold(M) - bold(K)(omega)] : delta bold(tau) dif S = 0.
+      integral_Omega [bold(S) : bold(M) - bold(K)(omega)] : delta bold(tau) dif S = 0.
     $
-    由 $delta bold(tau)$ 的任意性，得本构方程 $bold(A) bold(M) = bold(K)(omega)$。
+    由 $delta bold(tau)$ 的任意性，得本构方程 $bold(S) : bold(M) = bold(K)(omega)$。
 
   2. *对挠度变量的变分：*
     $
@@ -1034,7 +1034,7 @@ $
     $
     在驻值点令其为零，得
     $
-      b(bold(M), delta v) + (f, delta v) = 0, quad forall delta v in bold(Q),
+      b(bold(M), delta v) + (f, delta v) = 0, quad forall delta v in bold(U),
     $
     即
     $
