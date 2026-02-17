@@ -59,10 +59,19 @@ $
 
 将 $bold(Sigma)$ 和 $bold(U)$ 分别近似为神经特征空间 $bold(Xi)$ 的张成空间，即
 $
-  bold(Xi)_bold(Sigma) :=& span{xi_m (E_(i j) + E_(j i))}_(m=0)^M subset bold(Sigma), \
-  bold(Xi)_bold(U) :=& span{xi_m e_i}_(m=0)^M subset bold(U),
+  bold(Xi)_bold(Sigma) :=& span{xi_m (bold(E)_(i j) + bold(E)_(j i)): m = 0, ..., M, i, j = 1, 2, 3} subset bold(Sigma), \
+  bold(Xi)_bold(U) :=& span{xi_m bold(e)_i: m = 0, ..., M, i = 1, 2, 3 } subset bold(U),
 $
-其中 $E_(i j)$ 是 $RR^(3 times 3)$ 的标准单位矩阵，$e_i$ 是 $RR^3$ 的标准基向量。则线弹性方程的近似解 $(bold(phi)_bold(sigma), bold(phi)_bold(u)) in bold(Xi)_bold(Sigma) times bold(Xi)_bold(U)$ 满足如下离散鞍点问题：
+其中 $bold(E)_(i j)$ 是 $RR^(3 times 3)$ 的标准单位矩阵，$bold(e)_i$ 是 $RR^3$ 的标准基向量。
+注意当 $i = j$ 时有 $bold(E)_(i i) + bold(E)_(i i) = 2 bold(E)_(i i)$，为避免对角项的系数重复，下面改用 Voigt 形式的一组对称基 ${bold(E)_i}_1^6$：
+$
+  bold(E)_1 &<- bold(E)_(11), & bold(E)_2 &<- bold(E)_(22), & bold(E)_3 &<- bold(E)_(33), \
+  bold(E)_4 &<- bold(E)_(12) + bold(E)_(21), & bold(E)_5 &<- bold(E)_(23) + bold(E)_(32), & bold(E)_6 &<- bold(E)_(13) + bold(E)_(31).
+$
+于是 $bold(Xi)_bold(Sigma)$ 可等价写为
+$ bold(Xi)_bold(Sigma) = span{ xi_m bold(E)_a: i = 1, 2, ..., 6; 0 <= m <= M }. $
+
+线弹性方程的近似解 $(bold(phi)_bold(sigma), bold(phi)_bold(u)) in bold(Xi)_bold(Sigma) times bold(Xi)_bold(U)$ 满足如下离散鞍点问题：
 $ Pi(bold(phi)_bold(sigma), bold(phi)_bold(u)) = min_(bold(phi)_bold(tau) in bold(Xi)_bold(Sigma)) max_(bold(phi)_bold(v) in bold(Xi)_bold(U)) Pi(bold(phi)_bold(tau), bold(phi)_bold(v)). $
 这意味着泛函在 $(bold(phi)_bold(sigma), bold(phi)_bold(u))$ 处关于任意方向 $(bold(phi)_bold(tau), bold(phi)_bold(v))$ 的一阶变分为零：
 $
@@ -70,4 +79,52 @@ $
     a(bold(phi)_bold(sigma), bold(phi)_bold(tau)) + b(bold(phi)_bold(tau), bold(phi)_bold(u)) & = 0 & quad forall bold(phi)_bold(tau) in bold(Xi)_bold(Sigma),
     b(bold(phi)_bold(sigma), bold(phi)_bold(v)) + (bold(f), bold(phi)_bold(v)) & = 0 & quad forall bold(phi)_bold(v) in bold(Xi)_bold(U).
   )
+$
+
+== 系数展开
+
+将近似解在上述基上展开：
+$
+  bold(phi)_bold(sigma) &= sum_(m=0)^M sum_(i=1)^6 s_(m, i) xi_m bold(E)_i, \
+  bold(phi)_bold(u) &= sum_(m=0)^M sum_(i=1)^3 u_(m, i) xi_m bold(e)_i.
+$
+记系数向量
+$
+  bold(s) &= (s_(0, 1), ..., s_(0, 6), s_(1, 1), ..., s_(M, 6))^T in RR^(6(M+1)), \
+  bold(u) &= (u_(0, 1), ..., u_(0, 3), u_(1, 1), ..., u_(M, 3))^T in RR^(3(M+1)).
+$
+
+== 选取测试函数并组装矩阵
+
+取测试函数为同一组基函数：
+$
+  bold(phi)_bold(tau) = xi_n bold(E)_j, quad 0 <= n <= M, 1 <= j <= 6, \
+  bold(phi)_bold(v) = xi_n bold(e)_i, quad 0 <= n <= M, 1 <= i <= 3.
+$
+
+定义矩阵块与离散载荷向量（复合指标按上述堆叠顺序理解）：
+$
+  bold(A)_((n, j), (m, i)) &:= a(xi_n bold(E)_j, xi_m bold(E)_i), \
+  bold(B)_((n, j), (m, i)) &:= b(xi_n bold(E)_j, xi_m bold(e)_i), \
+  bold(F)_((n, i)) &:= (bold(f), xi_n bold(e)_i).
+$
+并将离散载荷按 $(n, i)$ 堆叠为
+$
+  bold(F) = (bold(F)_((0, 1)), ..., bold(F)_((0, 3)), bold(F)_((1, 1)), ..., bold(F)_((M, 3)))^T.
+$
+
+将系数展开代入两条变分方程，可得线性系统
+$
+  bold(A) bold(s) + bold(B) bold(u) = 0, \
+  bold(B)^T bold(s) + bold(F) = 0.
+$
+
+等价地写成块鞍点系统：
+$
+  mat(bold(A), bold(B); bold(B)^T, 0) mat(bold(s); bold(u)) = mat(0; -bold(F)).
+$
+
+其中
+$
+  bold(A) in RR^(6(M+1) times 6(M+1)), quad bold(B) in RR^(6(M+1) times 3(M+1)), quad bold(F) in RR^(3(M+1)).
 $
