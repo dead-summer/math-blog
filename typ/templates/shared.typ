@@ -190,10 +190,11 @@
     it
   }
   show math.equation.where(block: false): it => context if shiroa-sys-target() == "html" {
+    let eq-size = main-size * 0.85
     theme-frame(
       tag: "span",
       theme => {
-        set text(fill: theme.main-color, size: 0.85em)
+        set text(fill: theme.main-color, size: eq-size)
         span-frame(
           attrs: (class: "inline-equation"),
           box(inset: (top: 5.5pt, bottom: 5.5pt), it),
@@ -395,6 +396,22 @@
         class: "outline-item x-heading-" + str(it.level),
       ),
       {
+        // 目录中行内公式使用链接色(dash-color)而非正文色(main-color)
+        show math.equation.where(block: false): eq => context if shiroa-sys-target() == "html" {
+          let eq-size = main-size * 0.85
+          theme-frame(
+            tag: "span",
+            theme => {
+              set text(fill: theme.dash-color, size: eq-size)
+              span-frame(
+                attrs: (class: "inline-equation"),
+                box(inset: (top: 5.5pt, bottom: 5.5pt), eq),
+              )
+            },
+          )
+        } else {
+          eq
+        }
         outline-counter.step(level: it.level)
         static-heading-link(it.element, body: [#sym.section#context outline-counter.display("1.") #it.element.body])
       },

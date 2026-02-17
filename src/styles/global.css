@@ -281,6 +281,12 @@ figcaption {
   /* 移除全局 img border-radius 对公式 SVG 的圆角裁剪 */
   border-radius: 0;
 }
+/* 标题内行内公式跟随标题字号等比缩放 */
+h1 .inline-equation img.typst-frame { zoom: 2.75; }
+h2 .inline-equation img.typst-frame { zoom: 2; }
+h3 .inline-equation img.typst-frame { zoom: 1.5; }
+h4 .inline-equation img.typst-frame { zoom: 1.25; }
+h5 .inline-equation img.typst-frame { zoom: 1.1; }
 .block-equation {
   display: grid;
   place-items: center;
