@@ -283,3 +283,84 @@ $
     bold(F)_((n, j)) &approx sum_(q=1)^Q w_q f_j (bold(x)_q) xi_n (bold(x)_q).
   )
 $
+
+= Uzawa 迭代法
+
+上一节得到离散鞍点系统
+$
+  mat(bold(A), bold(B); bold(B)^T, 0) mat(bold(s); bold(u)) = mat(0; -bold(F)),
+$
+等价于
+$
+  cases(
+    bold(A) bold(s) + bold(B) bold(u) = 0,
+    bold(B)^T bold(s) + bold(F) = 0.
+  )
+$
+
+Uzawa 方法的基本思路是：对固定的乘子 $bold(u)$，先解出使拉格朗日函数最小的 $bold(s)$；再沿对偶函数的梯度对 $bold(u)$ 做上升迭代。
+
+== 离散拉格朗日函数与驻点条件
+
+定义离散拉格朗日函数
+$
+  cal(L)(bold(s), bold(u))
+  := 1/2 bold(s)^T bold(A) bold(s) + bold(u)^T (bold(B)^T bold(s) + bold(F)).
+$
+其关于 $(bold(s), bold(u))$ 的一阶驻点条件为
+$
+  cases(
+    nabla_(bold(s)) cal(L) = bold(A) bold(s) + bold(B) bold(u) = 0,
+    nabla_(bold(u)) cal(L) = bold(B)^T bold(s) + bold(F) = 0,
+  )
+$
+即原鞍点系统。
+
+== Schur 补与对偶函数
+
+对固定的 $bold(u)$，由 $bold(A) bold(s) + bold(B) bold(u) = 0$ 得
+$
+  bold(s)(bold(u)) = - bold(A)^(-1) bold(B) bold(u).
+$
+代入第二式得到 Schur 补系统
+$
+  bold(S) bold(u) = bold(F), quad bold(S) := bold(B)^T bold(A)^(-1) bold(B).
+$
+将 $bold(s)$ 消去得到对偶函数（约化目标）
+$
+  d(bold(u)) := min_(bold(s)) cal(L)(bold(s), bold(u))
+  = - 1/2 bold(u)^T bold(S) bold(u) + bold(u)^T bold(F),
+$
+其梯度为
+$
+  nabla d(bold(u)) = bold(F) - bold(S) bold(u) = bold(B)^T bold(s)(bold(u)) + bold(F).
+$
+
+== Uzawa 迭代格式
+
+取初值 $bold(u)^0$（例如 $bold(u)^0 = 0$）。对 $k=0,1,2,...$，按如下两步迭代：
+$
+  cases(
+    bold(A) bold(s)^(k+1) = - bold(B) bold(u)^k,
+    bold(r)^(k+1) := bold(B)^T bold(s)^(k+1) + bold(F),
+    bold(u)^(k+1) = bold(u)^k + rho bold(r)^(k+1).
+  )
+$
+其中 $bold(r)^(k+1)$ 是约束残差（也是对偶梯度）。由 $bold(s)^(k+1)=-bold(A)^(-1) bold(B) bold(u)^k$ 可见，该迭代等价于对 Schur 系统 $bold(S) bold(u) = bold(F)$ 的 Richardson/梯度法：
+$
+  bold(u)^(k+1) = bold(u)^k + rho (bold(F) - bold(S) bold(u)^k).
+$
+
+== 步长条件与停止准则
+
+假设 $bold(A)$ 对称正定，且 $bold(S)$ 在相关子空间上对称正定，则当步长满足
+$
+  0 < rho < 2 / lambda_max(bold(S))
+$
+时，上述迭代收敛到 $bold(u)^*$，并由 $bold(s)^*=-bold(A)^(-1) bold(B) bold(u)^*$ 得到 $bold(s)^*$。
+
+实践中常用
+$
+  norm(bold(r)^(k+1))_2 / norm(bold(F))_2 <= epsilon.alt
+$
+作为停止准则。
