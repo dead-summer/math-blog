@@ -60,7 +60,7 @@ $
 将 $bold(Sigma)$ 和 $bold(U)$ 分别近似为神经特征空间 $bold(Xi)$ 的张成空间，即
 $
   bold(Xi)_bold(Sigma) := & span{xi_m (bold(E)_(i j) + bold(E)_(j i)): m = 0, ..., M, i, j = 1, 2, 3} subset bold(Sigma), \
-      bold(Xi)_bold(U) := & span{xi_m bold(e)_j: m = 0, ..., M, j = 1, 2, 3 } subset bold(U),
+      bold(Xi)_bold(U) := & span{xi_m bold(e)_i: m = 0, ..., M, i = 1, 2, 3 } subset bold(U),
 $
 其中 $bold(E)_(i j)$ 是 $RR^(3 times 3)$ 的标准单位矩阵，$bold(e)_i$ 是 $RR^3$ 的标准基向量。
 注意当 $i = j$ 时有 $bold(E)_(i i) + bold(E)_(i i) = 2 bold(E)_(i i)$，为避免对角项的系数重复，下面改用 Voigt 形式的一组对称基 ${upright(bold(E))_alpha}_1^6$：
@@ -99,7 +99,7 @@ $
 将近似解在上述基上展开：
 $
   bold(phi)_bold(sigma) & = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) xi_m upright(bold(E))_alpha, \
-      bold(phi)_bold(u) & = sum_(m=0)^M sum_(j=1)^3 u_(m, j) xi_m bold(e)_j.
+      bold(phi)_bold(u) & = sum_(m=0)^M sum_(i=1)^3 u_(m, i) xi_m bold(e)_i.
 $
 记系数向量
 $
@@ -118,7 +118,7 @@ $
 定义矩阵块与离散载荷向量（复合指标按上述堆叠顺序理解）：
 $
   bold(A)_((n, beta), (m, alpha)) & := a(xi_n upright(bold(E))_beta, xi_m upright(bold(E))_alpha), \
-      bold(B)_((n, beta), (m, j)) & := b(xi_n upright(bold(E))_beta, xi_m bold(e)_j), \
+      bold(B)_((n, beta), (m, i)) & := b(xi_n upright(bold(E))_beta, xi_m bold(e)_i), \
                  bold(F)_((n, j)) & := (bold(f), xi_n bold(e)_j).
 $
 并将离散载荷按 $(n, j)$ 堆叠为
@@ -151,17 +151,17 @@ $
 将系数展开式
 $ bold(phi)_bold(sigma) = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) xi_m upright(bold(E))_alpha $
 与
-$ bold(phi)_bold(u) = sum_(m=0)^M sum_(j=1)^3 u_(m, j) xi_m bold(e)_j $
+$ bold(phi)_bold(u) = sum_(m=0)^M sum_(i=1)^3 u_(m, i) xi_m bold(e)_i $
 代入，并利用双线性性；同时注意在线弹性常用对称性假设下 $a(bold(sigma), bold(tau)) = a(bold(tau), bold(sigma))$，得到
 $
   0
   = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) a(xi_n upright(bold(E))_beta, xi_m upright(bold(E))_alpha)
-  + sum_(m=0)^M sum_(j=1)^3 u_(m, j) b(xi_n upright(bold(E))_beta, xi_m bold(e)_j).
+  + sum_(m=0)^M sum_(i=1)^3 u_(m, i) b(xi_n upright(bold(E))_beta, xi_m bold(e)_i).
 $
 将上述两项分别识别为 $bold(A), bold(B)$ 的矩阵元素，即
 $
   sum_(m=0)^M sum_(alpha=1)^6 bold(A)_((n, beta), (m, alpha)) s_(m, alpha)
-  + sum_(m=0)^M sum_(j=1)^3 bold(B)_((n, beta), (m, j)) u_(m, j) = 0.
+  + sum_(m=0)^M sum_(i=1)^3 bold(B)_((n, beta), (m, i)) u_(m, i) = 0.
 $
 
 同理，对任意固定的 $(n, j)$，取测试函数 $bold(phi)_bold(v) = xi_n bold(e)_j$。第二条离散变分方程为
@@ -187,7 +187,7 @@ $
 由于 $xi_n, xi_m$ 为标量函数且 $upright(bold(E))_alpha, upright(bold(E))_beta$ 为常矩阵，有
 $
   bold(A)_((n, beta), (m, alpha))
-  = integral_Omega xi_n(bold(x)) xi_m(bold(x)) ((bold(S)(bold(x)) : upright(bold(E))_beta) : upright(bold(E))_alpha) dif bold(x).
+  = integral_Omega xi_n (bold(x)) xi_m (bold(x)) ((bold(S)(bold(x)) : upright(bold(E))_beta) : upright(bold(E))_alpha) dif bold(x).
 $
 若将收缩写成坐标分量（Frobenius 内积），则
 $
@@ -216,15 +216,15 @@ $
 
 由定义
 $
-  bold(B)_((n, beta), (m, j))
-  := b(xi_n upright(bold(E))_beta, xi_m bold(e)_j)
-  = integral_Omega (nabla dot (xi_n upright(bold(E))_beta)) dot (xi_m bold(e)_j) dif bold(x).
+  bold(B)_((n, beta), (m, i))
+  := b(xi_n upright(bold(E))_beta, xi_m bold(e)_i)
+  = integral_Omega (nabla dot (xi_n upright(bold(E))_beta)) dot (xi_m bold(e)_i) dif bold(x).
 $
 利用张量散度的分量定义 $(nabla dot bold(tau))_p = tau_(p k, k)$，令 $bold(tau) = xi_n upright(bold(E))_beta$，则
 $
-  (nabla dot (xi_n upright(bold(E))_beta))_j
-  = (xi_n (upright(bold(E))_beta)_(j k))_(,k)
-  = (upright(bold(E))_beta)_(j k) partial_k xi_n,
+  (nabla dot (xi_n upright(bold(E))_beta))_i
+  = (xi_n (upright(bold(E))_beta)_(i k))_(,k)
+  = (upright(bold(E))_beta)_(i k) partial_k xi_n,
 $
 即向量形式
 $
@@ -232,8 +232,8 @@ $
 $
 因此
 $
-  bold(B)_((n, beta), (m, j)) = integral_Omega xi_m (upright(bold(E))_beta nabla xi_n)_j dif bold(x)
-  = integral_Omega xi_m sum_(k=1)^3 (upright(bold(E))_beta)_(j k) partial_k xi_n dif bold(x).
+  bold(B)_((n, beta), (m, i)) = integral_Omega xi_m (upright(bold(E))_beta nabla xi_n)_i dif bold(x)
+  = integral_Omega xi_m sum_(k=1)^3 (upright(bold(E))_beta)_(i k) partial_k xi_n dif bold(x).
 $
 
 对 6 个对称基，$upright(bold(E))_beta nabla xi_n$ 可完全写成梯度分量的线性组合。记
@@ -252,9 +252,9 @@ $
   )
 $
 
-而对于神经特征函数 $xi_m(bold(x)) = sigma(bold(w)_m^T bold(x) + b_m)$（$m >= 1$），其梯度可直接计算为
+而对于神经特征函数 $xi_n (bold(x)) = sigma(bold(w)_n^T bold(x) + b_n)$（$n >= 1$），其梯度可直接计算为
 $
-  nabla xi_m(bold(x)) = sigma'(bold(w)_m^T bold(x) + b_m) bold(w)_m.
+  nabla xi_n (bold(x)) = sigma'(bold(w)_n^T bold(x) + b_n) bold(w)_n.
 $
 特别地 $xi_0 = 1$，故 $nabla xi_0 = 0$，从而所有以 $n=0$ 为测试函数的 $bold(B)$ 行元素均为 $0$。
 
@@ -279,7 +279,7 @@ $
   cases(
     bold(A)_((n, beta), (m, alpha))
     &approx sum_(q=1)^Q w_q xi_n (bold(x)_q) xi_m (bold(x)_q) ((bold(S)(bold(x)_q) : upright(bold(E))_beta) : upright(bold(E))_alpha),
-    bold(B)_((n, beta), (m, j)) &approx sum_(q=1)^Q w_q xi_m (bold(x)_q) (upright(bold(E))_beta nabla xi_n (bold(x)_q))_j,
+    bold(B)_((n, beta), (m, i)) &approx sum_(q=1)^Q w_q xi_m (bold(x)_q) (upright(bold(E))_beta nabla xi_n (bold(x)_q))_i,
     bold(F)_((n, j)) &approx sum_(q=1)^Q w_q f_j (bold(x)_q) xi_n (bold(x)_q).
   )
 $
