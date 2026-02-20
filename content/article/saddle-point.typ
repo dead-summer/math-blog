@@ -284,83 +284,38 @@ $
   )
 $
 
-= Uzawa 迭代法
+= ADMM 算法
 
-上一节得到离散鞍点系统
+Hellinger-Reissner 泛函在离散系数 $(bold(s), bold(u))$ 上可写成
 $
-  mat(bold(A), bold(B); bold(B)^T, 0) mat(bold(s); bold(u)) = mat(0; -bold(F)),
+  Pi(bold(s), bold(u)) := 1/2 bold(s)^T bold(A) bold(s) + bold(s)^T bold(B) bold(u) + bold(F)^T bold(u).
 $
-等价于
+其梯度为 $nabla_(bold(s)) Pi = bold(A) bold(s) + bold(B) bold(u)$、$nabla_(bold(u)) Pi = bold(B)^T bold(s) + bold(F)$。
+由于 $Pi$ 关于 $bold(u)$ 线性，若不额外约束或正则，直接 $max_(bold(u)) Pi$ 在有限维上通常无界；因此常用“对偶上升/梯度上升”迭代将残差驱动到零。给定步长 $alpha_k, beta_k > 0$，可采用交替更新
 $
-  cases(
-    bold(A) bold(s) + bold(B) bold(u) = 0,
-    bold(B)^T bold(s) + bold(F) = 0.
-  )
+  bold(u)^(k+1) &= bold(u)^(k) + alpha_k (bold(B)^T bold(s)^(k) + bold(F)), \
+  bold(s)^(k+1) &= bold(s)^(k) - beta_k (bold(A) bold(s)^(k) + bold(B) bold(u)^(k+1)).
 $
+在神经网络参数化下，上式可理解为“固定一块参数、对另一块做若干步优化”（如 Adam）的线性化版本。
 
-Uzawa 方法的基本思路是：对固定的乘子 $bold(u)$，先解出使拉格朗日函数最小的 $bold(s)$；再沿对偶函数的梯度对 $bold(u)$ 做上升迭代。
 
-== 离散拉格朗日函数与驻点条件
+= Uzawa 算法
 
-定义离散拉格朗日函数
+Uzawa 算法通过先消去 $bold(s)$ 再更新 $bold(u)$ 来解耦块系统。给定 $bold(u)^(k)$，先求解
 $
-  cal(L)(bold(s), bold(u))
-  := 1/2 bold(s)^T bold(A) bold(s) + bold(u)^T (bold(B)^T bold(s) + bold(F)).
+  bold(A) bold(s)^(k+1) = -bold(B) bold(u)^(k),
 $
-其关于 $(bold(s), bold(u))$ 的一阶驻点条件为
+随后用残差作上升更新
 $
-  cases(
-    nabla_(bold(s)) cal(L) = bold(A) bold(s) + bold(B) bold(u) = 0,
-    nabla_(bold(u)) cal(L) = bold(B)^T bold(s) + bold(F) = 0,
-  )
+  bold(u)^(k+1) = bold(u)^(k) + mu (bold(B)^T bold(s)^(k+1) + bold(F)),
 $
-即原鞍点系统。
+其中 $mu > 0$ 为步长。
 
-== Schur 补与对偶函数
+= Arrow-Hurwicz 算法
 
-对固定的 $bold(u)$，由 $bold(A) bold(s) + bold(B) bold(u) = 0$ 得
+为避免每步精确求解 $bold(A)$ 子问题，引入预条件子 $bold(P), bold(K)$（通常取为对称正定矩阵或其近似）并做同时更新
 $
-  bold(s)(bold(u)) = - bold(A)^(-1) bold(B) bold(u).
+  bold(s)^(k+1) = bold(s)^(k) - bold(P) (bold(A) bold(s)^(k) + bold(B) bold(u)^(k)), \
+  bold(u)^(k+1) = bold(u)^(k) + gamma bold(K) (bold(B)^T bold(s)^(k+1) + bold(F)),
 $
-代入第二式得到 Schur 补系统
-$
-  bold(S) bold(u) = bold(F), quad bold(S) := bold(B)^T bold(A)^(-1) bold(B).
-$
-将 $bold(s)$ 消去得到对偶函数（约化目标）
-$
-  d(bold(u)) := min_(bold(s)) cal(L)(bold(s), bold(u))
-  = - 1/2 bold(u)^T bold(S) bold(u) + bold(u)^T bold(F),
-$
-其梯度为
-$
-  nabla d(bold(u)) = bold(F) - bold(S) bold(u) = bold(B)^T bold(s)(bold(u)) + bold(F).
-$
-
-== Uzawa 迭代格式
-
-取初值 $bold(u)^0$（例如 $bold(u)^0 = 0$）。对 $k=0,1,2,...$，按如下两步迭代：
-$
-  cases(
-    bold(A) bold(s)^(k+1) = - bold(B) bold(u)^k,
-    bold(r)^(k+1) := bold(B)^T bold(s)^(k+1) + bold(F),
-    bold(u)^(k+1) = bold(u)^k + rho bold(r)^(k+1).
-  )
-$
-其中 $bold(r)^(k+1)$ 是约束残差（也是对偶梯度）。由 $bold(s)^(k+1)=-bold(A)^(-1) bold(B) bold(u)^k$ 可见，该迭代等价于对 Schur 系统 $bold(S) bold(u) = bold(F)$ 的 Richardson/梯度法：
-$
-  bold(u)^(k+1) = bold(u)^k + rho (bold(F) - bold(S) bold(u)^k).
-$
-
-== 步长条件与停止准则
-
-假设 $bold(A)$ 对称正定，且 $bold(S)$ 在相关子空间上对称正定，则当步长满足
-$
-  0 < rho < 2 / lambda_max(bold(S))
-$
-时，上述迭代收敛到 $bold(u)^*$，并由 $bold(s)^*=-bold(A)^(-1) bold(B) bold(u)^*$ 得到 $bold(s)^*$。
-
-实践中常用
-$
-  norm(bold(r)^(k+1))_2 / norm(bold(F))_2 <= epsilon.alt
-$
-作为停止准则。
+其中 $gamma > 0$ 为步长参数。
