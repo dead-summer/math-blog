@@ -47,13 +47,34 @@ $
 
 考虑一个单隐层全连接神经网络：
 $
-  phi := alpha_0 + sum_(m=1)^M alpha_m sigma(bold(w)_m^T bold(x) + b_m),
+  phi := alpha_0 + sum_(m=1)^M alpha_m sigma.alt(bold(w)_m^T bold(x) + b_m),
 $
-其中 $sigma$ 是激活函数，$M$ 是神经元数量，$alpha_m in RR$ 是输出层权重，$bold(w)_m in RR^3$ 是输入层权重，$b_m in RR$ 是偏置项。记隐藏层神经元为 $xi_m = sigma(bold(w)_m^T bold(x) + b_m)$，我们可将 $xi_m: RR^3 -> RR$ 视为一个特征函数，隐藏层神经元集 ${xi_m}_1^M$ 可视为 $RR^3$ 空间中的一组基。定义神经特征空间
+其中 $sigma.alt$ 是激活函数，$M$ 是神经元数量，$alpha_m in RR$ 是输出层权重，$bold(w)_m in RR^3$ 是输入层权重，$b_m in RR$ 是偏置项。记隐藏层神经元为
+$
+  xi_m(bold(x)) = sigma.alt(bold(w)_m^T bold(x) + b_m),
+$
+我们可将 $xi_m: RR^3 -> RR$ 视为一个特征函数，隐藏层神经元集 ${xi_m}_1^M$ 可视为 $RR^3$ 空间中的一组基。定义神经特征空间
 $
   bold(Xi) := span{xi_0, xi_1, ..., xi_M },
 $
 其中 $xi_0 = 1$。因此，神经特征空间 $bold(Xi)$ 是由单隐层全连接神经网络的隐藏层神经元生成的函数空间。我们可以将 $bold(Xi)$ 视为一个近似空间，用于近似求解线弹性方程的解。
+
+为便于在 3D 中稳定采样并计算梯度，本文采用如下重参数化来生成 $(bold(w)_m, b_m)$：取全局形状参数 $gamma > 0$，并令
+$
+  bold(w)_m = gamma bold(a)_m, quad b_m = gamma r_m.
+$
+其中 $norm(bold(a)_m)_2 = 1$ 表示超平面法向量，$r_m$ 表示截距。于是
+$
+  xi_m(bold(x)) = sigma.alt(gamma (bold(a)_m^T bold(x) + r_m)).
+$
+采样策略为
+$
+  bold(X)_m ~ cal(N)(0, I_3), quad bold(a)_m = bold(X)_m / norm(bold(X)_m)_2, quad r_m ~ U[0, 1],
+$
+然后取 $bold(w)_m = gamma bold(a)_m, b_m = gamma r_m$。反过来亦有等价关系
+$
+  bold(a)_m = bold(w)_m / norm(bold(w)_m)_2, quad r_m = b_m / norm(bold(w)_m)_2, quad gamma = norm(bold(w)_m)_2.
+$
 
 = 导出线性系统
 
@@ -252,9 +273,13 @@ $
   )
 $
 
-而对于神经特征函数 $xi_n (bold(x)) = sigma(bold(w)_n^T bold(x) + b_n)$（$n >= 1$），其梯度可直接计算为
+而对于神经特征函数 $xi_n (bold(x)) = sigma.alt(bold(w)_n^T bold(x) + b_n)$（$n >= 1$），其梯度可直接计算为
 $
-  nabla xi_n (bold(x)) = sigma'(bold(w)_n^T bold(x) + b_n) bold(w)_n.
+  nabla xi_n (bold(x)) = sigma.alt'(bold(w)_n^T bold(x) + b_n) bold(w)_n.
+$
+若采用重参数化 $bold(w)_n = gamma bold(a)_n, b_n = gamma r_n$，则等价地
+$
+  nabla xi_n (bold(x)) = sigma.alt'(gamma (bold(a)_n^T bold(x) + r_n)) gamma bold(a)_n.
 $
 特别地 $xi_0 = 1$，故 $nabla xi_0 = 0$，从而所有以 $n=0$ 为测试函数的 $bold(B)$ 行元素均为 $0$。
 
@@ -325,21 +350,223 @@ $
 
 = Uzawa 算法
 
-Uzawa 算法通过先消去 $bold(s)$ 再更新 $bold(u)$ 来解耦块系统。给定 $bold(u)^(k)$，先求解
+Uzawa 算法通过先消去 $bold(s)$ 再更新 $bold(u)$ 来解耦块系统。给定 $bold(u)^(k)$，先令 $bold(s)^(k+1)$ 满足
 $
   bold(A) bold(s)^(k+1) = -bold(B) bold(u)^(k),
 $
-随后用残差作上升更新
+这等价于求解关于 $bold(s)$ 的二次最小化问题
 $
-  bold(u)^(k+1) = bold(u)^(k) + mu (bold(B)^T bold(s)^(k+1) + bold(F)),
+  min_(bold(s)) (1/2 bold(s)^T bold(A) bold(s) + bold(s)^T bold(B) bold(u)^(k)),
 $
-其中 $mu > 0$ 为步长。
+其一阶最优性条件正是 $bold(A) bold(s) + bold(B) bold(u)^(k) = 0$。
+
+随后用第二块方程的残差作梯度上升更新
+$
+  bold(u)^(k+1) = bold(u)^(k) + eta_bold(u) (bold(B)^T bold(s)^(k+1) + bold(F)),
+$
+其中 $eta_bold(u) > 0$ 为步长。等价地，$bold(u)^(k+1)$ 是如下带近端项的最大化问题的解：
+$
+  max_(bold(u))
+  [
+    (bold(B)^T bold(s)^(k+1) + bold(F))^T bold(u)
+    - 1/(2 eta_bold(u)) (bold(u) - bold(u)^(k))^T (bold(u) - bold(u)^(k))
+  ].
+$
+
+在第 $k$ 轮循环中，更新
+$
+  (bold(A) + rho bold(I)) bold(s)^(k) &= -bold(B) bold(u)^(k), \
+  bold(u)^(k) &= bold(u)^(k) + eta_bold(u) (bold(B)^T bold(s)^(k) + bold(F)).
+$
+最后设 $bold(u)^(k+1) = bold(u)^(k, T)$。其中 $bold(I)$ 为单位阵，$rho >= 0$ 是用于数值稳健性的阻尼参数；当 $bold(A)$ 可能奇异或病态时可取 $rho > 0$。
 
 = Arrow-Hurwicz 算法
 
-为避免每步精确求解 $bold(A)$ 子问题，引入预条件子 $bold(P), bold(K)$（通常取为对称正定矩阵或其近似）并做同时更新
+Uzawa 算法每步需要解 $bold(A) bold(s) = -bold(B) bold(u)$，可看作先对 $bold(s)$ 做“精确消元”，再用残差更新 $bold(u)$。若不希望每步求解线性系统，可以将 $bold(s)$ 子问题视为二次最小化，并用一次（预条件）梯度下降近似其解，从而得到 Arrow-Hurwicz 型的同时更新。
+
+由上一节梯度表达式
 $
-  bold(s)^(k+1) = bold(s)^(k) - bold(P) (bold(A) bold(s)^(k) + bold(B) bold(u)^(k)), \
-  bold(u)^(k+1) = bold(u)^(k) + gamma bold(K) (bold(B)^T bold(s)^(k+1) + bold(F)),
+  nabla_(bold(s)) Pi = bold(A) bold(s) + bold(B) bold(u), \
+  nabla_(bold(u)) Pi = bold(B)^T bold(s) + bold(F),
 $
-其中 $gamma > 0$ 为步长参数。
+取预条件子 $bold(J), bold(K)$（通常取为对称正定矩阵或其近似），用一阶法对 $bold(s)$ 做下降、对 $bold(u)$ 做上升：
+$
+  bold(s)^(k+1) = bold(s)^(k) - eta_bold(s) bold(J) [(bold(A) + rho bold(I)) bold(s)^(k) + bold(B) bold(u)^(k)], \
+  bold(u)^(k+1) = bold(u)^(k) + eta_bold(u) bold(K) (bold(B)^T bold(s)^(k+1) + bold(F)).
+$
+这里 $eta_bold(s), eta_bold(u) > 0$ 为学习率，$bold(I)$ 为单位阵，$rho >= 0$ 与上一节同义。当 $bold(A)$ 可能奇异或病态时可取 $rho > 0$。
+
+直观上，这相当于对 Uzawa 的 $bold(s)$-消元作非精确求解：当 $bold(J) approx bold(A)^(-1)$ 且 $bold(s)$ 更新迭代到收敛时，可视为逼近 Uzawa 的“先消去 $bold(s)$ 再更新 $bold(u)$”。
+
+= 数值实验
+
+本节给出本文将要进行的 3D 数值实验设置，用于验证前述离散鞍点系统与三种迭代算法（ADMM、Uzawa、Arrow-Hurwicz）的可实现性与收敛性。所有对比实验均采用相同的 3D 结构（应力 Voigt 6 分量 + 位移 3 分量），并在同一组采样点上组装 $bold(A), bold(B), bold(F)$ 以保证公平比较。
+
+== 方程与边界条件
+
+考虑 3D 小变形各向同性线弹性模型。应变定义为
+$
+  bold(epsilon)(bold(u)) = 1/2(nabla bold(u) + (nabla bold(u))^T).
+$
+给定材料参数 $E, nu$，引入拉梅常数
+$
+  mu = E/(2(1+nu)), quad
+  lambda = E nu/((1+nu)(1-2 nu)).
+$
+本构关系写为
+$
+  bold(sigma)(bold(u)) = 2 mu bold(epsilon)(bold(u)) + lambda tr(bold(epsilon)(bold(u))) bold(I),
+$
+其中 $tr(bold(epsilon)) := bold(epsilon) : bold(I)$。平衡方程为
+$
+  -nabla dot bold(sigma)(bold(u)) = bold(f) quad "in" Omega,
+$
+并施加齐次 Dirichlet 边界条件
+$
+  bold(u) = 0 quad "on" partial Omega.
+$
+
+为与前文 Hellinger-Reissner 形式一致，取柔度张量 $bold(S) = bold(C)^(-1)$ 使得 $bold(S):bold(sigma) = bold(epsilon)(bold(u))$，并沿用工程 Voigt 记号装配 $bold(A)$ 块。
+
+== 计算域与制造解
+
+取计算域 $Omega = [0, 1]^3$。为保证齐次 Dirichlet 边界条件，定义包络函数
+$
+  zeta(bold(x)) = x_1(1-x_1) x_2(1-x_2) x_3(1-x_3).
+$
+设精确位移为
+$
+  bold(u)_"ex" (bold(x))
+  = zeta(bold(x))
+    mat(sin(pi x_1) sin(pi x_2) sin(pi x_3);
+     sin(2 pi x_1) sin(pi x_2) sin(pi x_3);
+     sin(pi x_1) sin(2 pi x_2) sin(pi x_3)).
+$
+则 $bold(u)_"ex" = 0$ 在 $partial Omega$ 上成立。相应精确应力取
+$
+  bold(sigma)_"ex" = bold(sigma)(bold(u)_"ex"),
+$
+体力通过制造解定义为
+$
+  bold(f)(bold(x)) = -nabla dot bold(sigma)_"ex" (bold(x)).
+$
+实现时将用自动微分或符号计算得到 $bold(f)$，不在文中展开其冗长表达式。
+
+== 材料参数与柔度矩阵
+
+选取常数材料参数
+$
+  E = 1, quad nu = 0.3.
+$
+在工程 Voigt 排列顺序 $(11, 22, 33, 12, 23, 13)$ 下，柔度矩阵 $upright(bold(S))$ 满足
+$
+  upright(bold(epsilon)) = upright(bold(S)) upright(bold(sigma)).
+$
+取
+$
+  upright(bold(S)) = 1/E mat(
+    1, -nu, -nu, 0, 0, 0;
+    -nu, 1, -nu, 0, 0, 0;
+    -nu, -nu, 1, 0, 0, 0;
+    0, 0, 0, 2(1+nu), 0, 0;
+    0, 0, 0, 0, 2(1+nu), 0;
+    0, 0, 0, 0, 0, 2(1+nu)
+  ).
+$
+该约定与前文工程剪切应变 $2 epsilon_(i j)$ 的定义一致。
+
+== 神经特征空间与离散未知量
+
+采用前文定义的单隐层全连接随机特征函数，取激活函数 $sigma.alt = tanh$：
+$
+  xi_0 = 1, quad xi_m (bold(x)) = sigma.alt(bold(w)_m^T bold(x) + b_m), quad m = 1, 2, ..., M.
+$
+其中 $bold(w)_m in RR^3, b_m in RR$ 在实验开始时按照如下方式随机生成并固定：
+$
+  bold(w)_m = gamma bold(a)_m, quad b_m = gamma r_m.
+$
+其中固定 $gamma = 2.0$ 以控制特征函数的频率范围；$bold(a)_m = bold(X)_m / norm(bold(X)_m)_2$，其中 $bold(X)_m ~ cal(N)(0, bold(I)_3)$ 是从标准正态分布采样的随机向量；$r_m ~ cal(U)[0, 1]$，是从 $[0, 1]$ 均匀分布采样的随机数。
+
+本文仅迭代更新离散未知量系数 $bold(s), bold(u)$。主实验取 $M = 256$，并考察 $M in {64, 128, 256}$ 的影响。
+
+在 3D 结构下，应力与位移的近似分别为
+$
+  bold(phi)_bold(sigma) = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) xi_m upright(bold(E))_alpha, \
+  bold(phi)_bold(u) = sum_(m=0)^M sum_(i=1)^3 u_(m, i) xi_m bold(e)_i,
+$
+从而得到离散鞍点系统
+$
+  mat(bold(A), bold(B); bold(B)^T, 0) mat(bold(s); bold(u)) = mat(0; -bold(F)).
+$
+
+== 数值积分与数据划分
+
+用均匀 Monte Carlo 采样近似积分。训练阶段在 $Omega$ 内均匀采样 $Q_"train" = 20000$ 个点 ${bold(x)_q}_(q=1)^(Q_"train")$，取等权
+$
+  w_q = abs(Omega) / Q_"train" = 1 / Q_"train".
+$
+在该训练点集上一次性组装 $bold(A), bold(B), bold(F)$，并在其上迭代三种算法（全量、确定性）。另外独立采样 $Q_"test" = 10000$ 个测试点用于误差评估。
+
+== 算法对比设置
+
+为避免离散 $bold(A)$ 病态带来的数值问题，统一采用轻微阻尼 $rho = 10^(-6)$；即在涉及求解 $bold(s)$ 的步骤中以 $bold(A) + rho bold(I)$ 替代 $bold(A)$。
+
+#figure(
+  three-line-table(
+    columns: 3,
+    align: (right, left, left)
+  )[
+    | 参数 | 取值 |  备注|
+    |------|------|------|
+    | 域 | $Omega = [0, 1]^3$ | |
+    | 边界条件 | 齐次 Dirichlet：$bold(u)=0$ on $partial Omega$ | |
+    | 材料 | 各向同性常系数：$E=1, nu=0.3$ | |
+    | 随机特征 | 激活 $tanh$ | 主实验 $M=256$，消融实验：$64,128,256$ |
+    | 特征采样 | $bold(w)_m = gamma bold(a)_m$，$b_m = gamma r_m$ | $gamma=2.0$，$bold(a)_m$ 为单位向量，$r_m ~ cal(U)[0, 1]$ |
+    | 训练点 | $Q_"train" = 20000$ | 均匀采样、等权 |
+    | 测试点 | $Q_"test" = 10000$ | 均匀采样、等权 |
+    | 阻尼 | $rho = 10^(-6)$ | |
+    | 初值 | $bold(s)^0 = 0, bold(u)^0 = 0$ | |
+    | 迭代 | $K = 2000$ 或满足停止准则 | |
+  ],
+)
+
+算法细节如下：
+
+- *ADMM（基线）*: 对 $bold(u)$ 做梯度上升、对 $bold(s)$ 做梯度下降，采用 Adam 优化器，学习率 $0.02$，$beta = (0.9, 0.98)$，每轮各做 1 次更新。
+- *Uzawa*: 每轮先解
+  $
+    (bold(A) + rho bold(I)) bold(s)^(k+1) = -bold(B) bold(u)^(k),
+  $
+  再更新
+  $
+    bold(u)^(k+1) = bold(u)^(k) + eta_bold(u) (bold(B)^T bold(s)^(k+1) + bold(F)),
+  $
+  取 $eta_bold(u) = 10^(-2)$。
+- *Arrow-Hurwicz*: 取预条件子 $bold(J) = diag(bold(A) + rho bold(I))^(-1)$，$bold(K) = bold(I)$，步长 $eta_bold(s) = 1, eta_bold(u) = 10^(-2)$，按前文公式同时更新 $bold(s), bold(u)$。
+
+== 评价指标
+
+- *KKT 残差*: 记
+  $
+    bold(r)_bold(s) = bold(A) bold(s) + bold(B) bold(u), \
+    bold(r)_bold(u) = bold(B)^T bold(s) + bold(F),
+  $
+  记录 $abs(bold(r)_bold(s))_2$ 与 $abs(bold(r)_bold(u))_2$ 随迭代的变化（对数坐标）。
+- *相对 $L^2$ 误差（测试点 Monte Carlo 估计）*: 在测试点上用
+  $
+    abs(bold(u)_h - bold(u)_"ex")_(L^2(Omega))
+    approx (abs(Omega)/Q_"test" sum_(q=1)^(Q_"test") abs(bold(u)_h(bold(x)_q) - bold(u)_"ex"(bold(x)_q))^2)^(1/2)
+  $
+  估计位移误差，并用同样方式估计应力误差（张量按 Frobenius 范数聚合）。报告相对误差
+  $
+    abs(bold(u)_h - bold(u)_"ex")_(L^2) / abs(bold(u)_"ex")_(L^2), quad
+    abs(bold(sigma)_h - bold(sigma)_"ex")_(L^2) / abs(bold(sigma)_"ex")_(L^2).
+  $
+- *收敛成本*: 记录达到阈值 $abs(bold(r)_bold(s))_2 + abs(bold(r)_bold(u))_2 <= 10^(-6)$ 的迭代步数与壁钟时间。
+
+== 消融实验（计划）
+
+- *特征数量*: $M in {64, 128, 256}$。
+- *采样点数*: $Q_"train" in {5000, 20000}$。
+- *阻尼强度*: $rho in {0, 10^(-8), 10^(-6)}$。
