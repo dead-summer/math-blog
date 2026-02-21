@@ -290,14 +290,38 @@ Hellinger-Reissner 泛函在离散系数 $(bold(s), bold(u))$ 上可写成
 $
   Pi(bold(s), bold(u)) := 1/2 bold(s)^T bold(A) bold(s) + bold(s)^T bold(B) bold(u) + bold(F)^T bold(u).
 $
-其梯度为 $nabla_(bold(s)) Pi = bold(A) bold(s) + bold(B) bold(u)$、$nabla_(bold(u)) Pi = bold(B)^T bold(s) + bold(F)$。
-由于 $Pi$ 关于 $bold(u)$ 线性，若不额外约束或正则，直接 $max_(bold(u)) Pi$ 在有限维上通常无界；因此常用“对偶上升/梯度上升”迭代将残差驱动到零。给定步长 $alpha_k, beta_k > 0$，可采用交替更新
+其梯度为
 $
-  bold(u)^(k+1) &= bold(u)^(k) + alpha_k (bold(B)^T bold(s)^(k) + bold(F)), \
-  bold(s)^(k+1) &= bold(s)^(k) - beta_k (bold(A) bold(s)^(k) + bold(B) bold(u)^(k+1)).
+  nabla_(bold(s)) Pi = bold(A) bold(s) + bold(B) bold(u), \
+  nabla_(bold(u)) Pi = bold(B)^T bold(s) + bold(F).
 $
-在神经网络参数化下，上式可理解为“固定一块参数、对另一块做若干步优化”（如 Adam）的线性化版本。
+由于 $Pi$ 关于 $bold(u)$ 线性，严格的 $max_(bold(u)) Pi$ 在有限维上通常无界；因此在实现中不求精确解，而是将 $(bold(s), bold(u))$ 视为“权重”，在采样点上用随机小批量的一阶算法交替更新。
 
+令 $bb(B) subset {1, 2, ..., Q}$ 为一个小批量索引集，将上一节求积公式中的求和 $sum_(q=1)^Q$ 限制为 $sum_(q in bb(B))$，即可得到对应的小批量块 $bold(A)_(bb(B)), bold(B)_(bb(B)), bold(F)_(bb(B))$。据此定义小批量泛函
+$
+  Pi_(bb(B))(bold(s), bold(u))
+  := 1/2 bold(s)^T bold(A)_(bb(B)) bold(s) + bold(s)^T bold(B)_(bb(B)) bold(u) + bold(F)_(bb(B))^T bold(u).
+$
+
+在第 $k+1$ 轮外循环中，先固定 $bold(s)^k$ 近似求解 $max_(bold(u)) Pi$：随机打乱采样点索引并划分为若干小批量 ${bb(B)_t}_(t=1)^T$，对每个批次构造随机梯度并做 Adam 梯度上升
+$
+  bold(u)^(k, 0) &= bold(u)^k, \
+  bold(g)_u^(k, t) &:= nabla_(bold(u)) Pi_(bb(B)_t)(bold(s)^k, bold(u)^(k, t-1))
+    = bold(B)_(bb(B)_t)^T bold(s)^k + bold(F)_(bb(B)_t), \
+  bold(u)^(k, t) &= bold(u)^(k, t-1) + eta_bold(u) bold(g)_u^(k, t), quad t = 1, 2, ..., T, \
+  bold(u)^(k+1) &= bold(u)^(k, T).
+$
+其中更新步写成最简单的梯度上升形式；实际实现中依赖优化器行为（如 Adam 将步长 $eta_bold(u)$ 替换为自适应更新）。
+
+当遍历完全部采样点得到 $bold(u)^(k+1)$ 后，再固定 $bold(u)^(k+1)$ 近似求解 $min_(bold(s)) Pi$，同样按小批量遍历做梯度下降得到 $bold(s)^(k+1)$：
+$
+  bold(s)^(k, 0) &= bold(s)^k, \
+  bold(g)_s^(k, t) &:= nabla_(bold(s)) Pi_(bb(B)_t)(bold(s)^(k, t-1), bold(u)^(k+1))
+    = bold(A)_(bb(B)_t) bold(s)^(k, t-1) + bold(B)_(bb(B)_t) bold(u)^(k+1), \
+  bold(s)^(k, t) &= bold(s)^(k, t-1) - eta_bold(s) bold(g)_s^(k, t), quad t = 1, 2, ..., T, \
+  bold(s)^(k+1) &= bold(s)^(k, T).
+$
+这里 $eta_bold(s) > 0$ 为学习率。
 
 = Uzawa 算法
 
