@@ -333,20 +333,20 @@ $
   bold(u)^(k, 0) &= bold(u)^k, \
   bold(g)_u^(k, t) &:= nabla_(bold(u)) Pi_(bb(B)_t)(bold(s)^k, bold(u)^(k, t-1))
     = bold(B)_(bb(B)_t)^T bold(s)^k + bold(F)_(bb(B)_t), \
-  bold(u)^(k, t) &= bold(u)^(k, t-1) + eta_bold(u) bold(g)_u^(k, t), quad t = 1, 2, ..., T, \
+  bold(u)^(k, t) &= bold(u)^(k, t-1) + eta_bold(u)^"ADMM" bold(g)_u^(k, t), quad t = 1, 2, ..., T, \
   bold(u)^(k+1) &= bold(u)^(k, T).
 $
-其中更新步写成最简单的梯度上升形式；实际实现中依赖优化器行为（如 Adam 将步长 $eta_bold(u)$ 替换为自适应更新）。
+其中更新步写成最简单的梯度上升形式；实际实现中依赖优化器行为（如 Adam 将步长 $eta_bold(u)^"ADMM"$ 替换为自适应更新）。
 
 当遍历完全部采样点得到 $bold(u)^(k+1)$ 后，再固定 $bold(u)^(k+1)$ 近似求解 $min_(bold(s)) Pi$，同样按小批量遍历做梯度下降得到 $bold(s)^(k+1)$：
 $
   bold(s)^(k, 0) &= bold(s)^k, \
   bold(g)_s^(k, t) &:= nabla_(bold(s)) Pi_(bb(B)_t)(bold(s)^(k, t-1), bold(u)^(k+1))
     = bold(A)_(bb(B)_t) bold(s)^(k, t-1) + bold(B)_(bb(B)_t) bold(u)^(k+1), \
-  bold(s)^(k, t) &= bold(s)^(k, t-1) - eta_bold(s) bold(g)_s^(k, t), quad t = 1, 2, ..., T, \
+  bold(s)^(k, t) &= bold(s)^(k, t-1) - eta_bold(s)^"ADMM" bold(g)_s^(k, t), quad t = 1, 2, ..., T, \
   bold(s)^(k+1) &= bold(s)^(k, T).
 $
-这里 $eta_bold(s) > 0$ 为学习率。
+这里 $eta_bold(s)^"ADMM" > 0$ 为学习率。
 
 = Uzawa 算法
 
@@ -362,21 +362,21 @@ $
 
 随后用第二块方程的残差作梯度上升更新
 $
-  bold(u)^(k+1) = bold(u)^(k) + eta_bold(u) (bold(B)^T bold(s)^(k+1) + bold(F)),
+  bold(u)^(k+1) = bold(u)^(k) + eta_bold(u)^"Uzawa" (bold(B)^T bold(s)^(k+1) + bold(F)),
 $
-其中 $eta_bold(u) > 0$ 为步长。等价地，$bold(u)^(k+1)$ 是如下带近端项的最大化问题的解：
+其中 $eta_bold(u)^"Uzawa" > 0$ 为步长。等价地，$bold(u)^(k+1)$ 是如下带近端项的最大化问题的解：
 $
   max_(bold(u))
   [
     (bold(B)^T bold(s)^(k+1) + bold(F))^T bold(u)
-    - 1/(2 eta_bold(u)) (bold(u) - bold(u)^(k))^T (bold(u) - bold(u)^(k))
+    - 1/(2 eta_bold(u)^"Uzawa") (bold(u) - bold(u)^(k))^T (bold(u) - bold(u)^(k))
   ].
 $
 
 在第 $k$ 轮循环中，更新
 $
   (bold(A) + rho bold(I)) bold(s)^(k) &= -bold(B) bold(u)^(k), \
-  bold(u)^(k) &= bold(u)^(k) + eta_bold(u) (bold(B)^T bold(s)^(k) + bold(F)).
+  bold(u)^(k) &= bold(u)^(k) + eta_bold(u)^"Uzawa" (bold(B)^T bold(s)^(k) + bold(F)).
 $
 最后设 $bold(u)^(k+1) = bold(u)^(k, T)$。其中 $bold(I)$ 为单位阵，$rho >= 0$ 是用于数值稳健性的阻尼参数；当 $bold(A)$ 可能奇异或病态时可取 $rho > 0$。
 
@@ -391,16 +391,16 @@ $
 $
 取预条件子 $bold(J), bold(K)$（通常取为对称正定矩阵或其近似），用一阶法对 $bold(s)$ 做下降、对 $bold(u)$ 做上升：
 $
-  bold(s)^(k+1) = bold(s)^(k) - eta_bold(s) bold(J) [(bold(A) + rho bold(I)) bold(s)^(k) + bold(B) bold(u)^(k)], \
-  bold(u)^(k+1) = bold(u)^(k) + eta_bold(u) bold(K) (bold(B)^T bold(s)^(k+1) + bold(F)).
+  bold(s)^(k+1) = bold(s)^(k) - eta_bold(s)^"AH" bold(J) [(bold(A) + rho bold(I)) bold(s)^(k) + bold(B) bold(u)^(k)], \
+  bold(u)^(k+1) = bold(u)^(k) + eta_bold(u)^"AH" bold(K) (bold(B)^T bold(s)^(k+1) + bold(F)).
 $
-这里 $eta_bold(s), eta_bold(u) > 0$ 为学习率，$bold(I)$ 为单位阵，$rho >= 0$ 与上一节同义。当 $bold(A)$ 可能奇异或病态时可取 $rho > 0$。
+这里 $eta_bold(s)^"AH", eta_bold(u)^"AH" > 0$ 为学习率，$bold(I)$ 为单位阵，$rho >= 0$ 与上一节同义。当 $bold(A)$ 可能奇异或病态时可取 $rho > 0$。
 
 直观上，这相当于对 Uzawa 的 $bold(s)$-消元作非精确求解：当 $bold(J) approx bold(A)^(-1)$ 且 $bold(s)$ 更新迭代到收敛时，可视为逼近 Uzawa 的“先消去 $bold(s)$ 再更新 $bold(u)$”。
 
 = 数值实验
 
-本节给出本文将要进行的 3D 数值实验设置，用于验证前述离散鞍点系统与三种迭代算法（ADMM、Uzawa、Arrow-Hurwicz）的可实现性与收敛性。所有对比实验均采用相同的 3D 结构（应力 Voigt 6 分量 + 位移 3 分量），并在同一组采样点上组装 $bold(A), bold(B), bold(F)$ 以保证公平比较。
+本节给出本文将要进行的 3D 数值实验设置，用于验证前述离散鞍点系统与四种迭代算法（Direct、ADMM、Uzawa 和 Arrow-Hurwicz）的可实现性与收敛性。所有对比实验均采用相同的 3D 结构（应力 Voigt 6 分量 + 位移 3 分量），并在同一组采样点上组装 $bold(A), bold(B), bold(F)$ 以保证公平比较。
 
 == 方程与边界条件
 
@@ -521,7 +521,7 @@ $
     | 域 | $Omega = [0, 1]^3$ | |
     | 边界条件 | 齐次 Dirichlet：$bold(u)=0$ on $partial Omega$ | |
     | 材料 | 各向同性常系数：$E=1, nu=0.3$ | |
-    | 随机特征 | 激活 $tanh$ | 主实验 $M=256$，消融实验：$64,128,256$ |
+    | 随机特征 | 激活 $tanh$ | 主实验 $M=256$，消融实验：$64,128,256,512$ |
     | 特征采样 | $bold(w)_m = gamma bold(a)_m$，$b_m = gamma r_m$ | $gamma=2.0$，$bold(a)_m$ 为单位向量，$r_m ~ cal(U)[0, 1]$ |
     | 训练点 | $Q_"train" = 20000$ | 均匀采样、等权 |
     | 测试点 | $Q_"test" = 10000$ | 均匀采样、等权 |
@@ -533,17 +533,25 @@ $
 
 算法细节如下：
 
-- *ADMM（基线）*: 对 $bold(u)$ 做梯度上升、对 $bold(s)$ 做梯度下降，采用 Adam 优化器，学习率 $0.02$，$beta = (0.9, 0.98)$，每轮各做 1 次更新。
-- *Uzawa*: 每轮先解
+- *ADMM*: 采用 Adam 优化器，学习率 $0.02$，$beta = (0.9, 0.98)$，每轮各做 1 次更新。
+- *Arrow-Hurwicz*: 取预条件子 $bold(J) = [diag(bold(A) + rho bold(I))]^(-1)$，$bold(K) = bold(I)$。
+
+其中，Uzawa 和 Arrow-Hurwicz 的步长由谱分析自动确定。具体策略如下：
+
++ *Schur 补谱半径*：通过幂迭代法估计 $lambda_max (bold(S)_bold(u))$，其中 Schur 补定义为
   $
-    (bold(A) + rho bold(I)) bold(s)^(k+1) = -bold(B) bold(u)^(k),
+    bold(S)_bold(u) = bold(B)^T (bold(A) + rho bold(I))^(-1) bold(B).
   $
-  再更新
+  对 $(bold(A) + rho bold(I))$ 做 Cholesky 分解并缓存，供 Uzawa 的线性求解复用。由此得到安全步长上界
   $
-    bold(u)^(k+1) = bold(u)^(k) + eta_bold(u) (bold(B)^T bold(s)^(k+1) + bold(F)),
+    eta_(bold(u))^"safe" = 1.5 / lambda_max (bold(S)_bold(u)).
   $
-  取 $eta_bold(u) = 10^(-2)$。
-- *Arrow-Hurwicz*: 取预条件子 $bold(J) = diag(bold(A) + rho bold(I))^(-1)$，$bold(K) = bold(I)$，步长 $eta_bold(s) = 1, eta_bold(u) = 10^(-2)$，按前文公式同时更新 $bold(s), bold(u)$。
++ *Jacobi 迭代谱半径*：通过幂迭代法估计 $rho(bold(R)_J)$，其中 Jacobi 迭代矩阵为
+  $
+    bold(R)_J = bold(I) - diag(bold(A) + rho bold(I))^(-1) (bold(A) + rho bold(I)).
+  $
+  当 $rho(bold(R)_J) > 1$ 时，取 $eta_(bold(s))^"safe" = 1.5 / rho(bold(R)_J)$；否则取 $eta_bold(s)^"safe" = 1$。
++ *最终步长*：取安全值与经验上界的较小者。Uzawa 步长为 $eta_bold(u)^"Uzawa" = min(10^(-2), eta_(bold(u))^"safe")$；Arrow-Hurwicz 步长为 $eta_bold(s)^"AH" = min(1, eta_(bold(s))^"safe")$，$eta_bold(u)^"AH" = min(10^(-2), eta_(bold(u))^"safe")$。
 
 == 评价指标
 
@@ -552,21 +560,57 @@ $
     bold(r)_bold(s) = bold(A) bold(s) + bold(B) bold(u), \
     bold(r)_bold(u) = bold(B)^T bold(s) + bold(F),
   $
-  记录 $abs(bold(r)_bold(s))_2$ 与 $abs(bold(r)_bold(u))_2$ 随迭代的变化（对数坐标）。
-- *相对 $L^2$ 误差（测试点 Monte Carlo 估计）*: 在测试点上用
+  记录 $norm(bold(r)_bold(s))_2$ 与 $norm(bold(r)_bold(u))_2$ 随迭代的变化。
+- *相对 $L^2$ 误差*: 在测试点上用
   $
-    abs(bold(u)_h - bold(u)_"ex")_(L^2(Omega))
+    norm(bold(u)_h - bold(u)_"ex")_(L^2(Omega))
     approx (abs(Omega)/Q_"test" sum_(q=1)^(Q_"test") abs(bold(u)_h(bold(x)_q) - bold(u)_"ex"(bold(x)_q))^2)^(1/2)
   $
   估计位移误差，并用同样方式估计应力误差（张量按 Frobenius 范数聚合）。报告相对误差
   $
-    abs(bold(u)_h - bold(u)_"ex")_(L^2) / abs(bold(u)_"ex")_(L^2), quad
-    abs(bold(sigma)_h - bold(sigma)_"ex")_(L^2) / abs(bold(sigma)_"ex")_(L^2).
+    norm(bold(u)_h - bold(u)_"ex")_(L^2) / norm(bold(u)_"ex")_(L^2), quad
+    norm(bold(sigma)_h - bold(sigma)_"ex")_(L^2) / norm(bold(sigma)_"ex")_(L^2).
   $
-- *收敛成本*: 记录达到阈值 $abs(bold(r)_bold(s))_2 + abs(bold(r)_bold(u))_2 <= 10^(-6)$ 的迭代步数与壁钟时间。
+- *收敛成本*: 记录达到阈值 $norm(bold(r)_bold(s))_2 + norm(bold(r)_bold(u))_2 <= 10^(-6)$ 的迭代步数与壁钟时间。
 
-== 消融实验（计划）
+== 实验结果
 
-- *特征数量*: $M in {64, 128, 256}$。
-- *采样点数*: $Q_"train" in {5000, 20000}$。
-- *阻尼强度*: $rho in {0, 10^(-8), 10^(-6)}$。
+主实验结果（$M = 256$，$Q_"train" = 20000$，$K = 2000$）如 @tb:main-results 所示。Direct 为直接求解鞍点系统的参考解。
+
+#figure(
+  three-line-table(
+    columns: 7,
+    align: (left, right, right, right, right, right, right),
+  )[
+    | 算法 | $norm(bold(r)_bold(s))_2$ | $norm(bold(r)_bold(u))_2$ | KKT 总残差 | 位移误差 | 应力误差 | 时间 (s) |
+    |------|------|------|------|------|------|------|
+    | Direct | $1.54 times 10^(-8)$ | $7.92 times 10^(-10)$ | $1.62 times 10^(-8)$ | $2.31 times 10^(1)$ | $3.21 times 10^(0)$ | $0.04$ |
+    | ADMM | $5.56 times 10^(0)$ | $5.82 times 10^(-2)$ | $5.62 times 10^(0)$ | $7.79 times 10^(0)$ | $1.43 times 10^(1)$ | $1.50$ |
+    | Uzawa | $5.24 times 10^(-6)$ | $1.40 times 10^(-3)$ | $1.41 times 10^(-3)$ | $7.61 times 10^(-1)$ | $8.40 times 10^(-1)$ | $5.46$ |
+    | Arrow-Hurwicz | $9.71 times 10^(-4)$ | $1.62 times 10^(-3)$ | $2.59 times 10^(-3)$ | $7.57 times 10^(-1)$ | $9.14 times 10^(-1)$ | $1.44$ |
+  ],
+  caption: [主实验结果（$M = 256$）],
+) <tb:main-results>
+
+KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence 和 @fig:l2-convergence。
+
+#figure(
+  image("/public/images/saddle-point/kkt-convergence.png"),
+  caption: [KKT 残差收敛曲线],
+) <fig:kkt-convergence>
+
+#figure(
+  image("/public/images/saddle-point/l2-error-convergence.png"),
+  caption: [$L^2$ 相对误差收敛曲线],
+) <fig:l2-convergence>
+
+== 消融实验
+
+固定 $Q_"train" = 20000$，分别取 $M in {64, 128, 256, 512}$，各算法在相同随机种子下运行 $K = 2000$ 步。结果如 @fig:ablation-M 所示。
+
+#figure(
+  image("/public/images/saddle-point/ablation-M.png"),
+  caption: [特征数量 $M$ 消融实验：误差和 KKT 残差随 $M$ 的变化],
+) <fig:ablation-M>
+
+Direct 求解的 L2 误差随 $M$ 增大而迅速下降（$M = 512$ 时位移误差降至 $4.00 times 10^(-1)$），说明离散近似空间的逼近能力与特征维度密切相关。Uzawa 和 Arrow-Hurwicz 在所有 $M$ 下均表现稳定，这表明迭代算法对鞍点系统的病态性具有一定的正则化效果。ADMM 在 2000 步内未能充分收敛，其 L2 误差随 $M$ 增大反而增加，反映了更大规模系统需要更多迭代步数。
