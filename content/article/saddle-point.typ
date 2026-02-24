@@ -533,25 +533,10 @@ $
 
 算法细节如下：
 
-- *ADMM*: 采用 Adam 优化器，学习率 $0.02$，$beta = (0.9, 0.98)$，每轮各做 1 次更新。
-- *Arrow-Hurwicz*: 取预条件子 $bold(J) = [diag(bold(A) + rho bold(I))]^(-1)$，$bold(K) = bold(I)$。
+- *ADMM*: 采用 Adam 优化器，学习率 $eta_bold(u) = eta_bold(s) = 0.02$，$bold(beta)^"Adam" = (0.9, 0.98)$，每轮各做 1 次更新。
+- *Uzawa*：步长 $eta_bold(u)^"Uzawa" = 0.01$。
+- *Arrow-Hurwicz*: 步长 $eta_bold(s)^"AH" = 0.003$，$eta_bold(u)^"AH" = 0.01$；取预条件子 $bold(J) = [diag(bold(A) + rho bold(I))]^(-1)$，$bold(K) = bold(I)$。
 
-其中，Uzawa 和 Arrow-Hurwicz 的步长由谱分析自动确定。具体策略如下：
-
-+ *Schur 补谱半径*：通过幂迭代法估计 $lambda_max (bold(S)_bold(u))$，其中 Schur 补定义为
-  $
-    bold(S)_bold(u) = bold(B)^T (bold(A) + rho bold(I))^(-1) bold(B).
-  $
-  对 $(bold(A) + rho bold(I))$ 做 Cholesky 分解并缓存，供 Uzawa 的线性求解复用。由此得到安全步长上界
-  $
-    eta_(bold(u))^"safe" = 1.5 / lambda_max (bold(S)_bold(u)).
-  $
-+ *Jacobi 迭代谱半径*：通过幂迭代法估计 $rho(bold(R)_J)$，其中 Jacobi 迭代矩阵为
-  $
-    bold(R)_J = bold(I) - diag(bold(A) + rho bold(I))^(-1) (bold(A) + rho bold(I)).
-  $
-  当 $rho(bold(R)_J) > 1$ 时，取 $eta_(bold(s))^"safe" = 1.5 / rho(bold(R)_J)$；否则取 $eta_bold(s)^"safe" = 1$。
-+ *最终步长*：取安全值与经验上界的较小者。Uzawa 步长为 $eta_bold(u)^"Uzawa" = min(10^(-2), eta_(bold(u))^"safe")$；Arrow-Hurwicz 步长为 $eta_bold(s)^"AH" = min(1, eta_(bold(s))^"safe")$，$eta_bold(u)^"AH" = min(10^(-2), eta_(bold(u))^"safe")$。
 
 == 评价指标
 
@@ -584,10 +569,10 @@ $
   )[
     | 算法 | $norm(bold(r)_bold(s))_2$ | $norm(bold(r)_bold(u))_2$ | KKT 总残差 | 位移误差 | 应力误差 | 时间 (s) |
     |------|------|------|------|------|------|------|
-    | Direct | $1.54 times 10^(-8)$ | $7.92 times 10^(-10)$ | $1.62 times 10^(-8)$ | $2.31 times 10^(1)$ | $3.21 times 10^(0)$ | $0.04$ |
-    | ADMM | $5.56 times 10^(0)$ | $5.82 times 10^(-2)$ | $5.62 times 10^(0)$ | $7.79 times 10^(0)$ | $1.43 times 10^(1)$ | $1.50$ |
-    | Uzawa | $5.24 times 10^(-6)$ | $1.40 times 10^(-3)$ | $1.41 times 10^(-3)$ | $7.61 times 10^(-1)$ | $8.40 times 10^(-1)$ | $5.46$ |
-    | Arrow-Hurwicz | $9.71 times 10^(-4)$ | $1.62 times 10^(-3)$ | $2.59 times 10^(-3)$ | $7.57 times 10^(-1)$ | $9.14 times 10^(-1)$ | $1.44$ |
+    | Direct | $1.63 times 10^(-8)$ | $7.97 times 10^(-10)$ | $1.71 times 10^(-8)$ | $2.31 times 10^(1)$ | $3.21 times 10^(0)$ | $0.06$ |
+    | ADMM | $4.38 times 10^(0)$ | $6.81 times 10^(-2)$ | $4.45 times 10^(0)$ | $8.96 times 10^(0)$ | $1.15 times 10^(1)$ | $1.52$ |
+    | Uzawa | $5.24 times 10^(-6)$ | $1.40 times 10^(-3)$ | $1.41 times 10^(-3)$ | $7.61 times 10^(-1)$ | $8.40 times 10^(-1)$ | $6.40$ |
+    | Arrow-Hurwicz | $1.21 times 10^(-3)$ | $1.68 times 10^(-3)$ | $2.89 times 10^(-3)$ | $7.57 times 10^(-1)$ | $9.25 times 10^(-1)$ | $1.85$ |
   ],
   caption: [主实验结果（$M = 256$）],
 ) <tb:main-results>
@@ -606,11 +591,11 @@ KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence
 
 == 消融实验
 
-固定 $Q_"train" = 20000$，分别取 $M in {64, 128, 256, 512}$，各算法在相同随机种子下运行 $K = 2000$ 步。结果如 @fig:ablation-M 所示。
+固定 $Q_"train" = 20000$，分别取 $M in {64, 128, 256, 512, 1024}$，各算法在相同随机种子下运行 $K = 2000$ 步。结果如 @fig:ablation-M 所示。
 
 #figure(
   image("/public/images/saddle-point/ablation-M.png"),
   caption: [特征数量 $M$ 消融实验：误差和 KKT 残差随 $M$ 的变化],
 ) <fig:ablation-M>
 
-Direct 求解的 L2 误差随 $M$ 增大而迅速下降（$M = 512$ 时位移误差降至 $4.00 times 10^(-1)$），说明离散近似空间的逼近能力与特征维度密切相关。Uzawa 和 Arrow-Hurwicz 在所有 $M$ 下均表现稳定，这表明迭代算法对鞍点系统的病态性具有一定的正则化效果。ADMM 在 2000 步内未能充分收敛，其 L2 误差随 $M$ 增大反而增加，反映了更大规模系统需要更多迭代步数。
+Direct 求解的 L2 误差随 $M$ 增大而迅速下降（$M = 512$ 时位移误差降至 $3.98 times 10^(-1)$），说明离散近似空间的逼近能力与特征维度密切相关。Uzawa 和 Arrow-Hurwicz 在所有 $M$ 下均表现稳定，这表明迭代算法对鞍点系统的病态性具有一定的正则化效果。ADMM 在 2000 步内未能充分收敛，其 L2 误差随 $M$ 增大反而增加，反映了更大规模系统需要更多迭代步数。

@@ -245,58 +245,6 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
 
 
 # ---------------------------------------------------------------------------
-# Diagnostics: spectral analysis
-# ---------------------------------------------------------------------------
-
-
-def estimate_schur_spectral_radius(A, B, rho=1e-6):
-    """Estimate spectral radius of S_u = B^T (A+rho*I)^{-1} B via power iteration.
-
-    Returns (lambda_max, L_cholesky).
-    """
-    dim_s = A.shape[0]
-    dim_u = B.shape[1]
-    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
-    L = torch.linalg.cholesky(A_reg)
-
-    v = torch.randn(dim_u, dtype=DTYPE, device=device)
-    v = v / v.norm()
-
-    for _ in range(100):
-        w = B @ v
-        z = torch.cholesky_solve(w.unsqueeze(1), L).squeeze(1)
-        u_new = B.T @ z
-        lam = v.dot(u_new)
-        v = u_new / u_new.norm()
-
-    return lam.item(), L
-
-
-def estimate_jacobi_spectral_radius(A, rho=1e-6):
-    """Estimate spectral radius of Jacobi iteration matrix for (A+rho*I).
-
-    R = I - diag(A+rho*I)^{-1} (A+rho*I). Uses power iteration on R.
-    """
-    dim_s = A.shape[0]
-    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
-    d_inv = 1.0 / A_reg.diag()
-
-    v = torch.randn(dim_s, dtype=DTYPE, device=device)
-    v = v / v.norm()
-
-    for _ in range(200):
-        # R @ v = v - d_inv * (A_reg @ v)
-        Rv = v - d_inv * (A_reg @ v)
-        lam = v.dot(Rv)
-        nrm = Rv.norm()
-        if nrm < 1e-15:
-            break
-        v = Rv / nrm
-
-    return abs(lam.item())
-
-
-# ---------------------------------------------------------------------------
 # KKT residuals & L2 errors
 # ---------------------------------------------------------------------------
 def compute_kkt_residuals(A, B, F, s, u):
@@ -389,7 +337,7 @@ def run_direct_solve(A, B, F):
 # ---------------------------------------------------------------------------
 # ADMM (Adam optimizer, full-batch)
 # ---------------------------------------------------------------------------
-def run_admm(A, B, F, K_max=2000, lr=0.02, betas=(0.9, 0.98),
+def run_admm(A, B, F, K_max=2000, eta_admm=0.02, beta_adam=(0.9, 0.98),
              tol=1e-6, eval_callback=None):
     """ADMM with manual Adam: alternate u-ascent / s-descent."""
     dim_s = A.shape[0]
@@ -404,7 +352,7 @@ def run_admm(A, B, F, K_max=2000, lr=0.02, betas=(0.9, 0.98),
     m_u = torch.zeros_like(u)
     v_u = torch.zeros_like(u)
 
-    b1, b2 = betas
+    b1, b2 = beta_adam
     t0 = time.perf_counter()
 
     for k in range(1, K_max + 1):
@@ -413,14 +361,14 @@ def run_admm(A, B, F, K_max=2000, lr=0.02, betas=(0.9, 0.98),
         v_u = b2 * v_u + (1 - b2) * g_u ** 2
         m_hat_u = m_u / (1 - b1 ** k)
         v_hat_u = v_u / (1 - b2 ** k)
-        u = u + lr * m_hat_u / (v_hat_u.sqrt() + eps_adam)
+        u = u + eta_admm * m_hat_u / (v_hat_u.sqrt() + eps_adam)
 
         g_s = A @ s + B @ u
         m_s = b1 * m_s + (1 - b1) * g_s
         v_s = b2 * v_s + (1 - b2) * g_s ** 2
         m_hat_s = m_s / (1 - b1 ** k)
         v_hat_s = v_s / (1 - b2 ** k)
-        s = s - lr * m_hat_s / (v_hat_s.sqrt() + eps_adam)
+        s = s - eta_admm * m_hat_s / (v_hat_s.sqrt() + eps_adam)
 
         if eval_callback is not None:
             eval_callback(k, s, u)
@@ -438,14 +386,13 @@ def run_admm(A, B, F, K_max=2000, lr=0.02, betas=(0.9, 0.98),
 # Uzawa (Cholesky pre-factorization)
 # ---------------------------------------------------------------------------
 def run_uzawa(A, B, F, K_max=2000, eta_u=1e-2, rho=1e-6,
-              tol=1e-6, eval_callback=None, L=None):
-    """Uzawa iteration with pre-computed Cholesky factorization."""
+              tol=1e-6, eval_callback=None):
+    """Uzawa iteration with Cholesky factorization."""
     dim_s = A.shape[0]
     dim_u = B.shape[1]
 
-    if L is None:
-        A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
-        L = torch.linalg.cholesky(A_reg)
+    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
+    L = torch.linalg.cholesky(A_reg)
 
     s = torch.zeros(dim_s, dtype=DTYPE, device=device)
     u = torch.zeros(dim_u, dtype=DTYPE, device=device)
@@ -507,13 +454,11 @@ def run_arrow_hurwicz(A, B, F, K_max=2000, eta_s=1.0, eta_u=1e-2, rho=1e-6,
 # Helper: run all algorithms on same system
 # ---------------------------------------------------------------------------
 def run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
-                       K_max=2000, rho=1e-6, eval_every=50):
-    """Run Direct, ADMM, Uzawa, Arrow-Hurwicz and collect histories.
-
-    Step sizes for Uzawa and Arrow-Hurwicz are auto-tuned via spectral analysis.
-    """
+                       K_max=2000, eval_every=50, rho=1e-6,
+                       eta_admm=0.02, beta_adam=(0.9, 0.98),
+                       eta_u_uzawa=1e-2, eta_s_ah=3e-3, eta_u_ah=1e-2):
+    """Run Direct, ADMM, Uzawa, Arrow-Hurwicz and collect histories."""
     results = {}
-    dim_s = A.shape[0]
 
     # --- Direct solve (baseline) ---
     print("  Running Direct solve...")
@@ -528,28 +473,11 @@ def run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
     print(f"    Done in {wt:.2f}s, final KKT: "
           f"||r_s||={rs:.2e}, ||r_u||={ru:.2e}, total={rs+ru:.2e}")
 
-    # --- Spectral analysis ---
-    print("  Estimating Schur complement spectral radius...")
-    lam_max, L_chol = estimate_schur_spectral_radius(A, B, rho=rho)
-    eta_u_safe = 1.5 / lam_max
-    print(f"    lambda_max(S_u) = {lam_max:.4e}, safe eta_u = {eta_u_safe:.4e}")
-
-    print("  Estimating Jacobi spectral radius for Arrow-Hurwicz...")
-    rho_jac = estimate_jacobi_spectral_radius(A, rho=rho)
-    eta_s_safe = 1.5 / max(rho_jac, 1.0) if rho_jac > 1.0 else 1.0
-    print(f"    rho(Jacobi) = {rho_jac:.4e}, safe eta_s = {eta_s_safe:.4e}")
-
-    eta_u_uzawa = min(1e-2, eta_u_safe)
-    eta_u_ah = min(1e-2, eta_u_safe)
-    eta_s_ah = min(1.0, eta_s_safe)
-    print(f"    Uzawa: eta_u={eta_u_uzawa:.4e}")
-    print(f"    Arrow-Hurwicz: eta_s={eta_s_ah:.4e}, eta_u={eta_u_ah:.4e}")
-
     for name, runner, kwargs in [
         ("ADMM", run_admm,
-         dict(K_max=K_max, lr=0.02, betas=(0.9, 0.98))),
+         dict(K_max=K_max, eta_admm=eta_admm, beta_adam=beta_adam)),
         ("Uzawa", run_uzawa,
-         dict(K_max=K_max, eta_u=eta_u_uzawa, rho=rho, L=L_chol)),
+         dict(K_max=K_max, eta_u=eta_u_uzawa, rho=rho)),
         ("Arrow-Hurwicz", run_arrow_hurwicz,
          dict(K_max=K_max, eta_s=eta_s_ah, eta_u=eta_u_ah, rho=rho)),
     ]:
@@ -701,10 +629,16 @@ if __name__ == "__main__":
     E, nu = 1.0, 0.3
     gamma = 2.0
     M = 256
+    ablation_M_list = [64, 128, 256, 512, 1024]
     Q_train = 20000
     Q_test = 10000
     K_max = 2000
     rho = 1e-6
+    eta_admm = 2e-02
+    beta_adam = (0.9, 0.98)
+    eta_u_uzawa = 1e-02
+    eta_s_ah = 3e-03
+    eta_u_ah = 1e-02
 
     mu, lam = compute_lame_constants(E, nu)
     S = build_compliance_matrix(E, nu)
@@ -753,7 +687,9 @@ if __name__ == "__main__":
     # --- Run all algorithms (including Direct solve) ---
     print(f"\n=== Main experiment (M={M}, Q=20000) ===")
     results = run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
-                                 K_max=K_max, rho=rho, eval_every=50)
+                                 K_max=K_max, eval_every=50, rho=rho,
+                                 eta_admm=eta_admm, beta_adam=beta_adam,
+                                 eta_u_uzawa=eta_u_uzawa, eta_s_ah=eta_s_ah, eta_u_ah=eta_u_ah)
 
     # --- Plot KKT convergence (iterative methods only) ---
     print("\nGenerating plots...")
@@ -792,7 +728,6 @@ if __name__ == "__main__":
 
     # --- Ablation: M (all 4 methods) ---
     print("\n=== Ablation: feature count M ===")
-    ablation_M_list = [64, 128, 256, 512]
     ablation_M_results = {}  # { M: { method: {rel_u, rel_sigma, kkt_total} } }
 
     for M_abl in ablation_M_list:
@@ -810,7 +745,9 @@ if __name__ == "__main__":
         # Run all 4 methods; eval_every=K_max to only record final L2
         abl_results = run_all_algorithms(
             A_abl, B_abl, F_abl, psi_test_abl, xi_test_abl,
-            u_exact, sigma_exact, K_max=K_max, rho=rho, eval_every=K_max,
+            u_exact, sigma_exact, K_max=K_max, eval_every=K_max, rho=rho,
+            eta_admm=eta_admm, beta_adam=beta_adam,
+            eta_u_uzawa=eta_u_uzawa, eta_s_ah=eta_s_ah, eta_u_ah=eta_u_ah,
         )
 
         ablation_M_results[M_abl] = {}
