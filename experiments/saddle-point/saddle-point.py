@@ -36,6 +36,16 @@ torch.backends.cudnn.benchmark = False
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DTYPE = torch.float64
 
+# ---------------------------------------------------------------------------
+# Unified algorithm visual styles (color + marker + linestyle)
+# ---------------------------------------------------------------------------
+ALGO_STYLE = {
+    "ADMM":          {"color": "steelblue",   "marker": "o", "linestyle": "-"},
+    "Uzawa":         {"color": "darkorange",  "marker": "^", "linestyle": "--"},
+    "Arrow-Hurwicz": {"color": "forestgreen", "marker": "D", "linestyle": "-."},
+    "Direct":        {"color": "black",       "marker": "s", "linestyle": ":"},
+}
+
 
 # ---------------------------------------------------------------------------
 # Material parameters
@@ -245,6 +255,58 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
 
 
 # ---------------------------------------------------------------------------
+# Diagnostics: spectral analysis
+# ---------------------------------------------------------------------------
+
+
+def estimate_schur_spectral_radius(A, B, rho=1e-6):
+    """Estimate spectral radius of S_u = B^T (A+rho*I)^{-1} B via power iteration.
+
+    Returns (lambda_max, L_cholesky).
+    """
+    dim_s = A.shape[0]
+    dim_u = B.shape[1]
+    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
+    L = torch.linalg.cholesky(A_reg)
+
+    v = torch.randn(dim_u, dtype=DTYPE, device=device)
+    v = v / v.norm()
+
+    for _ in range(100):
+        w = B @ v
+        z = torch.cholesky_solve(w.unsqueeze(1), L).squeeze(1)
+        u_new = B.T @ z
+        lam = v.dot(u_new)
+        v = u_new / u_new.norm()
+
+    return lam.item(), L
+
+
+def estimate_jacobi_spectral_radius(A, rho=1e-6):
+    """Estimate spectral radius of Jacobi iteration matrix for (A+rho*I).
+
+    R = I - diag(A+rho*I)^{-1} (A+rho*I). Uses power iteration on R.
+    """
+    dim_s = A.shape[0]
+    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
+    d_inv = 1.0 / A_reg.diag()
+
+    v = torch.randn(dim_s, dtype=DTYPE, device=device)
+    v = v / v.norm()
+
+    for _ in range(200):
+        # R @ v = v - d_inv * (A_reg @ v)
+        Rv = v - d_inv * (A_reg @ v)
+        lam = v.dot(Rv)
+        nrm = Rv.norm()
+        if nrm < 1e-15:
+            break
+        v = Rv / nrm
+
+    return abs(lam.item())
+
+
+# ---------------------------------------------------------------------------
 # KKT residuals & L2 errors
 # ---------------------------------------------------------------------------
 def compute_kkt_residuals(A, B, F, s, u):
@@ -428,8 +490,7 @@ def run_arrow_hurwicz(A, B, F, K_max=2000, eta_s=1.0, eta_u=1e-2, rho=1e-6,
     J_diag = 1.0 / A_reg.diag()
 
     s = torch.zeros(dim_s, dtype=DTYPE, device=device)
-    u = torch.zeros(A.shape[1] if A.shape[1] != A.shape[0] else B.shape[1],
-                     dtype=DTYPE, device=device)
+    u = torch.zeros(B.shape[1], dtype=DTYPE, device=device)
 
     t0 = time.perf_counter()
 
@@ -456,8 +517,12 @@ def run_arrow_hurwicz(A, B, F, K_max=2000, eta_s=1.0, eta_u=1e-2, rho=1e-6,
 def run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
                        K_max=2000, eval_every=50, rho=1e-6,
                        eta_admm=0.02, beta_adam=(0.9, 0.98),
-                       eta_u_uzawa=1e-2, eta_s_ah=3e-3, eta_u_ah=1e-2):
-    """Run Direct, ADMM, Uzawa, Arrow-Hurwicz and collect histories."""
+                       eta_u_uzawa=None, eta_s_ah=None, eta_u_ah=None):
+    """Run Direct, ADMM, Uzawa, Arrow-Hurwicz and collect histories.
+
+    Step sizes for Uzawa and Arrow-Hurwicz are auto-tuned via spectral
+    analysis when passed as None; explicit values are used as-is.
+    """
     results = {}
 
     # --- Direct solve (baseline) ---
@@ -472,6 +537,30 @@ def run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
     results["Direct"] = {"s": s, "u": u, "history": history, "wall_time": wt}
     print(f"    Done in {wt:.2f}s, final KKT: "
           f"||r_s||={rs:.2e}, ||r_u||={ru:.2e}, total={rs+ru:.2e}")
+
+    # --- Adaptive step-size computation (only when needed) ---
+    need_schur = (eta_u_uzawa is None) or (eta_u_ah is None)
+    need_jacobi = (eta_s_ah is None)
+
+    if need_schur:
+        print("  Estimating Schur complement spectral radius...")
+        lam_max, _ = estimate_schur_spectral_radius(A, B, rho=rho)
+        eta_u_safe = 1.5 / lam_max
+        print(f"    lambda_max(S_u) = {lam_max:.4e}, safe eta_u = {eta_u_safe:.4e}")
+        if eta_u_uzawa is None:
+            eta_u_uzawa = min(1e-2, eta_u_safe)
+        if eta_u_ah is None:
+            eta_u_ah = min(1e-2, eta_u_safe)
+
+    if need_jacobi:
+        print("  Estimating Jacobi spectral radius for Arrow-Hurwicz...")
+        rho_jac = estimate_jacobi_spectral_radius(A, rho=rho)
+        eta_s_safe = 1.5 / max(rho_jac, 1.0) if rho_jac > 1.0 else 1.0
+        print(f"    rho(Jacobi) = {rho_jac:.4e}, safe eta_s = {eta_s_safe:.4e}")
+        eta_s_ah = min(1.0, eta_s_safe)
+
+    print(f"    Uzawa: eta_u={eta_u_uzawa:.4e}")
+    print(f"    Arrow-Hurwicz: eta_s={eta_s_ah:.4e}, eta_u={eta_u_ah:.4e}")
 
     for name, runner, kwargs in [
         ("ADMM", run_admm,
@@ -497,10 +586,10 @@ def run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
 # Plotting
 # ---------------------------------------------------------------------------
 def plot_kkt_convergence(histories, labels, save_path):
-    """Plot KKT residual convergence: 1x3 subplots."""
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
-    titles = [r"$\|r_s\|_2$", r"$\|r_u\|_2$", r"$\|r_s\|_2 + \|r_u\|_2$"]
-    keys = ["r_s", "r_u", "r_total"]
+    """Plot KKT residual convergence: 1x2 subplots."""
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
+    titles = [r"$\|r_s\|_2$", r"$\|r_u\|_2$"]
+    keys = ["r_s", "r_u"]
 
     for ax, title, key in zip(axes, titles, keys):
         for hist, label in zip(histories, labels):
@@ -508,7 +597,13 @@ def plot_kkt_convergence(histories, labels, save_path):
             valid = np.isfinite(vals) & (vals > 0)
             if valid.any():
                 iters = np.arange(1, len(vals) + 1)
-                ax.semilogy(iters[valid], vals[valid], label=label, linewidth=1.2)
+                sty = ALGO_STYLE.get(label, {})
+                n_markers = max(1, int(valid.sum()) // 10)
+                ax.semilogy(
+                    iters[valid], vals[valid], label=label, linewidth=1.2,
+                    color=sty.get("color"), linestyle=sty.get("linestyle", "-"),
+                    marker=sty.get("marker"), markevery=n_markers, markersize=5,
+                )
         ax.set_xlabel("Iteration $k$")
         ax.set_ylabel(title)
         ax.set_title(title)
@@ -540,8 +635,13 @@ def plot_l2_convergence(histories, labels, save_path, direct_l2=None):
             vals = np.array(hist[key], dtype=float)
             valid = np.isfinite(vals) & (vals > 0) & np.isfinite(steps)
             if valid.any():
-                ax.semilogy(steps[valid], vals[valid], marker="o", markersize=3,
-                            label=label, linewidth=1.2)
+                sty = ALGO_STYLE.get(label, {})
+                n_markers = max(1, int(valid.sum()) // 10)
+                ax.semilogy(
+                    steps[valid], vals[valid], label=label, linewidth=1.2,
+                    color=sty.get("color"), linestyle=sty.get("linestyle", "-"),
+                    marker=sty.get("marker"), markevery=n_markers, markersize=5,
+                )
         if direct_l2 is not None:
             ref_val = direct_l2.get(key)
             if ref_val is not None and np.isfinite(ref_val) and ref_val > 0:
@@ -560,33 +660,29 @@ def plot_l2_convergence(histories, labels, save_path, direct_l2=None):
 
 
 def plot_ablation_M(results, save_path):
-    """Line plot comparing final errors across M values for all methods.
+    """Line plot comparing final metrics across M values for all methods.
 
     Args:
-        results: { M: { method_name: {"rel_u", "rel_sigma", "kkt_total"} } }
+        results: { M: { method_name: {"r_s", "r_u", "rel_u", "rel_sigma"} } }
         save_path: output file path
     """
     M_values = sorted(results.keys())
-    # Collect all method names from the first M entry
     method_names = list(results[M_values[0]].keys())
 
-    style_map = {
-        "Direct":         {"color": "black",       "marker": "s"},
-        "ADMM":           {"color": "steelblue",   "marker": "o"},
-        "Uzawa":          {"color": "darkorange",  "marker": "^"},
-        "Arrow-Hurwicz":  {"color": "forestgreen", "marker": "D"},
-    }
-
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
-    metric_keys = ["rel_u", "rel_sigma", "kkt_total"]
-    titles = ["Displacement error", "Stress error", "Final KKT residual"]
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    metric_keys = ["r_s", "r_u", "rel_u", "rel_sigma"]
+    titles = [
+        r"$\|r_s\|_2$", r"$\|r_u\|_2$",
+        "Displacement error", "Stress error",
+    ]
     ylabels = [
-        "Relative $L^2$ error",
-        "Relative $L^2$ error",
-        r"$\|r_s\|_2 + \|r_u\|_2$",
+        r"$\|r_s\|_2$", r"$\|r_u\|_2$",
+        "Relative $L^2$ error", "Relative $L^2$ error",
     ]
 
-    for ax, mkey, title, ylabel in zip(axes, metric_keys, titles, ylabels):
+    for ax, mkey, title, ylabel in zip(
+        axes.flat, metric_keys, titles, ylabels
+    ):
         for method in method_names:
             vals = []
             for M in M_values:
@@ -595,10 +691,11 @@ def plot_ablation_M(results, save_path):
             vals = np.array(vals, dtype=float)
             valid = np.isfinite(vals) & (vals > 0)
             if valid.any():
-                sty = style_map.get(method, {"color": "gray", "marker": "x"})
+                sty = ALGO_STYLE.get(method, {"color": "gray", "marker": "x"})
                 ax.semilogy(
                     np.array(M_values)[valid], vals[valid],
                     marker=sty["marker"], color=sty["color"],
+                    linestyle=sty.get("linestyle", "-"),
                     label=method, linewidth=1.5, markersize=6,
                 )
         ax.set_xlabel("Feature count $M$")
@@ -632,20 +729,21 @@ if __name__ == "__main__":
     ablation_M_list = [64, 128, 256, 512, 1024]
     Q_train = 20000
     Q_test = 10000
-    K_max = 2000
+    K_max = 5000
     rho = 1e-6
     eta_admm = 2e-02
     beta_adam = (0.9, 0.98)
-    eta_u_uzawa = 1e-02
-    eta_s_ah = 3e-03
-    eta_u_ah = 1e-02
+    eta_u_uzawa = None
+    eta_s_ah = None
+    eta_u_ah = None
 
     mu, lam = compute_lame_constants(E, nu)
     S = build_compliance_matrix(E, nu)
     print(f"Material: E={E}, nu={nu}, mu={mu:.4f}, lam={lam:.4f}")
 
-    # --- Generate features (512 for ablation, truncate to M for main) ---
-    a_full, r_full = generate_features(512, seed=BASE_SEED)
+    # --- Generate enough features for the largest M we will run ---
+    max_M = max([M] + ablation_M_list)
+    a_full, r_full = generate_features(max_M, seed=BASE_SEED)
     a, r = a_full[:M], r_full[:M]
 
     # --- Training points ---
@@ -758,16 +856,17 @@ if __name__ == "__main__":
             rel_u_f = h["rel_u"][-1]
             rel_sig_f = h["rel_sigma"][-1]
             ablation_M_results[M_abl][method_name] = {
+                "r_s": rs_f,
+                "r_u": ru_f,
                 "rel_u": rel_u_f,
                 "rel_sigma": rel_sig_f,
-                "kkt_total": rs_f + ru_f,
             }
 
     plot_ablation_M(ablation_M_results, str(OUTPUT_DIR / "ablation-M.png"))
 
     # --- Print ablation summary table ---
     print("\n=== Ablation M: Summary ===")
-    print(f"{'M':>5} {'Algorithm':<16} {'u_err':>12} {'sig_err':>12}")
+    print(f"{'M':>5} {'Algorithm':<16} {'rel_u':>12} {'rel_sigma':>12}")
     print("-" * 48)
     for M_abl in ablation_M_list:
         for method in ["Direct", "ADMM", "Uzawa", "Arrow-Hurwicz"]:

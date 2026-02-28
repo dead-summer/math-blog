@@ -51,7 +51,7 @@ $
 $
 其中 $sigma.alt$ 是激活函数，$M$ 是神经元数量，$alpha_m in RR$ 是输出层权重，$bold(w)_m in RR^3$ 是输入层权重，$b_m in RR$ 是偏置项。记隐藏层神经元为
 $
-  xi_m(bold(x)) = sigma.alt(bold(w)_m^T bold(x) + b_m),
+  xi_m (bold(x)) = sigma.alt(bold(w)_m^T bold(x) + b_m),
 $
 我们可将 $xi_m: RR^3 -> RR$ 视为一个特征函数，隐藏层神经元集 ${xi_m}_1^M$ 可视为 $RR^3$ 空间中的一组基。定义神经特征空间
 $
@@ -65,11 +65,11 @@ $
 $
 其中 $norm(bold(a)_m)_2 = 1$ 表示超平面法向量，$r_m$ 表示截距。于是
 $
-  xi_m(bold(x)) = sigma.alt(gamma (bold(a)_m^T bold(x) + r_m)).
+  xi_m (bold(x)) = sigma.alt(gamma (bold(a)_m^T bold(x) + r_m)).
 $
 采样策略为
 $
-  bold(X)_m ~ cal(N)(0, I_3), quad bold(a)_m = bold(X)_m / norm(bold(X)_m)_2, quad r_m ~ U[0, 1],
+  bold(X)_m ~ cal(N)(0, bold(I)_3), quad bold(a)_m = bold(X)_m / norm(bold(X)_m)_2, quad r_m ~ cal(U)[0, 1],
 $
 然后取 $bold(w)_m = gamma bold(a)_m, b_m = gamma r_m$。反过来亦有等价关系
 $
@@ -534,8 +534,8 @@ $
 算法细节如下：
 
 - *ADMM*: 采用 Adam 优化器，学习率 $eta_bold(u) = eta_bold(s) = 0.02$，$bold(beta)^"Adam" = (0.9, 0.98)$，每轮各做 1 次更新。
-- *Uzawa*：步长 $eta_bold(u)^"Uzawa" = 0.01$。
-- *Arrow-Hurwicz*: 步长 $eta_bold(s)^"AH" = 0.003$，$eta_bold(u)^"AH" = 0.01$；取预条件子 $bold(J) = [diag(bold(A) + rho bold(I))]^(-1)$，$bold(K) = bold(I)$。
+- *Uzawa*：步长 $eta_bold(u)^"Uzawa"$ 通过 Schur 补谱半径自适应选择。
+- *Arrow-Hurwicz*: 步长 $eta_bold(s)^"AH"$、$eta_bold(u)^"AH"$ 分别通过 Jacobi 谱半径和 Schur 补谱半径自适应选择；取预条件子 $bold(J) = [diag(bold(A) + rho bold(I))]^(-1)$，$bold(K) = bold(I)$。
 
 
 == 评价指标
@@ -591,11 +591,11 @@ KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence
 
 == 消融实验
 
-固定 $Q_"train" = 20000$，分别取 $M in {64, 128, 256, 512, 1024}$，各算法在相同随机种子下运行 $K = 2000$ 步。结果如 @fig:ablation-M 所示。
+固定 $Q_"train" = 20000$，分别取 $M in {64, 128, 256, 512, 1024}$，各算法在相同随机种子下运行 $K = 5000$ 步。结果如 @fig:ablation-M 所示。
 
 #figure(
   image("/public/images/saddle-point/ablation-M.png"),
   caption: [特征数量 $M$ 消融实验：误差和 KKT 残差随 $M$ 的变化],
 ) <fig:ablation-M>
 
-Direct 求解的 L2 误差随 $M$ 增大而迅速下降（$M = 512$ 时位移误差降至 $3.98 times 10^(-1)$），说明离散近似空间的逼近能力与特征维度密切相关。Uzawa 和 Arrow-Hurwicz 在所有 $M$ 下均表现稳定，这表明迭代算法对鞍点系统的病态性具有一定的正则化效果。ADMM 在 2000 步内未能充分收敛，其 L2 误差随 $M$ 增大反而增加，反映了更大规模系统需要更多迭代步数。
+Direct 求解的 L2 误差随 $M$ 增大而迅速下降，说明离散近似空间的逼近能力与特征维度密切相关。Uzawa 和 Arrow-Hurwicz 通过谱自适应步长在所有 $M$ 下均表现稳定，这表明迭代算法对鞍点系统的病态性具有一定的正则化效果。ADMM 在 5000 步内未能充分收敛，其 L2 误差随 $M$ 增大反而增加，反映了更大规模系统需要更多迭代步数。
