@@ -69,7 +69,7 @@ $
 $
 采样策略为
 $
-  bold(X)_m ~ cal(N)(0, bold(I)_3), quad bold(a)_m = bold(X)_m / norm(bold(X)_m)_2, quad r_m ~ cal(U)[0, 1],
+  bold(a)_m = bold(X)_m / norm(bold(X)_m)_2, quad bold(X)_m ~ cal(N)(0, bold(I)_3), quad  r_m ~ cal(U)[0, 1],
 $
 然后取 $bold(w)_m = gamma bold(a)_m, b_m = gamma r_m$。反过来亦有等价关系
 $
@@ -130,40 +130,20 @@ $
 
 == 选取测试函数并组装矩阵
 
+=== 从变分方程到代数方程
+
 取测试函数为同一组基函数：
 $
   bold(phi)_bold(tau) = xi_n upright(bold(E))_beta, quad 0 <= n <= M, 1 <= beta <= 6, \
   bold(phi)_bold(v) = xi_n bold(e)_j, quad 0 <= n <= M, 1 <= j <= 3.
 $
 
-定义矩阵块与离散载荷向量（复合指标按上述堆叠顺序理解）：
+定义矩阵块与离散载荷向量：
 $
   bold(A)_((n, beta), (m, alpha)) & := a(xi_n upright(bold(E))_beta, xi_m upright(bold(E))_alpha), \
       bold(B)_((n, beta), (m, i)) & := b(xi_n upright(bold(E))_beta, xi_m bold(e)_i), \
                  bold(F)_((n, j)) & := (bold(f), xi_n bold(e)_j).
 $
-并将离散载荷按 $(n, j)$ 堆叠为
-$
-  bold(F) = (bold(F)_((0, 1)), ..., bold(F)_((0, 3)), bold(F)_((1, 1)), ..., bold(F)_((M, 3)))^T.
-$
-
-将系数展开代入两条变分方程，可得线性系统
-$
-  bold(A) bold(s) + bold(B) bold(u) = 0, \
-  bold(B)^T bold(s) + bold(F) = 0.
-$
-
-等价地写成块鞍点系统：
-$
-  mat(bold(A), bold(B); bold(B)^T, 0) mat(bold(s); bold(u)) = mat(0; -bold(F)).
-$
-
-其中
-$
-  bold(A) in RR^(6(M+1) times 6(M+1)), quad bold(B) in RR^(6(M+1) times 3(M+1)), quad bold(F) in RR^(3(M+1)).
-$
-
-=== 从变分方程到代数方程
 
 对任意固定的 $(n, beta)$，取测试函数 $bold(phi)_bold(tau) = xi_n upright(bold(E))_beta$。第一条离散变分方程为
 $
@@ -184,6 +164,7 @@ $
   sum_(m=0)^M sum_(alpha=1)^6 bold(A)_((n, beta), (m, alpha)) s_(m, alpha)
   + sum_(m=0)^M sum_(i=1)^3 bold(B)_((n, beta), (m, i)) u_(m, i) = 0.
 $
+这条方程正对应于 $bold(A) bold(s) + bold(B) bold(u) = 0$ 的第 $(n, beta)$ 个分量。
 
 同理，对任意固定的 $(n, j)$，取测试函数 $bold(phi)_bold(v) = xi_n bold(e)_j$。第二条离散变分方程为
 $
@@ -196,6 +177,62 @@ $
   + bold(F)_((n, j)).
 $
 注意 $b(xi_m upright(bold(E))_alpha, xi_n bold(e)_j) = bold(B)_((m, alpha), (n, j))$，因此这条方程正对应于 $bold(B)^T bold(s) + bold(F) = 0$ 的第 $(n, j)$ 个分量。
+
+将 $bold(A), bold(B)$ 视为 $(M+1) times (M+1)$ 块矩阵（块行由 $n$，块列由 $m$ 索引），$bold(F)$ 视为 $(M+1) times 1$ 块行向量，其堆叠形式为
+$
+  bold(A) =
+  mat(
+    bold(A)_(0, 0), dots.h, bold(A)_(0, M);
+    dots.v, dots.down, dots.v;
+    bold(A)_(M, 0), dots.h, bold(A)_(M, M)
+  ), \
+  bold(B) =
+  mat(
+    bold(B)_(0, 0), dots.h, bold(B)_(0, M);
+    dots.v, dots.down, dots.v;
+    bold(B)_(M, 0), dots.h, bold(B)_(M, M)
+  ), \
+  bold(F) =
+  mat(
+    bold(F)_0;
+    dots.v;
+    bold(F)_M
+  ).
+$
+其中块矩阵满足（块内行指标为 $beta$，列指标为 $alpha$ 或 $i$）：
+$
+  bold(A)_(n, m) in RR^(6 times 6), &quad (bold(A)_(n, m))_(beta, alpha) = bold(A)_((n, beta), (m, alpha)), \
+  bold(B)_(n, m) in RR^(6 times 3), &quad (bold(B)_(n, m))_(beta, i) = bold(B)_((n, beta), (m, i)), \
+  bold(F)_n in RR^3, &quad (bold(F)_n)_j = bold(F)_((n, j)).
+$
+为强调块结构，将系数按特征下标分块：
+$
+  bold(s)_m &:= (s_(m, 1), ..., s_(m, 6))^T in RR^6, \
+  bold(u)_m &:= (u_(m, 1), ..., u_(m, 3))^T in RR^3, \
+$
+则 $bold(s) = (bold(s)_0, ..., bold(s)_M)^T$，$bold(u) = (bold(u)_0, ..., bold(u)_M)^T$。
+
+在上述块记号下，两条方程也可按块写为
+$
+  sum_(m=0)^M bold(A)_(n, m) bold(s)_m + sum_(m=0)^M bold(B)_(n, m) bold(u)_m = 0, \
+  sum_(m=0)^M bold(B)_(m, n)^T bold(s)_m + bold(F)_n = 0, quad 0 <= n <= M.
+$
+
+将系数展开代入两条变分方程，可得线性系统
+$
+  bold(A) bold(s) + bold(B) bold(u) = 0, \
+  bold(B)^T bold(s) + bold(F) = 0.
+$
+
+等价地写成块鞍点系统：
+$
+  mat(bold(A), bold(B); bold(B)^T, 0) mat(bold(s); bold(u)) = mat(0; -bold(F)).
+$
+
+其中
+$
+  bold(A) in RR^(6(M+1) times 6(M+1)), quad bold(B) in RR^(6(M+1) times 3(M+1)), quad bold(F) in RR^(3(M+1)).
+$
 
 === $bold(A)$ 块元素：材料柔度张量与两基函数乘积
 
@@ -320,33 +357,18 @@ $
   nabla_(bold(s)) Pi = bold(A) bold(s) + bold(B) bold(u), \
   nabla_(bold(u)) Pi = bold(B)^T bold(s) + bold(F).
 $
-由于 $Pi$ 关于 $bold(u)$ 线性，严格的 $max_(bold(u)) Pi$ 在有限维上通常无界；因此在实现中不求精确解，而是将 $(bold(s), bold(u))$ 视为“权重”，在采样点上用随机小批量的一阶算法交替更新。
+由于 $Pi$ 关于 $bold(u)$ 线性，严格的 $max_(bold(u)) Pi$ 在有限维上通常无界；因此在实现中不求精确解，而是将 $(bold(s), bold(u))$ 视为待优化参数，对离散泛函 $Pi$ 做交替的一阶更新。
 
-令 $bb(B) subset {1, 2, ..., Q}$ 为一个小批量索引集，将上一节求积公式中的求和 $sum_(q=1)^Q$ 限制为 $sum_(q in bb(B))$，即可得到对应的小批量块 $bold(A)_(bb(B)), bold(B)_(bb(B)), bold(F)_(bb(B))$。据此定义小批量泛函
+在第 $k+1$ 轮迭代中，先固定 $bold(s)^k$ 对 $bold(u)$ 做一次梯度上升更新：
 $
-  Pi_(bb(B))(bold(s), bold(u))
-  := 1/2 bold(s)^T bold(A)_(bb(B)) bold(s) + bold(s)^T bold(B)_(bb(B)) bold(u) + bold(F)_(bb(B))^T bold(u).
+  bold(u)^(k+1) &= bold(u)^k + eta_bold(u)^"ADMM" (bold(B)^T bold(s)^k + bold(F)).
 $
 
-在第 $k+1$ 轮外循环中，先固定 $bold(s)^k$ 近似求解 $max_(bold(u)) Pi$：随机打乱采样点索引并划分为若干小批量 ${bb(B)_t}_(t=1)^T$，对每个批次构造随机梯度并做 Adam 梯度上升
+再固定 $bold(u)^(k+1)$ 对 $bold(s)$ 做一次梯度下降更新：
 $
-  bold(u)^(k, 0) &= bold(u)^k, \
-  bold(g)_u^(k, t) &:= nabla_(bold(u)) Pi_(bb(B)_t)(bold(s)^k, bold(u)^(k, t-1))
-    = bold(B)_(bb(B)_t)^T bold(s)^k + bold(F)_(bb(B)_t), \
-  bold(u)^(k, t) &= bold(u)^(k, t-1) + eta_bold(u)^"ADMM" bold(g)_u^(k, t), quad t = 1, 2, ..., T, \
-  bold(u)^(k+1) &= bold(u)^(k, T).
+  bold(s)^(k+1) &= bold(s)^k - eta_bold(s)^"ADMM" (bold(A) bold(s)^k + bold(B) bold(u)^(k+1)).
 $
-其中更新步写成最简单的梯度上升形式；实际实现中依赖优化器行为（如 Adam 将步长 $eta_bold(u)^"ADMM"$ 替换为自适应更新）。
-
-当遍历完全部采样点得到 $bold(u)^(k+1)$ 后，再固定 $bold(u)^(k+1)$ 近似求解 $min_(bold(s)) Pi$，同样按小批量遍历做梯度下降得到 $bold(s)^(k+1)$：
-$
-  bold(s)^(k, 0) &= bold(s)^k, \
-  bold(g)_s^(k, t) &:= nabla_(bold(s)) Pi_(bb(B)_t)(bold(s)^(k, t-1), bold(u)^(k+1))
-    = bold(A)_(bb(B)_t) bold(s)^(k, t-1) + bold(B)_(bb(B)_t) bold(u)^(k+1), \
-  bold(s)^(k, t) &= bold(s)^(k, t-1) - eta_bold(s)^"ADMM" bold(g)_s^(k, t), quad t = 1, 2, ..., T, \
-  bold(s)^(k+1) &= bold(s)^(k, T).
-$
-这里 $eta_bold(s)^"ADMM" > 0$ 为学习率。
+这里 $eta_bold(u)^"ADMM", eta_bold(s)^"ADMM" > 0$ 为步长。上式写成最简单的梯度上升/下降形式，实际实现中依赖优化器行为（如 Adam 将步长替换为自适应更新）。
 
 = Uzawa 算法
 
@@ -485,9 +507,9 @@ $
 $
   bold(w)_m = gamma bold(a)_m, quad b_m = gamma r_m.
 $
-其中固定 $gamma = 2.0$ 以控制特征函数的频率范围；$bold(a)_m = bold(X)_m / norm(bold(X)_m)_2$，其中 $bold(X)_m ~ cal(N)(0, bold(I)_3)$ 是从标准正态分布采样的随机向量；$r_m ~ cal(U)[0, 1]$，是从 $[0, 1]$ 均匀分布采样的随机数。
+固定 $gamma = 2.0$ 以控制特征函数的频率范围；$bold(a)_m = bold(X)_m \/ norm(bold(X)_m)_2$，其中 $bold(X)_m ~ cal(N)(0, bold(I)_3)$ 是从标准正态分布采样的随机向量；$r_m ~ cal(U)[0, 1]$，是从 $[0, 1]$ 均匀分布采样的随机数。
 
-本文仅迭代更新离散未知量系数 $bold(s), bold(u)$。主实验取 $M = 256$，并考察 $M in {64, 128, 256}$ 的影响。
+本文仅迭代更新离散未知量系数 $bold(s), bold(u)$。主实验取 $M = 256$，并在消融实验中考察不同 $M$ 的影响。
 
 在 3D 结构下，应力与位移的近似分别为
 $
@@ -513,21 +535,21 @@ $
 
 #figure(
   three-line-table(
-    columns: 3,
-    align: (right, left, left)
+    columns: 2,
+    align: (right, left)
   )[
-    | 参数 | 取值 |  备注|
-    |------|------|------|
-    | 域 | $Omega = [0, 1]^3$ | |
-    | 边界条件 | 齐次 Dirichlet：$bold(u)=0$ on $partial Omega$ | |
-    | 材料 | 各向同性常系数：$E=1, nu=0.3$ | |
-    | 随机特征 | 激活 $tanh$ | 主实验 $M=256$，消融实验：$64,128,256,512$ |
-    | 特征采样 | $bold(w)_m = gamma bold(a)_m$，$b_m = gamma r_m$ | $gamma=2.0$，$bold(a)_m$ 为单位向量，$r_m ~ cal(U)[0, 1]$ |
-    | 训练点 | $Q_"train" = 20000$ | 均匀采样、等权 |
-    | 测试点 | $Q_"test" = 10000$ | 均匀采样、等权 |
-    | 阻尼 | $rho = 10^(-6)$ | |
-    | 初值 | $bold(s)^0 = 0, bold(u)^0 = 0$ | |
-    | 迭代 | $K = 2000$ 或满足停止准则 | |
+    | 参数 | 取值 |
+    |------|------|
+    | 域 | $Omega = [0, 1]^3$ |
+    | 边界条件 | 齐次 Dirichlet：$bold(u)=0$ on $partial Omega$ |
+    | 材料 | 各向同性常系数：$E=1, nu=0.3$ |
+    | 随机特征 | 激活 $tanh$ |
+    | 特征采样 | $bold(w)_m = gamma bold(a)_m$，$b_m = gamma r_m$ |
+    | 训练点 | $Q_"train" = 20000$ |
+    | 测试点 | $Q_"test" = 10000$ |
+    | 阻尼 | $rho = 10^(-6)$ |
+    | 初值 | $bold(s)^0 = 0, bold(u)^0 = 0$ |
+    | 迭代 | $K = 5000$ 或满足停止准则 |
   ],
 )
 
@@ -549,7 +571,7 @@ $
 - *相对 $L^2$ 误差*: 在测试点上用
   $
     norm(bold(u)_h - bold(u)_"ex")_(L^2(Omega))
-    approx (abs(Omega)/Q_"test" sum_(q=1)^(Q_"test") abs(bold(u)_h(bold(x)_q) - bold(u)_"ex"(bold(x)_q))^2)^(1/2)
+    approx (abs(Omega)/Q_"test" sum_(q=1)^(Q_"test") abs(bold(u)_h (bold(x)_q) - bold(u)_"ex" (bold(x)_q))^2)^(1/2)
   $
   估计位移误差，并用同样方式估计应力误差（张量按 Frobenius 范数聚合）。报告相对误差
   $
@@ -564,20 +586,24 @@ $
 
 #figure(
   three-line-table(
-    columns: 7,
-    align: (left, right, right, right, right, right, right),
+    columns: 6,
+    align: (left, right, right, right, right, right),
   )[
-    | 算法 | $norm(bold(r)_bold(s))_2$ | $norm(bold(r)_bold(u))_2$ | KKT 总残差 | 位移误差 | 应力误差 | 时间 (s) |
-    |------|------|------|------|------|------|------|
-    | Direct | $1.63 times 10^(-8)$ | $7.97 times 10^(-10)$ | $1.71 times 10^(-8)$ | $2.31 times 10^(1)$ | $3.21 times 10^(0)$ | $0.06$ |
-    | ADMM | $4.38 times 10^(0)$ | $6.81 times 10^(-2)$ | $4.45 times 10^(0)$ | $8.96 times 10^(0)$ | $1.15 times 10^(1)$ | $1.52$ |
-    | Uzawa | $5.24 times 10^(-6)$ | $1.40 times 10^(-3)$ | $1.41 times 10^(-3)$ | $7.61 times 10^(-1)$ | $8.40 times 10^(-1)$ | $6.40$ |
-    | Arrow-Hurwicz | $1.21 times 10^(-3)$ | $1.68 times 10^(-3)$ | $2.89 times 10^(-3)$ | $7.57 times 10^(-1)$ | $9.25 times 10^(-1)$ | $1.85$ |
+    | 算法 | $norm(bold(r)_bold(s))_2$ | $norm(bold(r)_bold(u))_2$ | 位移误差 | 应力误差 | 时间 (s) |
+    |------|------|------|------|------|------|
+    | Direct | $1.63 times 10^(-8)$ | $7.97 times 10^(-10)$ | $2.31 times 10^(1)$ | $3.21 times 10^(0)$ | $0.06$ |
+    | ADMM | $4.38 times 10^(0)$ | $6.81 times 10^(-2)$ | $8.96 times 10^(0)$ | $1.15 times 10^(1)$ | $1.52$ |
+    | Uzawa | $5.24 times 10^(-6)$ | $1.40 times 10^(-3)$ | $7.61 times 10^(-1)$ | $8.40 times 10^(-1)$ | $6.40$ |
+    | Arrow-Hurwicz | $1.21 times 10^(-3)$ | $1.68 times 10^(-3)$ | $7.57 times 10^(-1)$ | $9.25 times 10^(-1)$ | $1.85$ |
   ],
   caption: [主实验结果（$M = 256$）],
 ) <tb:main-results>
 
-KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence 和 @fig:l2-convergence。
+KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence 和 @fig:l2-convergence。从 @tb:main-results 以及 @fig:kkt-convergence、@fig:l2-convergence 可以看到，离散 KKT 残差与对制造解的 $L^2$ 误差并不总是同步变化：Direct 在 $norm(bold(r)_bold(s))_2$ 与 $norm(bold(r)_bold(u))_2$ 上达到 $10^(-8)$ 量级，且耗时最低（$0.06$ s），但位移/应力相对误差分别为 $2.31 times 10^(1)$ 与 $3.21 times 10^(0)$。这说明在 $M=256$ 的特征空间下，“把鞍点系统解得更精确”并不会自动带来更小的物理量误差，误差下限仍受近似空间能力与数值效应等因素制约。
+
+就迭代方法而言，Uzawa 与 Arrow-Hurwicz 在有限迭代预算内给出了更好的误差-成本折中：两者将位移/应力误差稳定降到 $O(10^0)$ 以下。两者的差异主要体现在残差与耗时上：Uzawa 的 $norm(bold(r)_bold(s))_2$ 更小（$5.24 times 10^(-6)$），但耗时更长（$6.40$ s）；Arrow-Hurwicz 用更短时间（$1.85$ s）取得相近误差，但其 $norm(bold(r)_bold(s))_2$ 更大（$1.21 times 10^(-3)$），且从 @fig:kkt-convergence 可见 $norm(bold(r)_bold(s))_2$ 存在较明显的平台与波动。
+
+ADMM 在本实现与超参下未表现出有效收敛：主实验中 $norm(bold(r)_bold(s))_2 = 4.38 times 10^(0)$、$norm(bold(r)_bold(u))_2 = 6.81 times 10^(-2)$，并且位移/应力误差分别为 $8.96 times 10^(0)$ 与 $1.15 times 10^(1)$，整体显著劣于 Uzawa 与 Arrow-Hurwicz；同时 @fig:kkt-convergence 中其残差曲线振荡幅度较大，缺乏稳定下降趋势。因此，在当前设置下 ADMM 难以作为可靠的求解策略，需要进一步的步长/预条件/更新次数设计，或显著增加迭代预算后再做可比性讨论。
 
 #figure(
   image("/public/images/saddle-point/kkt-convergence.png"),
@@ -598,4 +624,8 @@ KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence
   caption: [特征数量 $M$ 消融实验：误差和 KKT 残差随 $M$ 的变化],
 ) <fig:ablation-M>
 
-Direct 求解的 L2 误差随 $M$ 增大而迅速下降，说明离散近似空间的逼近能力与特征维度密切相关。Uzawa 和 Arrow-Hurwicz 通过谱自适应步长在所有 $M$ 下均表现稳定，这表明迭代算法对鞍点系统的病态性具有一定的正则化效果。ADMM 在 5000 步内未能充分收敛，其 L2 误差随 $M$ 增大反而增加，反映了更大规模系统需要更多迭代步数。
+@fig:ablation-M 展示了特征数量 $M$ 对不同求解策略的敏感性差异。Direct 的误差随 $M$ 增大呈现显著的数量级下降：当 $M=64$ 时位移误差可达 $10^4$ 量级，而当 $M=512$ 及以上时迅速降到 $O(1)$ 乃至 $10^(-1)$ 量级；应力误差也从 $10^1$ 量级下降到 $10^(-1)$ 量级。这说明 Direct 的性能主要受近似空间逼近能力支配，$M$ 不足时即便 KKT 残差极小，也可能得到较差的物理量近似。
+
+相比之下，Uzawa 与 Arrow-Hurwicz 在所有 $M$ 下的误差曲线更平坦：位移与应力误差大致维持在 $0.5$ 到 $1.0$ 的量级并随 $M$ 缓慢改善；同时其 KKT 残差也稳定在 $10^(-6)$ 到 $10^(-3)$ 区间。这体现了两者在固定迭代预算 $K=5000$ 下对规模与病态性的鲁棒性，但也意味着它们受残差平台限制，难以像 Direct 那样在大 $M$ 时继续显著降低误差。
+
+ADMM 的规模鲁棒性最差：随着 $M$ 增大，其 KKT 残差与 $L^2$ 误差整体上升，在大 $M$ 下明显劣于其余方法。就本实验配置而言，ADMM 在 $5000$ 步内未能有效收敛，若要公平对比，需要重新调参或引入更合适的更新/预条件机制（或增加迭代步数）。
