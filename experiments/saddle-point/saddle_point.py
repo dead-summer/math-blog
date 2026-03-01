@@ -73,16 +73,15 @@ def build_compliance_matrix(E: float, nu: float) -> torch.Tensor:
 def eval_exact_displacement(x: torch.Tensor) -> torch.Tensor:
     """Exact displacement u_ex(x), shape (N,3) -> (N,3)."""
     x1, x2, x3 = x[:, 0], x[:, 1], x[:, 2]
-    zeta = x1 * (1 - x1) * x2 * (1 - x2) * x3 * (1 - x3)
     pi = math.pi
-    u1 = zeta * torch.sin(pi * x1) * torch.sin(pi * x2) * torch.sin(pi * x3)
-    u2 = zeta * torch.sin(2 * pi * x1) * torch.sin(pi * x2) * torch.sin(pi * x3)
-    u3 = zeta * torch.sin(pi * x1) * torch.sin(2 * pi * x2) * torch.sin(pi * x3)
+    u1 = torch.sin(pi * x1) * torch.sin(pi * x2) * torch.sin(pi * x3)
+    u2 = torch.sin(2 * pi * x1) * torch.sin(pi * x2) * torch.sin(pi * x3)
+    u3 = torch.sin(pi * x1) * torch.sin(2 * pi * x2) * torch.sin(pi * x3)
     return torch.stack([u1, u2, u3], dim=1)
 
 
-def eval_exact_stress_voigt(x: torch.Tensor, mu: float, lam: float) -> torch.Tensor:
-    """Exact stress in Voigt form (N,6) via autograd from exact displacement.
+def compute_stress_voigt(x: torch.Tensor, mu: float, lam: float) -> torch.Tensor:
+    """Stress sigma in Voigt form (N,6) via autograd from exact displacement.
 
     Voigt order: (sigma_11, sigma_22, sigma_33, sigma_12, sigma_23, sigma_13).
     """
@@ -727,9 +726,10 @@ if __name__ == "__main__":
     gamma = 2.0
     M = 256
     ablation_M_list = [64, 128, 256, 512, 1024]
+    ablation_M_list = []
     Q_train = 20000
     Q_test = 10000
-    K_max = 5000
+    K_max = 10000
     rho = 1e-6
     eta_admm = 2e-02
     beta_adam = (0.9, 0.98)
@@ -780,7 +780,7 @@ if __name__ == "__main__":
     zeta_test = zeta_fn(x_test)
     psi_test = zeta_test.unsqueeze(1) * xi_test  # displacement features
     u_exact = eval_exact_displacement(x_test)
-    sigma_exact = eval_exact_stress_voigt(x_test, mu, lam)
+    sigma_exact = compute_stress_voigt(x_test, mu, lam)
 
     # --- Run all algorithms (including Direct solve) ---
     print(f"\n=== Main experiment (M={M}, Q=20000) ===")
@@ -811,7 +811,7 @@ if __name__ == "__main__":
     print("\n=== Summary ===")
     all_labels = ["Direct", "ADMM", "Uzawa", "Arrow-Hurwicz"]
     print(f"{'Algorithm':<16} {'||r_s||':>10} {'||r_u||':>10} "
-          f"{'Total':>10} {'u_err':>10} {'sig_err':>10} {'Time(s)':>8}")
+          f"{'rel_u':>10} {'rel_sigma':>10} {'Time(s)':>8}")
     print("-" * 76)
     for name in all_labels:
         h = results[name]["history"]
@@ -821,7 +821,7 @@ if __name__ == "__main__":
         rel_sig = h["rel_sigma"][-1]
         wt = results[name]["wall_time"]
         print(f"{name:<16} {rs_final:10.2e} {ru_final:10.2e} "
-              f"{rs_final+ru_final:10.2e} {rel_u:10.2e} {rel_sig:10.2e} "
+              f"{rel_u:10.2e} {rel_sig:10.2e} "
               f"{wt:8.2f}")
 
     # --- Ablation: M (all 4 methods) ---

@@ -452,15 +452,10 @@ $
 
 == 计算域与制造解
 
-取计算域 $Omega = [0, 1]^3$。为保证齐次 Dirichlet 边界条件，定义包络函数
-$
-  zeta(bold(x)) = x_1(1-x_1) x_2(1-x_2) x_3(1-x_3).
-$
-设精确位移为
+取计算域 $Omega = [0, 1]^3$。设精确位移为
 $
   bold(u)_"ex" (bold(x))
-  = zeta(bold(x))
-    mat(sin(pi x_1) sin(pi x_2) sin(pi x_3);
+  = mat(sin(pi x_1) sin(pi x_2) sin(pi x_3);
      sin(2 pi x_1) sin(pi x_2) sin(pi x_3);
      sin(pi x_1) sin(2 pi x_2) sin(pi x_3)).
 $
@@ -470,9 +465,9 @@ $
 $
 体力通过制造解定义为
 $
-  bold(f)(bold(x)) = -nabla dot bold(sigma)_"ex" (bold(x)).
+  bold(f)_"ex" (bold(x)) = -nabla dot bold(sigma)_"ex" (bold(x)).
 $
-实现时将用自动微分或符号计算得到 $bold(f)$，不在文中展开其冗长表达式。
+实现时将用自动微分或符号计算得到 $bold(sigma)_"ex", bold(f)_"ex"$，不在文中展开其冗长表达式。
 
 == 材料参数与柔度矩阵
 
