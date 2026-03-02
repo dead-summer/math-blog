@@ -23,3 +23,5 @@ pnpm-debug.log*
 .idea/
 
 __pycache__/
+
+*.pdf

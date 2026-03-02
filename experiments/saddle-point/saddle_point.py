@@ -193,7 +193,7 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
     """Assemble A, B, F matrices for the saddle-point system.
 
     Displacement features are multiplied by ζ(x) to enforce homogeneous
-    Dirichlet BCs: ψ_m(x) = ζ(x) ξ_m(x), so u_h = Σ u_{m,i} ψ_m e_i = 0 on ∂Ω.
+    Dirichlet BCs: ξ̂_m(x) = ζ(x) ξ_m(x), so u_h = Σ u_{m,i} ξ̂_m e_i = 0 on ∂Ω.
 
     Args:
         xi: (Q, M+1) feature values
@@ -210,8 +210,8 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
     Q = xi.shape[0]
     Mp1 = xi.shape[1]
 
-    # Displacement features: ψ = ζ * ξ
-    psi = zeta.unsqueeze(1) * xi  # (Q, Mp1)
+    # Displacement features: ξ̂ = ζ * ξ
+    xi_hat = zeta.unsqueeze(1) * xi  # (Q, Mp1)
 
     # Gram matrix G = (1/Q) xi^T xi (stress-stress)
     G = (1.0 / Q) * (xi.T @ xi)
@@ -223,11 +223,11 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
         for beta in range(6):
             A[alpha::6, beta::6] = S[alpha, beta] * G
 
-    # Derivative matrices using displacement features ψ for test:
-    # D_k[n, m] = (1/Q) sum_q ψ_m(x_q) * d_k ξ_n(x_q)
+    # Derivative matrices using displacement features ξ̂ for test:
+    # D_k[n, m] = (1/Q) sum_q ξ̂_m(x_q) * d_k ξ_n(x_q)
     D = []
     for k in range(3):
-        Dk = (1.0 / Q) * (psi.T @ grad_xi[:, :, k])  # [m, n]
+        Dk = (1.0 / Q) * (xi_hat.T @ grad_xi[:, :, k])  # [m, n]
         D.append(Dk.T)  # [n, m]
 
     # B matrix: 6*(M+1) x 3*(M+1)
@@ -244,8 +244,8 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
     B[5::6, 0::3] = D[2]   # beta=5(13), i=0: D2
     B[5::6, 2::3] = D[0]   # beta=5(13), i=2: D0
 
-    # F vector using displacement features ψ: F[i::3] = (1/Q) ψ^T f[:, i]
-    F_mat = (1.0 / Q) * (psi.T @ f_vals)  # (Mp1, 3)
+    # F vector using displacement features ξ̂: F[i::3] = (1/Q) ξ̂^T f[:, i]
+    F_mat = (1.0 / Q) * (xi_hat.T @ f_vals)  # (Mp1, 3)
     F_vec = torch.zeros(dim_u, dtype=DTYPE, device=device)
     for i in range(3):
         F_vec[i::3] = F_mat[:, i]
@@ -315,17 +315,17 @@ def compute_kkt_residuals(A, B, F, s, u):
     return r_s.norm().item(), r_u.norm().item()
 
 
-def compute_l2_errors(psi_test, s, u, u_exact, sigma_exact, xi_test):
+def compute_l2_errors(xi_hat_test, s, u, u_exact, sigma_exact, xi_test):
     """Evaluate relative L2 errors for displacement and stress on test points.
 
-    Displacement uses ψ = ζ*ξ features; stress uses ξ features.
+    Displacement uses ξ̂ = ζ*ξ features; stress uses ξ features.
     """
-    Q_test = psi_test.shape[0]
+    Q_test = xi_hat_test.shape[0]
 
-    # Reconstruct displacement: u_h[:, i] = psi_test @ u[i::3]
+    # Reconstruct displacement: u_h[:, i] = xi_hat_test @ u[i::3]
     u_h = torch.zeros(Q_test, 3, dtype=DTYPE, device=device)
     for i in range(3):
-        u_h[:, i] = psi_test @ u[i::3]
+        u_h[:, i] = xi_hat_test @ u[i::3]
 
     # Reconstruct stress: sigma_h[:, alpha] = xi_test @ s[alpha::6]
     sigma_h = torch.zeros(Q_test, 6, dtype=DTYPE, device=device)
@@ -348,7 +348,7 @@ def compute_l2_errors(psi_test, s, u, u_exact, sigma_exact, xi_test):
     return rel_u, rel_sig
 
 
-def make_eval_callback(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
+def make_eval_callback(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
                        eval_every=50):
     """Create a callback that records KKT residuals and L2 errors."""
     history = {
@@ -364,7 +364,7 @@ def make_eval_callback(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
         history["r_total"].append(rs + ru)
         if k % eval_every == 0 or k <= 1:
             rel_u, rel_sig = compute_l2_errors(
-                psi_test, s, u, u_exact, sigma_exact, xi_test)
+                xi_hat_test, s, u, u_exact, sigma_exact, xi_test)
             history["rel_u"].append(rel_u)
             history["rel_sigma"].append(rel_sig)
             history["steps"].append(k)
@@ -513,7 +513,7 @@ def run_arrow_hurwicz(A, B, F, K_max=2000, eta_s=1.0, eta_u=1e-2, rho=1e-6,
 # ---------------------------------------------------------------------------
 # Helper: run all algorithms on same system
 # ---------------------------------------------------------------------------
-def run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
+def run_all_algorithms(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
                        K_max=2000, eval_every=50, rho=1e-6,
                        eta_admm=0.02, beta_adam=(0.9, 0.98),
                        eta_u_uzawa=None, eta_s_ah=None, eta_u_ah=None):
@@ -528,7 +528,7 @@ def run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
     print("  Running Direct solve...")
     s, u, wt = run_direct_solve(A, B, F)
     rs, ru = compute_kkt_residuals(A, B, F, s, u)
-    rel_u, rel_sig = compute_l2_errors(psi_test, s, u, u_exact, sigma_exact, xi_test)
+    rel_u, rel_sig = compute_l2_errors(xi_hat_test, s, u, u_exact, sigma_exact, xi_test)
     history = {
         "r_s": [rs], "r_u": [ru], "r_total": [rs + ru],
         "rel_u": [rel_u], "rel_sigma": [rel_sig], "steps": [0],
@@ -569,7 +569,7 @@ def run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
         ("Arrow-Hurwicz", run_arrow_hurwicz,
          dict(K_max=K_max, eta_s=eta_s_ah, eta_u=eta_u_ah, rho=rho)),
     ]:
-        cb, hist = make_eval_callback(A, B, F, psi_test, xi_test,
+        cb, hist = make_eval_callback(A, B, F, xi_hat_test, xi_test,
                                       u_exact, sigma_exact,
                                       eval_every=eval_every)
         print(f"  Running {name}...")
@@ -729,7 +729,7 @@ if __name__ == "__main__":
     ablation_M_list = []
     Q_train = 20000
     Q_test = 10000
-    K_max = 10000
+    K_max = 100000
     rho = 1e-6
     eta_admm = 2e-02
     beta_adam = (0.9, 0.98)
@@ -778,13 +778,13 @@ if __name__ == "__main__":
     x_test = torch.rand(Q_test, 3, dtype=DTYPE, device=device)
     xi_test = eval_features(x_test, a, r, gamma)
     zeta_test = zeta_fn(x_test)
-    psi_test = zeta_test.unsqueeze(1) * xi_test  # displacement features
+    xi_hat_test = zeta_test.unsqueeze(1) * xi_test  # displacement features
     u_exact = eval_exact_displacement(x_test)
     sigma_exact = compute_stress_voigt(x_test, mu, lam)
 
     # --- Run all algorithms (including Direct solve) ---
     print(f"\n=== Main experiment (M={M}, Q=20000) ===")
-    results = run_all_algorithms(A, B, F, psi_test, xi_test, u_exact, sigma_exact,
+    results = run_all_algorithms(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
                                  K_max=K_max, eval_every=50, rho=rho,
                                  eta_admm=eta_admm, beta_adam=beta_adam,
                                  eta_u_uzawa=eta_u_uzawa, eta_s_ah=eta_s_ah, eta_u_ah=eta_u_ah)
@@ -838,11 +838,11 @@ if __name__ == "__main__":
             xi_abl, grad_xi_abl, S, f_train, zeta_train)
 
         xi_test_abl = eval_features(x_test, a_abl, r_abl, gamma)
-        psi_test_abl = zeta_test.unsqueeze(1) * xi_test_abl
+        xi_hat_test_abl = zeta_test.unsqueeze(1) * xi_test_abl
 
         # Run all 4 methods; eval_every=K_max to only record final L2
         abl_results = run_all_algorithms(
-            A_abl, B_abl, F_abl, psi_test_abl, xi_test_abl,
+            A_abl, B_abl, F_abl, xi_hat_test_abl, xi_test_abl,
             u_exact, sigma_exact, K_max=K_max, eval_every=K_max, rho=rho,
             eta_admm=eta_admm, beta_adam=beta_adam,
             eta_u_uzawa=eta_u_uzawa, eta_s_ah=eta_s_ah, eta_u_ah=eta_u_ah,

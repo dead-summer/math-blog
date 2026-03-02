@@ -59,17 +59,23 @@ $
 $
 其中 $xi_0 = 1$。因此，神经特征空间 $bold(Xi)$ 是由单隐层全连接神经网络的隐藏层神经元生成的函数空间。我们可以将 $bold(Xi)$ 视为一个近似空间，用于近似求解线弹性方程的解。
 
-为便于在 3D 中稳定采样并计算梯度，本文采用如下重参数化来生成 $(bold(w)_m, b_m)$：取全局形状参数 $gamma > 0$，并令
+为使位移近似满足齐次 Dirichlet 边界条件 $bold(u) = 0$ on $partial Omega$，引入包络函数 $zeta: overline(Omega) -> RR$，满足 $zeta = 0$ on $partial Omega$ 且 $zeta > 0$ in $Omega$。定义修正位移特征
+$
+  hat(xi)_m (bold(x)) := zeta(bold(x)) dot xi_m (bold(x)), quad m = 0, 1, ..., M.
+$
+对所有 $m$ 均有 $hat(xi)_m = 0$ on $partial Omega$，因此以 ${hat(xi)_m}$ 为基展开的位移在 $partial Omega$ 上自动为零。
+
+本文采用如下重参数化来生成 $(bold(w)_m, b_m)$：取全局形状参数 $gamma > 0$，并令
 $
   bold(w)_m = gamma bold(a)_m, quad b_m = gamma r_m.
 $
-其中 $norm(bold(a)_m)_2 = 1$ 表示超平面法向量，$r_m$ 表示截距。于是
+其中 $bold(a)_m$ 表示超平面法向量，$r_m$ 表示截距。于是
 $
   xi_m (bold(x)) = sigma.alt(gamma (bold(a)_m^T bold(x) + r_m)).
 $
 采样策略为
 $
-  bold(a)_m = bold(X)_m / norm(bold(X)_m)_2, quad bold(X)_m ~ cal(N)(0, bold(I)_3), quad  r_m ~ cal(U)[0, 1],
+  bold(a)_m = bold(X)_m / norm(bold(X)_m)_2, quad bold(X)_m ~ cal(N)(0, bold(I)_3), quad r_m ~ cal(U)[0, 1],
 $
 然后取 $bold(w)_m = gamma bold(a)_m, b_m = gamma r_m$。反过来亦有等价关系
 $
@@ -81,7 +87,7 @@ $
 将 $bold(Sigma)$ 和 $bold(U)$ 分别近似为神经特征空间 $bold(Xi)$ 的张成空间，即
 $
   bold(Xi)_bold(Sigma) := & span{xi_m (bold(E)_(i j) + bold(E)_(j i)): m = 0, ..., M, i, j = 1, 2, 3} subset bold(Sigma), \
-      bold(Xi)_bold(U) := & span{xi_m bold(e)_i: m = 0, ..., M, i = 1, 2, 3 } subset bold(U),
+      bold(Xi)_bold(U) := & span{hat(xi)_m bold(e)_i: m = 0, ..., M, i = 1, 2, 3 } subset bold(U),
 $
 其中 $bold(E)_(i j)$ 是 $RR^(3 times 3)$ 的标准单位矩阵，$bold(e)_i$ 是 $RR^3$ 的标准基向量。
 注意当 $i = j$ 时有 $bold(E)_(i i) + bold(E)_(i i) = 2 bold(E)_(i i)$，为避免对角项的系数重复，下面改用 Voigt 形式的一组对称基 ${upright(bold(E))_alpha}_1^6$：
@@ -120,7 +126,7 @@ $
 将近似解在上述基上展开：
 $
   bold(phi)_bold(sigma) & = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) xi_m upright(bold(E))_alpha, \
-      bold(phi)_bold(u) & = sum_(m=0)^M sum_(i=1)^3 u_(m, i) xi_m bold(e)_i.
+      bold(phi)_bold(u) & = sum_(m=0)^M sum_(i=1)^3 u_(m, i) hat(xi)_m bold(e)_i.
 $
 记系数向量
 $
@@ -135,14 +141,14 @@ $
 取测试函数为同一组基函数：
 $
   bold(phi)_bold(tau) = xi_n upright(bold(E))_beta, quad 0 <= n <= M, 1 <= beta <= 6, \
-  bold(phi)_bold(v) = xi_n bold(e)_j, quad 0 <= n <= M, 1 <= j <= 3.
+  bold(phi)_bold(v) = hat(xi)_n bold(e)_j, quad 0 <= n <= M, 1 <= j <= 3.
 $
 
 定义矩阵块与离散载荷向量：
 $
   bold(A)_((n, beta), (m, alpha)) & := a(xi_n upright(bold(E))_beta, xi_m upright(bold(E))_alpha), \
-      bold(B)_((n, beta), (m, i)) & := b(xi_n upright(bold(E))_beta, xi_m bold(e)_i), \
-                 bold(F)_((n, j)) & := (bold(f), xi_n bold(e)_j).
+      bold(B)_((n, beta), (m, i)) & := b(xi_n upright(bold(E))_beta, hat(xi)_m bold(e)_i), \
+                 bold(F)_((n, j)) & := (bold(f), hat(xi)_n bold(e)_j).
 $
 
 对任意固定的 $(n, beta)$，取测试函数 $bold(phi)_bold(tau) = xi_n upright(bold(E))_beta$。第一条离散变分方程为
@@ -152,12 +158,12 @@ $
 将系数展开式
 $ bold(phi)_bold(sigma) = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) xi_m upright(bold(E))_alpha $
 与
-$ bold(phi)_bold(u) = sum_(m=0)^M sum_(i=1)^3 u_(m, i) xi_m bold(e)_i $
+$ bold(phi)_bold(u) = sum_(m=0)^M sum_(i=1)^3 u_(m, i) hat(xi)_m bold(e)_i $
 代入，并利用双线性性；同时注意在线弹性常用对称性假设下 $a(bold(sigma), bold(tau)) = a(bold(tau), bold(sigma))$，得到
 $
   0
   = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) a(xi_n upright(bold(E))_beta, xi_m upright(bold(E))_alpha)
-  + sum_(m=0)^M sum_(i=1)^3 u_(m, i) b(xi_n upright(bold(E))_beta, xi_m bold(e)_i).
+  + sum_(m=0)^M sum_(i=1)^3 u_(m, i) b(xi_n upright(bold(E))_beta, hat(xi)_m bold(e)_i).
 $
 将上述两项分别识别为 $bold(A), bold(B)$ 的矩阵元素，即
 $
@@ -166,17 +172,17 @@ $
 $
 这条方程正对应于 $bold(A) bold(s) + bold(B) bold(u) = 0$ 的第 $(n, beta)$ 个分量。
 
-同理，对任意固定的 $(n, j)$，取测试函数 $bold(phi)_bold(v) = xi_n bold(e)_j$。第二条离散变分方程为
+同理，对任意固定的 $(n, j)$，取测试函数 $bold(phi)_bold(v) = hat(xi)_n bold(e)_j$。第二条离散变分方程为
 $
-  0 = b(bold(phi)_bold(sigma), xi_n bold(e)_j) + (bold(f), xi_n bold(e)_j).
+  0 = b(bold(phi)_bold(sigma), hat(xi)_n bold(e)_j) + (bold(f), hat(xi)_n bold(e)_j).
 $
 代入 $bold(phi)_bold(sigma)$ 并展开：
 $
   0
-  = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) b(xi_m upright(bold(E))_alpha, xi_n bold(e)_j)
+  = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) b(xi_m upright(bold(E))_alpha, hat(xi)_n bold(e)_j)
   + bold(F)_((n, j)).
 $
-注意 $b(xi_m upright(bold(E))_alpha, xi_n bold(e)_j) = bold(B)_((m, alpha), (n, j))$，因此这条方程正对应于 $bold(B)^T bold(s) + bold(F) = 0$ 的第 $(n, j)$ 个分量。
+注意 $b(xi_m upright(bold(E))_alpha, hat(xi)_n bold(e)_j) = bold(B)_((m, alpha), (n, j))$，因此这条方程正对应于 $bold(B)^T bold(s) + bold(F) = 0$ 的第 $(n, j)$ 个分量。
 
 将 $bold(A), bold(B)$ 视为 $(M+1) times (M+1)$ 块矩阵（块行由 $n$，块列由 $m$ 索引），$bold(F)$ 视为 $(M+1) times 1$ 块行向量，其堆叠形式为
 $
@@ -201,14 +207,14 @@ $
 $
 其中块矩阵满足（块内行指标为 $beta$，列指标为 $alpha$ 或 $i$）：
 $
-  bold(A)_(n, m) in RR^(6 times 6), &quad (bold(A)_(n, m))_(beta, alpha) = bold(A)_((n, beta), (m, alpha)), \
-  bold(B)_(n, m) in RR^(6 times 3), &quad (bold(B)_(n, m))_(beta, i) = bold(B)_((n, beta), (m, i)), \
-  bold(F)_n in RR^3, &quad (bold(F)_n)_j = bold(F)_((n, j)).
+  bold(A)_(n, m) in RR^(6 times 6), & quad (bold(A)_(n, m))_(beta, alpha) = bold(A)_((n, beta), (m, alpha)), \
+  bold(B)_(n, m) in RR^(6 times 3), & quad (bold(B)_(n, m))_(beta, i) = bold(B)_((n, beta), (m, i)), \
+                 bold(F)_n in RR^3, & quad (bold(F)_n)_j = bold(F)_((n, j)).
 $
 为强调块结构，将系数按特征下标分块：
 $
-  bold(s)_m &:= (s_(m, 1), ..., s_(m, 6))^T in RR^6, \
-  bold(u)_m &:= (u_(m, 1), ..., u_(m, 3))^T in RR^3, \
+  bold(s)_m & := (s_(m, 1), ..., s_(m, 6))^T in RR^6, \
+  bold(u)_m & := (u_(m, 1), ..., u_(m, 3))^T in RR^3, \
 $
 则 $bold(s) = (bold(s)_0, ..., bold(s)_M)^T$，$bold(u) = (bold(u)_0, ..., bold(u)_M)^T$。
 
@@ -275,8 +281,8 @@ $
 由定义
 $
   bold(B)_((n, beta), (m, i))
-  := b(xi_n upright(bold(E))_beta, xi_m bold(e)_i)
-  = integral_Omega (nabla dot (xi_n upright(bold(E))_beta)) dot (xi_m bold(e)_i) dif bold(x).
+  := b(xi_n upright(bold(E))_beta, hat(xi)_m bold(e)_i)
+  = integral_Omega (nabla dot (xi_n upright(bold(E))_beta)) dot (hat(xi)_m bold(e)_i) dif bold(x).
 $
 利用张量散度的分量定义 $(nabla dot bold(tau))_p = tau_(p k, k)$，令 $bold(tau) = xi_n upright(bold(E))_beta$，则
 $
@@ -290,8 +296,8 @@ $
 $
 因此
 $
-  bold(B)_((n, beta), (m, i)) = integral_Omega xi_m (upright(bold(E))_beta nabla xi_n)_i dif bold(x)
-  = integral_Omega xi_m sum_(k=1)^3 (upright(bold(E))_beta)_(i k) partial_k xi_n dif bold(x).
+  bold(B)_((n, beta), (m, i)) = integral_Omega hat(xi)_m (upright(bold(E))_beta nabla xi_n)_i dif bold(x)
+  = integral_Omega hat(xi)_m sum_(k=1)^3 (upright(bold(E))_beta)_(i k) partial_k xi_n dif bold(x).
 $
 
 对 6 个对称基，$upright(bold(E))_beta nabla xi_n$ 可完全写成梯度分量的线性组合。记
@@ -325,9 +331,9 @@ $
 由定义
 $
   bold(F)_((n, j))
-  := (bold(f), xi_n bold(e)_j)
-  = integral_Omega bold(f) dot (xi_n bold(e)_j) dif bold(x)
-  = integral_Omega f_j (bold(x)) xi_n (bold(x)) dif bold(x).
+  := (bold(f), hat(xi)_n bold(e)_j)
+  = integral_Omega bold(f) dot (hat(xi)_n bold(e)_j) dif bold(x)
+  = integral_Omega f_j (bold(x)) hat(xi)_n (bold(x)) dif bold(x).
 $
 
 === 通用数值求积形式
@@ -341,8 +347,8 @@ $
   cases(
     bold(A)_((n, beta), (m, alpha))
     &approx sum_(q=1)^Q w_q xi_n (bold(x)_q) xi_m (bold(x)_q) ((bold(S)(bold(x)_q) : upright(bold(E))_beta) : upright(bold(E))_alpha),
-    bold(B)_((n, beta), (m, i)) &approx sum_(q=1)^Q w_q xi_m (bold(x)_q) (upright(bold(E))_beta nabla xi_n (bold(x)_q))_i,
-    bold(F)_((n, j)) &approx sum_(q=1)^Q w_q f_j (bold(x)_q) xi_n (bold(x)_q).
+    bold(B)_((n, beta), (m, i)) &approx sum_(q=1)^Q w_q hat(xi)_m (bold(x)_q) (upright(bold(E))_beta nabla xi_n (bold(x)_q))_i,
+    bold(F)_((n, j)) & approx sum_(q=1)^Q w_q f_j (bold(x)_q) hat(xi)_n (bold(x)_q).
   )
 $
 
@@ -361,12 +367,12 @@ $
 
 在第 $k+1$ 轮迭代中，先固定 $bold(s)^k$ 对 $bold(u)$ 做一次梯度上升更新：
 $
-  bold(u)^(k+1) &= bold(u)^k + eta_bold(u)^"ADMM" (bold(B)^T bold(s)^k + bold(F)).
+  bold(u)^(k+1) & = bold(u)^k + eta_bold(u)^"ADMM" (bold(B)^T bold(s)^k + bold(F)).
 $
 
 再固定 $bold(u)^(k+1)$ 对 $bold(s)$ 做一次梯度下降更新：
 $
-  bold(s)^(k+1) &= bold(s)^k - eta_bold(s)^"ADMM" (bold(A) bold(s)^k + bold(B) bold(u)^(k+1)).
+  bold(s)^(k+1) & = bold(s)^k - eta_bold(s)^"ADMM" (bold(A) bold(s)^k + bold(B) bold(u)^(k+1)).
 $
 这里 $eta_bold(u)^"ADMM", eta_bold(s)^"ADMM" > 0$ 为步长。上式写成最简单的梯度上升/下降形式，实际实现中依赖优化器行为（如 Adam 将步长替换为自适应更新）。
 
@@ -394,13 +400,12 @@ $
     - 1/(2 eta_bold(u)^"Uzawa") (bold(u) - bold(u)^(k))^T (bold(u) - bold(u)^(k))
   ].
 $
-
-在第 $k$ 轮循环中，更新
+为了数值稳健性，在实际更新中用 $bold(A) + rho bold(I)$ 替代 $bold(A)$。具体为：在第 $k$ 轮循环中，更新
 $
-  (bold(A) + rho bold(I)) bold(s)^(k) &= -bold(B) bold(u)^(k), \
-  bold(u)^(k) &= bold(u)^(k) + eta_bold(u)^"Uzawa" (bold(B)^T bold(s)^(k) + bold(F)).
+  (bold(A) + rho bold(I)) bold(s)^(k) & = -bold(B) bold(u)^(k), \
+                        bold(u)^(k+1) & = bold(u)^(k) + eta_bold(u)^"Uzawa" (bold(B)^T bold(s)^(k) + bold(F)).
 $
-最后设 $bold(u)^(k+1) = bold(u)^(k, T)$。其中 $bold(I)$ 为单位阵，$rho >= 0$ 是用于数值稳健性的阻尼参数；当 $bold(A)$ 可能奇异或病态时可取 $rho > 0$。
+其中 $bold(I)$ 为单位阵，$rho >= 0$ 是用于数值稳健性的阻尼参数；当 $bold(A)$ 可能奇异或病态时可取 $rho > 0$。
 
 = Arrow-Hurwicz 算法
 
@@ -455,9 +460,11 @@ $
 取计算域 $Omega = [0, 1]^3$。设精确位移为
 $
   bold(u)_"ex" (bold(x))
-  = mat(sin(pi x_1) sin(pi x_2) sin(pi x_3);
-     sin(2 pi x_1) sin(pi x_2) sin(pi x_3);
-     sin(pi x_1) sin(2 pi x_2) sin(pi x_3)).
+  = mat(
+    sin(pi x_1) sin(pi x_2) sin(pi x_3);
+    sin(2 pi x_1) sin(pi x_2) sin(pi x_3);
+    sin(pi x_1) sin(2 pi x_2) sin(pi x_3)
+  ).
 $
 则 $bold(u)_"ex" = 0$ 在 $partial Omega$ 上成立。相应精确应力取
 $
@@ -504,12 +511,18 @@ $
 $
 固定 $gamma = 2.0$ 以控制特征函数的频率范围；$bold(a)_m = bold(X)_m \/ norm(bold(X)_m)_2$，其中 $bold(X)_m ~ cal(N)(0, bold(I)_3)$ 是从标准正态分布采样的随机向量；$r_m ~ cal(U)[0, 1]$，是从 $[0, 1]$ 均匀分布采样的随机数。
 
+取包络函数为
+$
+  zeta(bold(x)) = x_1(1-x_1) dot x_2(1-x_2) dot x_3(1-x_3),
+$
+则 $zeta = 0$ on $partial [0, 1]^3$ 且 $zeta > 0$ in $(0, 1)^3$。注意 $hat(xi)_0 = zeta$（不再是常数函数）。
+
 本文仅迭代更新离散未知量系数 $bold(s), bold(u)$。主实验取 $M = 256$，并在消融实验中考察不同 $M$ 的影响。
 
-在 3D 结构下，应力与位移的近似分别为
+在 3D 结构下，应力近似使用原始特征 $xi_m$，位移近似使用修正特征 $hat(xi)_m$：
 $
   bold(phi)_bold(sigma) = sum_(m=0)^M sum_(alpha=1)^6 s_(m, alpha) xi_m upright(bold(E))_alpha, \
-  bold(phi)_bold(u) = sum_(m=0)^M sum_(i=1)^3 u_(m, i) xi_m bold(e)_i,
+  bold(phi)_bold(u) = sum_(m=0)^M sum_(i=1)^3 u_(m, i) hat(xi)_m bold(e)_i.
 $
 从而得到离散鞍点系统
 $
@@ -531,7 +544,7 @@ $
 #figure(
   three-line-table(
     columns: 2,
-    align: (right, left)
+    align: (right, left),
   )[
     | 参数 | 取值 |
     |------|------|
@@ -544,7 +557,7 @@ $
     | 测试点 | $Q_"test" = 10000$ |
     | 阻尼 | $rho = 10^(-6)$ |
     | 初值 | $bold(s)^0 = 0, bold(u)^0 = 0$ |
-    | 迭代 | $K = 5000$ 或满足停止准则 |
+    | 迭代 | $K = 10^5$ 或满足停止准则 |
   ],
 )
 
@@ -577,7 +590,7 @@ $
 
 == 实验结果
 
-主实验结果（$M = 256$，$Q_"train" = 20000$，$K = 2000$）如 @tb:main-results 所示。Direct 为直接求解鞍点系统的参考解。
+主实验结果（$M = 256$，$Q_"train" = 20000$，$K = 10^5$）如 @tb:main-results 所示。Direct 为直接求解鞍点系统的参考解。
 
 #figure(
   three-line-table(
@@ -586,41 +599,52 @@ $
   )[
     | 算法 | $norm(bold(r)_bold(s))_2$ | $norm(bold(r)_bold(u))_2$ | 位移误差 | 应力误差 | 时间 (s) |
     |------|------|------|------|------|------|
-    | Direct | $1.63 times 10^(-8)$ | $7.97 times 10^(-10)$ | $2.31 times 10^(1)$ | $3.21 times 10^(0)$ | $0.06$ |
-    | ADMM | $4.38 times 10^(0)$ | $6.81 times 10^(-2)$ | $8.96 times 10^(0)$ | $1.15 times 10^(1)$ | $1.52$ |
-    | Uzawa | $5.24 times 10^(-6)$ | $1.40 times 10^(-3)$ | $7.61 times 10^(-1)$ | $8.40 times 10^(-1)$ | $6.40$ |
-    | Arrow-Hurwicz | $1.21 times 10^(-3)$ | $1.68 times 10^(-3)$ | $7.57 times 10^(-1)$ | $9.25 times 10^(-1)$ | $1.85$ |
+    | Direct            | 1.31e-07      | 7.05e-09      | 1.48e+00     | 2.54e-01      | 0.10    |
+    | ADMM              | 4.95e+00      | 7.08e-02      | 1.03e-01     | 2.30e-01      | 60.80   |
+    | Uzawa             | 1.97e-04      | 5.24e-03      | 1.08e-01     | 1.81e-01      | 90.45   |
+    | Arrow-Hurwicz     | 2.81e-02      | 5.99e-03      | 1.73e-01     | 4.07e-01      | 43.27   |
   ],
   caption: [主实验结果（$M = 256$）],
 ) <tb:main-results>
 
-KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence 和 @fig:l2-convergence。从 @tb:main-results 以及 @fig:kkt-convergence、@fig:l2-convergence 可以看到，离散 KKT 残差与对制造解的 $L^2$ 误差并不总是同步变化：Direct 在 $norm(bold(r)_bold(s))_2$ 与 $norm(bold(r)_bold(u))_2$ 上达到 $10^(-8)$ 量级，且耗时最低（$0.06$ s），但位移/应力相对误差分别为 $2.31 times 10^(1)$ 与 $3.21 times 10^(0)$。这说明在 $M=256$ 的特征空间下，“把鞍点系统解得更精确”并不会自动带来更小的物理量误差，误差下限仍受近似空间能力与数值效应等因素制约。
+@tb:main-results 汇总了 Direct 与三种迭代法的最终指标。可以看到：
 
-就迭代方法而言，Uzawa 与 Arrow-Hurwicz 在有限迭代预算内给出了更好的误差-成本折中：两者将位移/应力误差稳定降到 $O(10^0)$ 以下。两者的差异主要体现在残差与耗时上：Uzawa 的 $norm(bold(r)_bold(s))_2$ 更小（$5.24 times 10^(-6)$），但耗时更长（$6.40$ s）；Arrow-Hurwicz 用更短时间（$1.85$ s）取得相近误差，但其 $norm(bold(r)_bold(s))_2$ 更大（$1.21 times 10^(-3)$），且从 @fig:kkt-convergence 可见 $norm(bold(r)_bold(s))_2$ 存在较明显的平台与波动。
+- *Direct* 的 KKT 残差达到接近机器精度，但位移相对 $L^2$ 误差反而最大（$1.48$）。这说明在当前“随机特征 + Monte Carlo 组装”的离散化下，代数系统的精确解并不必然对应对制造解的最佳逼近。
+- *ADMM* 的位移/应力误差可以做到与 Uzawa 同量级，但 $norm(bold(r)_bold(s))_2$ 长期停在 $O(1)$ 且波动很大（见 @fig:kkt-convergence），在“逼近 KKT 解”这一目标下表现很差。
+- *Uzawa* 在两类残差上显著优于 ADMM/Arrow-Hurwicz，同时应力误差最低（$0.181$）；代价是每步需要对 $(bold(A)+rho bold(I))$ 做线性求解，以至于本实现中总时间最长。
+- *Arrow-Hurwicz* 的计算成本较低（本实现中时间最短），但残差与误差均不占优，尤其应力误差明显偏大（$0.407$）。
 
-ADMM 在本实现与超参下未表现出有效收敛：主实验中 $norm(bold(r)_bold(s))_2 = 4.38 times 10^(0)$、$norm(bold(r)_bold(u))_2 = 6.81 times 10^(-2)$，并且位移/应力误差分别为 $8.96 times 10^(0)$ 与 $1.15 times 10^(1)$，整体显著劣于 Uzawa 与 Arrow-Hurwicz；同时 @fig:kkt-convergence 中其残差曲线振荡幅度较大，缺乏稳定下降趋势。因此，在当前设置下 ADMM 难以作为可靠的求解策略，需要进一步的步长/预条件/更新次数设计，或显著增加迭代预算后再做可比性讨论。
+一种推断是：离散鞍点系统存在病态/离散稳定性不足，且 Monte Carlo 积分会引入统计噪声；Direct 的精确求解更容易放大这些误差，而 Uzawa/Arrow-Hurwicz 中对 $bold(A)$ 的轻微阻尼以及迭代法的非精确性与“早停”效应，在一定程度上起到了隐式正则化作用。
+
+KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence 和 @fig:l2-convergence。
 
 #figure(
   image("/public/images/saddle-point/kkt-convergence.png"),
   caption: [KKT 残差收敛曲线],
 ) <fig:kkt-convergence>
 
+从 @fig:kkt-convergence 可见，Uzawa 的 $norm(bold(r)_bold(s))_2$ 在早期快速下降到 $10^(-4)$ 量级并进入平台，而 $norm(bold(r)_bold(u))_2$ 则持续缓慢下降；Arrow-Hurwicz 的 $norm(bold(r)_bold(u))_2$ 同样呈下降趋势，但 $norm(bold(r)_bold(s))_2$ 长期停在 $10^(-2)$ 量级，符合其对 $bold(s)$ 子问题仅做一次（预条件）梯度下降近似的特性。相比之下，ADMM 的两项残差都表现为高噪声平台，说明其更像“强阻尼的非精确求解”，而不是有效的 KKT 收敛算法。
+
 #figure(
   image("/public/images/saddle-point/l2-error-convergence.png"),
   caption: [$L^2$ 相对误差收敛曲线],
 ) <fig:l2-convergence>
 
+@fig:l2-convergence 进一步显示：误差下降与 KKT 残差下降并非一一对应。Uzawa 的应力误差会随迭代持续改善，而 ADMM 更早进入平台；Arrow-Hurwicz 的位移误差在中期达到较小值后略有回升。这提示我们在带噪声/病态离散的情形下，继续迭代可能会更贴合离散系统而牺牲对制造解的逼近。
+
 == 消融实验
 
-固定 $Q_"train" = 20000$，分别取 $M in {64, 128, 256, 512, 1024}$，各算法在相同随机种子下运行 $K = 5000$ 步。结果如 @fig:ablation-M 所示。
+固定 $Q_"train" = 20000$，分别取 $M in {64, 128, 256, 512, 1024}$，各算法在相同随机种子下运行 $K = 10^5$ 步。结果如 @fig:ablation-M 所示。
 
 #figure(
   image("/public/images/saddle-point/ablation-M.png"),
   caption: [特征数量 $M$ 消融实验：误差和 KKT 残差随 $M$ 的变化],
 ) <fig:ablation-M>
 
-@fig:ablation-M 展示了特征数量 $M$ 对不同求解策略的敏感性差异。Direct 的误差随 $M$ 增大呈现显著的数量级下降：当 $M=64$ 时位移误差可达 $10^4$ 量级，而当 $M=512$ 及以上时迅速降到 $O(1)$ 乃至 $10^(-1)$ 量级；应力误差也从 $10^1$ 量级下降到 $10^(-1)$ 量级。这说明 Direct 的性能主要受近似空间逼近能力支配，$M$ 不足时即便 KKT 残差极小，也可能得到较差的物理量近似。
+@fig:ablation-M 给出了不同特征数量 $M$ 下的最终 KKT 残差（上排）与相对 $L^2$ 误差（下排）。主要观察如下：
 
-相比之下，Uzawa 与 Arrow-Hurwicz 在所有 $M$ 下的误差曲线更平坦：位移与应力误差大致维持在 $0.5$ 到 $1.0$ 的量级并随 $M$ 缓慢改善；同时其 KKT 残差也稳定在 $10^(-6)$ 到 $10^(-3)$ 区间。这体现了两者在固定迭代预算 $K=5000$ 下对规模与病态性的鲁棒性，但也意味着它们受残差平台限制，难以像 Direct 那样在大 $M$ 时继续显著降低误差。
+- *Direct* 的残差始终最小，但在小 $M$ 时位移/应力误差出现数量级爆炸（位移误差可达 $10^3$ 量级），并且随 $M$ 增大也不保证单调改善。这是“直接精确解离散鞍点系统”在该随机特征离散下数值不稳定的强信号。
+- *ADMM* 的残差随 $M$ 增大明显恶化（尤其 $norm(bold(r)_bold(s))_2$ 上升到 $10^1$ 量级），并在大 $M$ 时误差回升。
+- *Uzawa* 对 $M$ 的变化最鲁棒：当 $M$ 从 64 增至 256 时误差显著下降；$M >= 256$ 后改善趋于饱和（位移/应力误差基本稳定在 $10^(-1)$ 量级），同时残差保持在 $10^(-4)$–$10^(-3)$ 量级。
+- *Arrow-Hurwicz* 的误差整体高于 Uzawa，且 $norm(bold(r)_bold(s))_2$ 在 $10^(-2)$ 左右平台化：它用更低的每步成本换取了精度上限，更适合作为“廉价近似消元”的折中方案。
 
-ADMM 的规模鲁棒性最差：随着 $M$ 增大，其 KKT 残差与 $L^2$ 误差整体上升，在大 $M$ 下明显劣于其余方法。就本实验配置而言，ADMM 在 $5000$ 步内未能有效收敛，若要公平对比，需要重新调参或引入更合适的更新/预条件机制（或增加迭代步数）。
