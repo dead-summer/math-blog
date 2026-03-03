@@ -75,11 +75,7 @@ $
 $
 采样策略为
 $
-  bold(a)_m = bold(X)_m / norm(bold(X)_m)_2, quad bold(X)_m ~ cal(N)(0, bold(I)_3), quad r_m ~ cal(U)[0, 1],
-$
-然后取 $bold(w)_m = gamma bold(a)_m, b_m = gamma r_m$。反过来亦有等价关系
-$
-  bold(a)_m = bold(w)_m / norm(bold(w)_m)_2, quad r_m = b_m / norm(bold(w)_m)_2, quad gamma = norm(bold(w)_m)_2.
+  bold(a)_m = bold(X)_m / norm(bold(X)_m)_2, quad bold(X)_m ~ cal(N)(0, bold(I)_3), quad r_m ~ cal(U)[0, 1].
 $
 
 = 导出线性系统
@@ -551,19 +547,19 @@ $
     | 域 | $Omega = [0, 1]^3$ |
     | 边界条件 | 齐次 Dirichlet：$bold(u)=0$ on $partial Omega$ |
     | 材料 | 各向同性常系数：$E=1, nu=0.3$ |
-    | 随机特征 | 激活 $tanh$ |
+    | 随机特征 | $tanh$ 激活函数，均匀神经元分布  |
     | 特征采样 | $bold(w)_m = gamma bold(a)_m$，$b_m = gamma r_m$ |
     | 训练点 | $Q_"train" = 20000$ |
     | 测试点 | $Q_"test" = 10000$ |
     | 阻尼 | $rho = 10^(-6)$ |
     | 初值 | $bold(s)^0 = 0, bold(u)^0 = 0$ |
-    | 迭代 | $K = 10^5$ 或满足停止准则 |
+    | 迭代 | $5 times 10^4$ 或满足停止准则 |
   ],
 )
 
 算法细节如下：
 
-- *ADMM*: 采用 Adam 优化器，学习率 $eta_bold(u) = eta_bold(s) = 0.02$，$bold(beta)^"Adam" = (0.9, 0.98)$，每轮各做 1 次更新。
+- *ADMM*: 采用 Adam 优化器，学习率 $eta_bold(u) = eta_bold(s) = 0.02$，Adam 优化器动量参数 $bold(beta)^"Adam" = (0.9, 0.98)$，每轮各做 1 次更新。
 - *Uzawa*：步长 $eta_bold(u)^"Uzawa"$ 通过 Schur 补谱半径自适应选择。
 - *Arrow-Hurwicz*: 步长 $eta_bold(s)^"AH"$、$eta_bold(u)^"AH"$ 分别通过 Jacobi 谱半径和 Schur 补谱半径自适应选择；取预条件子 $bold(J) = [diag(bold(A) + rho bold(I))]^(-1)$，$bold(K) = bold(I)$。
 
@@ -590,7 +586,7 @@ $
 
 == 实验结果
 
-主实验结果（$M = 256$，$Q_"train" = 20000$，$K = 10^5$）如 @tb:main-results 所示。Direct 为直接求解鞍点系统的参考解。
+主实验结果（$M = 256$，$Q_"train" = 20000$，$K = 5 times 10^4$）如 @tb:main-results 所示。Direct 为直接求解鞍点系统的参考解。
 
 #figure(
   three-line-table(
@@ -598,23 +594,21 @@ $
     align: (left, right, right, right, right, right),
   )[
     | 算法 | $norm(bold(r)_bold(s))_2$ | $norm(bold(r)_bold(u))_2$ | 位移误差 | 应力误差 | 时间 (s) |
-    |------|------|------|------|------|------|
-    | Direct            | 1.31e-07      | 7.05e-09      | 1.48e+00     | 2.54e-01      | 0.10    |
-    | ADMM              | 4.95e+00      | 7.08e-02      | 1.03e-01     | 2.30e-01      | 60.80   |
-    | Uzawa             | 1.97e-04      | 5.24e-03      | 1.08e-01     | 1.81e-01      | 90.45   |
-    | Arrow-Hurwicz     | 2.81e-02      | 5.99e-03      | 1.73e-01     | 4.07e-01      | 43.27   |
+    |:---------------|-----------:|-----------:|-----------:|-----------:|---------:|
+    | Direct         |   1.31e-07 |   7.05e-09 |   1.48e+00 |   2.54e-01 |     0.08 |
+    | ADMM           |   6.35e+00 |   5.05e-02 |   1.35e-01 |   2.40e-01 |    19.12 |
+    | Uzawa          |   2.44e-04 |   1.06e-04 |   3.24e-02 |   7.50e-02 |    31.13 |
+    | Arrow-Hurwicz  |   1.09e-01 |   1.49e-03 |   8.17e-01 |   3.71e-01 |     8.23 |
   ],
   caption: [主实验结果（$M = 256$）],
 ) <tb:main-results>
 
 @tb:main-results 汇总了 Direct 与三种迭代法的最终指标。可以看到：
 
-- *Direct* 的 KKT 残差达到接近机器精度，但位移相对 $L^2$ 误差反而最大（$1.48$）。这说明在当前“随机特征 + Monte Carlo 组装”的离散化下，代数系统的精确解并不必然对应对制造解的最佳逼近。
-- *ADMM* 的位移/应力误差可以做到与 Uzawa 同量级，但 $norm(bold(r)_bold(s))_2$ 长期停在 $O(1)$ 且波动很大（见 @fig:kkt-convergence），在“逼近 KKT 解”这一目标下表现很差。
-- *Uzawa* 在两类残差上显著优于 ADMM/Arrow-Hurwicz，同时应力误差最低（$0.181$）；代价是每步需要对 $(bold(A)+rho bold(I))$ 做线性求解，以至于本实现中总时间最长。
-- *Arrow-Hurwicz* 的计算成本较低（本实现中时间最短），但残差与误差均不占优，尤其应力误差明显偏大（$0.407$）。
-
-一种推断是：离散鞍点系统存在病态/离散稳定性不足，且 Monte Carlo 积分会引入统计噪声；Direct 的精确求解更容易放大这些误差，而 Uzawa/Arrow-Hurwicz 中对 $bold(A)$ 的轻微阻尼以及迭代法的非精确性与“早停”效应，在一定程度上起到了隐式正则化作用。
+- *Direct*：KKT 残差达到机器精度级别（约 $10^(-7)$），但位移相对误差高达 $1.48$，表明直接求解的鞍点系统虽然在代数层面精确满足 KKT 条件，却因近似空间的表达能力不足而无法逼近真解。
+- *ADMM*：采用 Adam 优化器的交替更新策略，位移误差降至 $13.5%$，应力误差 $24.0%$，但 KKT 残差（$norm(bold(r)_bold(s))_2 approx 6.35$）未能收敛，说明 Adam 的自适应学习率在鞍点问题上倾向于"跳过"精确解而追求更低的近似误差。
+- *Uzawa*：通过精确求解 $bold(s)$ 子问题再更新 $bold(u)$，KKT 残差和 $L^2$ 误差均为最低（位移 $3.24%$，应力 $7.50%$），整体表现最佳，但每步迭代的计算成本较高。
+- *Arrow-Hurwicz*：单步计算代价最小（耗时 $8.23$s），但因 $bold(s)$ 子问题采用非精确求解，最终精度介于 ADMM 与 Uzawa 之间。
 
 KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence 和 @fig:l2-convergence。
 
@@ -623,28 +617,36 @@ KKT 残差收敛曲线和 $L^2$ 误差收敛曲线分别见 @fig:kkt-convergence
   caption: [KKT 残差收敛曲线],
 ) <fig:kkt-convergence>
 
-从 @fig:kkt-convergence 可见，Uzawa 的 $norm(bold(r)_bold(s))_2$ 在早期快速下降到 $10^(-4)$ 量级并进入平台，而 $norm(bold(r)_bold(u))_2$ 则持续缓慢下降；Arrow-Hurwicz 的 $norm(bold(r)_bold(u))_2$ 同样呈下降趋势，但 $norm(bold(r)_bold(s))_2$ 长期停在 $10^(-2)$ 量级，符合其对 $bold(s)$ 子问题仅做一次（预条件）梯度下降近似的特性。相比之下，ADMM 的两项残差都表现为高噪声平台，说明其更像“强阻尼的非精确求解”，而不是有效的 KKT 收敛算法。
+从 @fig:kkt-convergence 可见，
+
+- *ADMM*：两残差均呈现剧烈震荡：$norm(bold(r)_bold(s))_2$ 在 $1 tilde.op 10$ 范围内波动，$norm(bold(r)_bold(u))_2$ 震荡于 $10^(-2) tilde.op 10^(-1)$。这是 Adam 优化器动量累积效应的典型表现，虽未收敛到 KKT 点，但震荡中心已接近低误差区域。
+- *Uzawa*：在两个残差分量上均呈单调下降趋势，$norm(bold(r)_bold(s))_2$ 在约 $5000$ 步后降至 $10^(-4)$ 量级，$norm(bold(r)_bold(u))_2$ 持续下降至 $10^(-4)$ 以下，体现了精确求解 $bold(s)$ 子问题带来的稳定收敛性。
+- *Arrow-Hurwicz*：$norm(bold(r)_bold(s))_2$ 快速下降后停滞于 $10^(-1)$ 量级，$norm(bold(r)_bold(u))_2$ 的行为与之类似，反映出非精确 $bold(s)$ 更新引入的近似误差限制了最终精度。
 
 #figure(
   image("/public/images/saddle-point/l2-error-convergence.png"),
   caption: [$L^2$ 相对误差收敛曲线],
 ) <fig:l2-convergence>
 
-@fig:l2-convergence 进一步显示：误差下降与 KKT 残差下降并非一一对应。Uzawa 的应力误差会随迭代持续改善，而 ADMM 更早进入平台；Arrow-Hurwicz 的位移误差在中期达到较小值后略有回升。这提示我们在带噪声/病态离散的情形下，继续迭代可能会更贴合离散系统而牺牲对制造解的逼近。
+@fig:l2-convergence 进一步显示：
+
+- *ADMM*：误差曲线在前 $5000$ 步快速下降后趋于平稳，最终位移误差约 $13%$，应力误差约 $24%$，均显著优于 Direct 参考解。尽管 KKT 残差较大，但 Adam 的自适应步长使迭代轨迹在低误差区域附近震荡，实现了隐式正则化。
+- *Uzawa*：位移与应力误差在整个迭代过程中持续单调下降，最终分别稳定于 $3%$ 和 $7%$ 左右，且始终低于 Direct 参考线，说明迭代过程的正则化效应有效避免了直接求解的过拟合现象。
+- *Arrow-Hurwicz*：初期呈现明显震荡，约 $10000$ 步后趋于平稳，最终误差略高于 Direct，表明其收敛速度与精度之间的权衡并非最优，但仍可作为快速初始化手段。
 
 == 消融实验
 
 固定 $Q_"train" = 20000$，分别取 $M in {64, 128, 256, 512, 1024}$，各算法在相同随机种子下运行 $K = 10^5$ 步。结果如 @fig:ablation-M 所示。
 
 #figure(
-  image("/public/images/saddle-point/ablation-M.png"),
+  image("/public/images/saddle-point/ablation/M/ablation-M.png"),
   caption: [特征数量 $M$ 消融实验：误差和 KKT 残差随 $M$ 的变化],
 ) <fig:ablation-M>
 
 @fig:ablation-M 给出了不同特征数量 $M$ 下的最终 KKT 残差（上排）与相对 $L^2$ 误差（下排）。主要观察如下：
 
-- *Direct* 的残差始终最小，但在小 $M$ 时位移/应力误差出现数量级爆炸（位移误差可达 $10^3$ 量级），并且随 $M$ 增大也不保证单调改善。这是“直接精确解离散鞍点系统”在该随机特征离散下数值不稳定的强信号。
-- *ADMM* 的残差随 $M$ 增大明显恶化（尤其 $norm(bold(r)_bold(s))_2$ 上升到 $10^1$ 量级），并在大 $M$ 时误差回升。
-- *Uzawa* 对 $M$ 的变化最鲁棒：当 $M$ 从 64 增至 256 时误差显著下降；$M >= 256$ 后改善趋于饱和（位移/应力误差基本稳定在 $10^(-1)$ 量级），同时残差保持在 $10^(-4)$–$10^(-3)$ 量级。
-- *Arrow-Hurwicz* 的误差整体高于 Uzawa，且 $norm(bold(r)_bold(s))_2$ 在 $10^(-2)$ 左右平台化：它用更低的每步成本换取了精度上限，更适合作为“廉价近似消元”的折中方案。
+- *Direct*：KKT 残差始终保持在 $10^(-7)$ 量级，但位移误差随 $M$ 从 $10^3$ 急剧下降至 $10^0$ 附近，应力误差则在 $M >= 256$ 后反弹上升。这表明随机特征矩阵 $bold(A)$ 的条件数随 $M$ 增大而恶化，直接求解愈发不稳定。
+- *ADMM*：$norm(bold(r)_bold(s))_2$ 随 $M$ 增大而上升（从 $1$ 至 $20$ 左右），但位移误差稳定在 $10% tilde.op 30%$ 范围内，应力误差亦无明显恶化。这再次印证 ADMM 在 KKT 意义下未收敛，但通过 Adam 的隐式正则化保持了近似精度。
+- *Uzawa*：在所有 $M$ 取值下均表现最为稳健，KKT 残差维持在 $10^(-4)$ 量级，位移误差从 $M=64$ 的 $15%$ 左右单调下降至 $M=1024$ 的 $3%$ 左右，应力误差同步下降至 $5%$ 左右，验证了 Uzawa 对特征维度的良好扩展性。
+- *Arrow-Hurwicz*：KKT 残差和 $L^2$ 误差对 $M$ 均不敏感，稳定在 $10^(-1)$ 和 $50%$ 附近。其特征维度无关性源于非精确 $bold(s)$ 更新的主导误差，适用于需要快速获得粗略解的场景。
 

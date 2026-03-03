@@ -9,7 +9,9 @@ principle with random neural features. Generates convergence comparison plots.
 import math
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,7 +35,7 @@ torch.cuda.manual_seed_all(BASE_SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DTYPE = torch.float64
 
 # ---------------------------------------------------------------------------
@@ -48,6 +50,54 @@ ALGO_STYLE = {
 
 
 # ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+@dataclass
+class Config:
+    """Experiment configuration with sensible defaults.
+
+    Attributes:
+        E: Young's modulus
+        nu: Poisson's ratio
+        gamma: Feature activation scale
+        M: Feature count (main experiment)
+        Q_train: Number of training points
+        Q_test: Number of test points
+        K_max: Maximum iterations
+        rho: Regularization parameter
+        eta_admm: ADMM step size
+        beta_adam: Adam momentum parameters
+        eta_u_uzawa: Uzawa u-step size (None = auto-tune)
+        eta_s_ah: Arrow-Hurwicz s-step size (None = auto-tune)
+        eta_u_ah: Arrow-Hurwicz u-step size (None = auto-tune)
+        eval_every: KKT and L2 error evaluation interval
+    """
+    # Material
+    E: float = 1.0
+    nu: float = 0.3
+
+    # Feature space
+    gamma: float = 2.0
+    M: int = 256
+
+    # Sampling
+    Q_train: int = 20000
+    Q_test: int = 10000
+
+    # Optimization
+    K_max: int = 50000
+    rho: float = 1e-6
+    eta_admm: float = 2e-02
+    beta_adam: Tuple[float, float] = (0.9, 0.98)
+    eta_u_uzawa: Optional[float] = None
+    eta_s_ah: Optional[float] = None
+    eta_u_ah: Optional[float] = None
+
+    # Evaluation
+    eval_every: int = 50
+
+
+# ---------------------------------------------------------------------------
 # Material parameters
 # ---------------------------------------------------------------------------
 def compute_lame_constants(E: float, nu: float):
@@ -59,7 +109,7 @@ def compute_lame_constants(E: float, nu: float):
 
 def build_compliance_matrix(E: float, nu: float) -> torch.Tensor:
     """6x6 Voigt compliance matrix S, order (11,22,33,12,23,13)."""
-    S = torch.zeros(6, 6, dtype=DTYPE, device=device)
+    S = torch.zeros(6, 6, dtype=DTYPE, device=DEVICE)
     S[0, 0] = S[1, 1] = S[2, 2] = 1.0 / E
     S[0, 1] = S[0, 2] = S[1, 0] = S[1, 2] = S[2, 0] = S[2, 1] = -nu / E
     shear = 2.0 * (1.0 + nu) / E
@@ -89,7 +139,7 @@ def compute_stress_voigt(x: torch.Tensor, mu: float, lam: float) -> torch.Tensor
     u = eval_exact_displacement(x_ad)  # (N,3)
 
     N = x.shape[0]
-    grad_u = torch.zeros(N, 3, 3, dtype=DTYPE, device=device)
+    grad_u = torch.zeros(N, 3, 3, dtype=DTYPE, device=DEVICE)
     for i in range(3):
         g = torch.autograd.grad(u[:, i].sum(), x_ad, create_graph=False,
                                 retain_graph=(i < 2))[0]
@@ -112,7 +162,7 @@ def compute_body_force(x: torch.Tensor, mu: float, lam: float,
                        batch_size: int = 5000) -> torch.Tensor:
     """Body force f = -div(sigma(u_ex)), computed via two-layer autograd."""
     N = x.shape[0]
-    f_all = torch.zeros(N, 3, dtype=DTYPE, device=device)
+    f_all = torch.zeros(N, 3, dtype=DTYPE, device=DEVICE)
 
     for start in range(0, N, batch_size):
         end = min(start + batch_size, N)
@@ -133,7 +183,7 @@ def compute_body_force(x: torch.Tensor, mu: float, lam: float,
             sigma[:, i, i] = sigma[:, i, i] + lam * tr_eps
 
         for i in range(3):
-            div_sig_i = torch.zeros(end - start, dtype=DTYPE, device=device)
+            div_sig_i = torch.zeros(end - start, dtype=DTYPE, device=DEVICE)
             for j in range(3):
                 is_last = (i == 2 and j == 2)
                 g = torch.autograd.grad(
@@ -144,6 +194,14 @@ def compute_body_force(x: torch.Tensor, mu: float, lam: float,
             f_all[start:end, i] = -div_sig_i.detach()
 
     return f_all
+
+
+def eval_zeta(x: torch.Tensor) -> torch.Tensor:
+    """Envelope function: ζ(x) = x1(1-x1)x2(1-x2)x3(1-x3).
+
+    Ensures homogeneous Dirichlet BC: u_h = 0 on ∂Ω.
+    """
+    return x[:, 0] * (1 - x[:, 0]) * x[:, 1] * (1 - x[:, 1]) * x[:, 2] * (1 - x[:, 2])
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +216,8 @@ def generate_features(M: int, seed: int):
     rng.manual_seed(seed)
     raw = torch.randn(M, 3, generator=rng, dtype=DTYPE)
     norms = raw.norm(dim=1, keepdim=True).clamp_min(1e-12)
-    a = (raw / norms).to(device)
-    r = torch.rand(M, generator=rng, dtype=DTYPE).to(device)
+    a = (raw / norms).to(DEVICE)
+    r = torch.rand(M, generator=rng, dtype=DTYPE).to(DEVICE)
     return a, r
 
 
@@ -169,7 +227,7 @@ def eval_features(x: torch.Tensor, a: torch.Tensor, r: torch.Tensor,
     Q = x.shape[0]
     z = gamma * (x @ a.T + r.unsqueeze(0))
     xi = torch.tanh(z)
-    ones = torch.ones(Q, 1, dtype=DTYPE, device=device)
+    ones = torch.ones(Q, 1, dtype=DTYPE, device=DEVICE)
     return torch.cat([ones, xi], dim=1)
 
 
@@ -180,7 +238,7 @@ def eval_feature_grads(x: torch.Tensor, a: torch.Tensor, r: torch.Tensor,
     z = gamma * (x @ a.T + r.unsqueeze(0))
     dtanh = 1.0 - torch.tanh(z) ** 2
     grad_xi = gamma * dtanh.unsqueeze(2) * a.unsqueeze(0)
-    zeros = torch.zeros(Q, 1, 3, dtype=DTYPE, device=device)
+    zeros = torch.zeros(Q, 1, 3, dtype=DTYPE, device=DEVICE)
     return torch.cat([zeros, grad_xi], dim=1)
 
 
@@ -218,7 +276,7 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
 
     # A = kron-like(G, S): A[alpha::6, beta::6] = S[alpha,beta] * G
     dim_s = 6 * Mp1
-    A = torch.zeros(dim_s, dim_s, dtype=DTYPE, device=device)
+    A = torch.zeros(dim_s, dim_s, dtype=DTYPE, device=DEVICE)
     for alpha in range(6):
         for beta in range(6):
             A[alpha::6, beta::6] = S[alpha, beta] * G
@@ -232,7 +290,7 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
 
     # B matrix: 6*(M+1) x 3*(M+1)
     dim_u = 3 * Mp1
-    B = torch.zeros(dim_s, dim_u, dtype=DTYPE, device=device)
+    B = torch.zeros(dim_s, dim_u, dtype=DTYPE, device=DEVICE)
 
     B[0::6, 0::3] = D[0]   # beta=0(11), i=0: D0
     B[1::6, 1::3] = D[1]   # beta=1(22), i=1: D1
@@ -246,7 +304,7 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
 
     # F vector using displacement features ξ̂: F[i::3] = (1/Q) ξ̂^T f[:, i]
     F_mat = (1.0 / Q) * (xi_hat.T @ f_vals)  # (Mp1, 3)
-    F_vec = torch.zeros(dim_u, dtype=DTYPE, device=device)
+    F_vec = torch.zeros(dim_u, dtype=DTYPE, device=DEVICE)
     for i in range(3):
         F_vec[i::3] = F_mat[:, i]
 
@@ -265,10 +323,10 @@ def estimate_schur_spectral_radius(A, B, rho=1e-6):
     """
     dim_s = A.shape[0]
     dim_u = B.shape[1]
-    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
+    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=DEVICE)
     L = torch.linalg.cholesky(A_reg)
 
-    v = torch.randn(dim_u, dtype=DTYPE, device=device)
+    v = torch.randn(dim_u, dtype=DTYPE, device=DEVICE)
     v = v / v.norm()
 
     for _ in range(100):
@@ -287,10 +345,10 @@ def estimate_jacobi_spectral_radius(A, rho=1e-6):
     R = I - diag(A+rho*I)^{-1} (A+rho*I). Uses power iteration on R.
     """
     dim_s = A.shape[0]
-    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
+    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=DEVICE)
     d_inv = 1.0 / A_reg.diag()
 
-    v = torch.randn(dim_s, dtype=DTYPE, device=device)
+    v = torch.randn(dim_s, dtype=DTYPE, device=DEVICE)
     v = v / v.norm()
 
     for _ in range(200):
@@ -323,17 +381,17 @@ def compute_l2_errors(xi_hat_test, s, u, u_exact, sigma_exact, xi_test):
     Q_test = xi_hat_test.shape[0]
 
     # Reconstruct displacement: u_h[:, i] = xi_hat_test @ u[i::3]
-    u_h = torch.zeros(Q_test, 3, dtype=DTYPE, device=device)
+    u_h = torch.zeros(Q_test, 3, dtype=DTYPE, device=DEVICE)
     for i in range(3):
         u_h[:, i] = xi_hat_test @ u[i::3]
 
     # Reconstruct stress: sigma_h[:, alpha] = xi_test @ s[alpha::6]
-    sigma_h = torch.zeros(Q_test, 6, dtype=DTYPE, device=device)
+    sigma_h = torch.zeros(Q_test, 6, dtype=DTYPE, device=DEVICE)
     for alpha in range(6):
         sigma_h[:, alpha] = xi_test @ s[alpha::6]
 
     w_frob = torch.tensor([1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
-                           dtype=DTYPE, device=device)
+                           dtype=DTYPE, device=DEVICE)
 
     u_diff = u_h - u_exact
     u_err = torch.sqrt((u_diff ** 2).sum(1).mean())
@@ -358,11 +416,11 @@ def make_eval_callback(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
     }
 
     def callback(k, s, u):
-        rs, ru = compute_kkt_residuals(A, B, F, s, u)
-        history["r_s"].append(rs)
-        history["r_u"].append(ru)
-        history["r_total"].append(rs + ru)
         if k % eval_every == 0 or k <= 1:
+            rs, ru = compute_kkt_residuals(A, B, F, s, u)
+            history["r_s"].append(rs)
+            history["r_u"].append(ru)
+            history["r_total"].append(rs + ru)
             rel_u, rel_sig = compute_l2_errors(
                 xi_hat_test, s, u, u_exact, sigma_exact, xi_test)
             history["rel_u"].append(rel_u)
@@ -381,12 +439,12 @@ def run_direct_solve(A, B, F):
     dim_u = B.shape[1]
     dim_total = dim_s + dim_u
 
-    K = torch.zeros(dim_total, dim_total, dtype=DTYPE, device=device)
+    K = torch.zeros(dim_total, dim_total, dtype=DTYPE, device=DEVICE)
     K[:dim_s, :dim_s] = A
     K[:dim_s, dim_s:] = B
     K[dim_s:, :dim_s] = B.T
 
-    rhs = torch.zeros(dim_total, dtype=DTYPE, device=device)
+    rhs = torch.zeros(dim_total, dtype=DTYPE, device=DEVICE)
     rhs[dim_s:] = -F
 
     t0 = time.perf_counter()
@@ -405,8 +463,8 @@ def run_admm(A, B, F, K_max=2000, eta_admm=0.02, beta_adam=(0.9, 0.98),
     dim_u = B.shape[1]
     eps_adam = 1e-8
 
-    s = torch.zeros(dim_s, dtype=DTYPE, device=device)
-    u = torch.zeros(dim_u, dtype=DTYPE, device=device)
+    s = torch.zeros(dim_s, dtype=DTYPE, device=DEVICE)
+    u = torch.zeros(dim_u, dtype=DTYPE, device=DEVICE)
 
     m_s = torch.zeros_like(s)
     v_s = torch.zeros_like(s)
@@ -452,11 +510,11 @@ def run_uzawa(A, B, F, K_max=2000, eta_u=1e-2, rho=1e-6,
     dim_s = A.shape[0]
     dim_u = B.shape[1]
 
-    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
+    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=DEVICE)
     L = torch.linalg.cholesky(A_reg)
 
-    s = torch.zeros(dim_s, dtype=DTYPE, device=device)
-    u = torch.zeros(dim_u, dtype=DTYPE, device=device)
+    s = torch.zeros(dim_s, dtype=DTYPE, device=DEVICE)
+    u = torch.zeros(dim_u, dtype=DTYPE, device=DEVICE)
 
     t0 = time.perf_counter()
 
@@ -485,11 +543,11 @@ def run_arrow_hurwicz(A, B, F, K_max=2000, eta_s=1.0, eta_u=1e-2, rho=1e-6,
     """Arrow-Hurwicz with diagonal preconditioner J = diag(A+rho*I)^{-1}."""
     dim_s = A.shape[0]
 
-    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=device)
+    A_reg = A + rho * torch.eye(dim_s, dtype=DTYPE, device=DEVICE)
     J_diag = 1.0 / A_reg.diag()
 
-    s = torch.zeros(dim_s, dtype=DTYPE, device=device)
-    u = torch.zeros(B.shape[1], dtype=DTYPE, device=device)
+    s = torch.zeros(dim_s, dtype=DTYPE, device=DEVICE)
+    u = torch.zeros(B.shape[1], dtype=DTYPE, device=DEVICE)
 
     t0 = time.perf_counter()
 
@@ -534,8 +592,8 @@ def run_all_algorithms(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
         "rel_u": [rel_u], "rel_sigma": [rel_sig], "steps": [0],
     }
     results["Direct"] = {"s": s, "u": u, "history": history, "wall_time": wt}
-    print(f"    Done in {wt:.2f}s, final KKT: "
-          f"||r_s||={rs:.2e}, ||r_u||={ru:.2e}, total={rs+ru:.2e}")
+    print(f"    Done in {wt:.2f}s, ||r_s||={rs:.2e}, ||r_u||={ru:.2e}, "
+          f"rel_u={rel_u:.2e}, rel_sigma={rel_sig:.2e}")
 
     # --- Adaptive step-size computation (only when needed) ---
     need_schur = (eta_u_uzawa is None) or (eta_u_ah is None)
@@ -547,9 +605,11 @@ def run_all_algorithms(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
         eta_u_safe = 1.5 / lam_max
         print(f"    lambda_max(S_u) = {lam_max:.4e}, safe eta_u = {eta_u_safe:.4e}")
         if eta_u_uzawa is None:
-            eta_u_uzawa = min(1e-2, eta_u_safe)
+            # eta_u_uzawa = min(1e-2, eta_u_safe)
+            eta_u_uzawa = eta_u_safe
         if eta_u_ah is None:
-            eta_u_ah = min(1e-2, eta_u_safe)
+            # eta_u_ah = min(1e-2, eta_u_safe)
+            eta_u_ah = eta_u_safe
 
     if need_jacobi:
         print("  Estimating Jacobi spectral radius for Arrow-Hurwicz...")
@@ -575,8 +635,9 @@ def run_all_algorithms(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
         print(f"  Running {name}...")
         s, u, wt = runner(A, B, F, eval_callback=cb, **kwargs)
         rs, ru = compute_kkt_residuals(A, B, F, s, u)
-        print(f"    Done in {wt:.2f}s, final KKT: "
-              f"||r_s||={rs:.2e}, ||r_u||={ru:.2e}, total={rs+ru:.2e}")
+        rel_u, rel_sig = compute_l2_errors(xi_hat_test, s, u, u_exact, sigma_exact, xi_test)
+        print(f"    Done in {wt:.2f}s, ||r_s||={rs:.2e}, ||r_u||={ru:.2e}, "
+              f"rel_u={rel_u:.2e}, rel_sigma={rel_sig:.2e}")
         results[name] = {"s": s, "u": u, "history": hist, "wall_time": wt}
 
     return results
@@ -592,14 +653,14 @@ def plot_kkt_convergence(histories, labels, save_path):
 
     for ax, title, key in zip(axes, titles, keys):
         for hist, label in zip(histories, labels):
+            steps = np.array(hist["steps"], dtype=float)
             vals = np.array(hist[key], dtype=float)
-            valid = np.isfinite(vals) & (vals > 0)
+            valid = np.isfinite(vals) & (vals > 0) & np.isfinite(steps)
             if valid.any():
-                iters = np.arange(1, len(vals) + 1)
                 sty = ALGO_STYLE.get(label, {})
                 n_markers = max(1, int(valid.sum()) // 10)
                 ax.semilogy(
-                    iters[valid], vals[valid], label=label, linewidth=1.2,
+                    steps[valid], vals[valid], label=label, linewidth=1.2,
                     color=sty.get("color"), linestyle=sty.get("linestyle", "-"),
                     marker=sty.get("marker"), markevery=n_markers, markersize=5,
                 )
@@ -658,59 +719,6 @@ def plot_l2_convergence(histories, labels, save_path, direct_l2=None):
     print(f"  Saved: {save_path}")
 
 
-def plot_ablation_M(results, save_path):
-    """Line plot comparing final metrics across M values for all methods.
-
-    Args:
-        results: { M: { method_name: {"r_s", "r_u", "rel_u", "rel_sigma"} } }
-        save_path: output file path
-    """
-    M_values = sorted(results.keys())
-    method_names = list(results[M_values[0]].keys())
-
-    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
-    metric_keys = ["r_s", "r_u", "rel_u", "rel_sigma"]
-    titles = [
-        r"$\|r_s\|_2$", r"$\|r_u\|_2$",
-        "Displacement error", "Stress error",
-    ]
-    ylabels = [
-        r"$\|r_s\|_2$", r"$\|r_u\|_2$",
-        "Relative $L^2$ error", "Relative $L^2$ error",
-    ]
-
-    for ax, mkey, title, ylabel in zip(
-        axes.flat, metric_keys, titles, ylabels
-    ):
-        for method in method_names:
-            vals = []
-            for M in M_values:
-                v = results[M].get(method, {}).get(mkey, float("nan"))
-                vals.append(v)
-            vals = np.array(vals, dtype=float)
-            valid = np.isfinite(vals) & (vals > 0)
-            if valid.any():
-                sty = ALGO_STYLE.get(method, {"color": "gray", "marker": "x"})
-                ax.semilogy(
-                    np.array(M_values)[valid], vals[valid],
-                    marker=sty["marker"], color=sty["color"],
-                    linestyle=sty.get("linestyle", "-"),
-                    label=method, linewidth=1.5, markersize=6,
-                )
-        ax.set_xlabel("Feature count $M$")
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
-        ax.set_xticks(M_values)
-        ax.set_xticklabels([str(m) for m in M_values])
-        ax.legend()
-        ax.grid(alpha=0.3, linestyle="--")
-
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: {save_path}")
-
-
 # ===========================================================================
 # Main
 # ===========================================================================
@@ -718,84 +726,68 @@ if __name__ == "__main__":
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
     plt.rcParams["axes.unicode_minus"] = False
 
-    print(f"Device: {device}")
+    # --- Configuration ---
+    # Override example: cfg = Config(M=512, K_max=10000)
+    cfg = Config()
+
+    print(f"Device: {DEVICE}")
     print(f"Output: {OUTPUT_DIR}")
 
-    # --- Parameters ---
-    E, nu = 1.0, 0.3
-    gamma = 2.0
-    M = 256
-    ablation_M_list = [64, 128, 256, 512, 1024]
-    ablation_M_list = []
-    Q_train = 20000
-    Q_test = 10000
-    K_max = 100000
-    rho = 1e-6
-    eta_admm = 2e-02
-    beta_adam = (0.9, 0.98)
-    eta_u_uzawa = None
-    eta_s_ah = None
-    eta_u_ah = None
+    mu, lam = compute_lame_constants(cfg.E, cfg.nu)
+    S = build_compliance_matrix(cfg.E, cfg.nu)
+    print(f"Material: E={cfg.E}, nu={cfg.nu}, mu={mu:.4f}, lam={lam:.4f}")
 
-    mu, lam = compute_lame_constants(E, nu)
-    S = build_compliance_matrix(E, nu)
-    print(f"Material: E={E}, nu={nu}, mu={mu:.4f}, lam={lam:.4f}")
-
-    # --- Generate enough features for the largest M we will run ---
-    max_M = max([M] + ablation_M_list)
-    a_full, r_full = generate_features(max_M, seed=BASE_SEED)
-    a, r = a_full[:M], r_full[:M]
+    # --- Generate features ---
+    a, r = generate_features(cfg.M, seed=BASE_SEED)
 
     # --- Training points ---
-    print(f"Sampling {Q_train} training points...")
+    print(f"Sampling {cfg.Q_train} training points...")
     torch.manual_seed(BASE_SEED + 1)
-    x_train = torch.rand(Q_train, 3, dtype=DTYPE, device=device)
+    x_train = torch.rand(cfg.Q_train, 3, dtype=DTYPE, device=DEVICE)
 
-    xi_train = eval_features(x_train, a, r, gamma)
-    grad_xi_train = eval_feature_grads(x_train, a, r, gamma)
+    xi_train = eval_features(x_train, a, r, cfg.gamma)
+    grad_xi_train = eval_feature_grads(x_train, a, r, cfg.gamma)
 
     # --- Body force ---
     f_train = compute_body_force(x_train, mu, lam)
 
-    # --- Envelope function for Dirichlet BC ---
-    def zeta_fn(x):
-        """ζ(x) = x1(1-x1)x2(1-x2)x3(1-x3), ensures u_h=0 on ∂Ω."""
-        return x[:, 0] * (1 - x[:, 0]) * x[:, 1] * (1 - x[:, 1]) * x[:, 2] * (1 - x[:, 2])
-
-    zeta_train = zeta_fn(x_train)
+    zeta_train = eval_zeta(x_train)
 
     # --- Assemble system ---
     print("Assembling saddle-point system...")
     A, B, F = assemble_system(xi_train, grad_xi_train, S, f_train, zeta_train)
-    Mp1 = M + 1
     print(f"  A: {A.shape}, B: {B.shape}, F: {F.shape}")
     print(f"  A memory: {A.numel() * 8 / 1e6:.1f} MB")
     print(f"  ||A||_F = {A.norm():.4e}, ||B||_F = {B.norm():.4e}, ||F|| = {F.norm():.4e}")
 
     # --- Test points ---
-    print(f"Sampling {Q_test} test points...")
+    print(f"Sampling {cfg.Q_test} test points...")
     torch.manual_seed(BASE_SEED + 2)
-    x_test = torch.rand(Q_test, 3, dtype=DTYPE, device=device)
-    xi_test = eval_features(x_test, a, r, gamma)
-    zeta_test = zeta_fn(x_test)
+    x_test = torch.rand(cfg.Q_test, 3, dtype=DTYPE, device=DEVICE)
+    xi_test = eval_features(x_test, a, r, cfg.gamma)
+    zeta_test = eval_zeta(x_test)
     xi_hat_test = zeta_test.unsqueeze(1) * xi_test  # displacement features
     u_exact = eval_exact_displacement(x_test)
     sigma_exact = compute_stress_voigt(x_test, mu, lam)
 
     # --- Run all algorithms (including Direct solve) ---
-    print(f"\n=== Main experiment (M={M}, Q=20000) ===")
-    results = run_all_algorithms(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
-                                 K_max=K_max, eval_every=50, rho=rho,
-                                 eta_admm=eta_admm, beta_adam=beta_adam,
-                                 eta_u_uzawa=eta_u_uzawa, eta_s_ah=eta_s_ah, eta_u_ah=eta_u_ah)
+    print(f"\n=== Main experiment (M={cfg.M}, Q={cfg.Q_train}) ===")
+    results = run_all_algorithms(
+        A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
+        K_max=cfg.K_max, eval_every=cfg.eval_every, rho=cfg.rho,
+        eta_admm=cfg.eta_admm, beta_adam=cfg.beta_adam,
+        eta_u_uzawa=cfg.eta_u_uzawa, eta_s_ah=cfg.eta_s_ah, eta_u_ah=cfg.eta_u_ah,
+    )
 
     # --- Plot KKT convergence (iterative methods only) ---
     print("\nGenerating plots...")
     iter_labels = ["ADMM", "Uzawa", "Arrow-Hurwicz"]
     iter_histories = [results[name]["history"] for name in iter_labels]
 
-    plot_kkt_convergence(iter_histories, iter_labels,
-                         str(OUTPUT_DIR / "kkt-convergence.png"))
+    plot_kkt_convergence(
+        iter_histories, iter_labels,
+        str(OUTPUT_DIR / "kkt-convergence.png"),
+    )
 
     # --- Plot L2 convergence with Direct solve reference line ---
     direct_hist = results["Direct"]["history"]
@@ -803,16 +795,18 @@ if __name__ == "__main__":
         "rel_u": direct_hist["rel_u"][-1],
         "rel_sigma": direct_hist["rel_sigma"][-1],
     }
-    plot_l2_convergence(iter_histories, iter_labels,
-                        str(OUTPUT_DIR / "l2-error-convergence.png"),
-                        direct_l2=direct_l2)
+    plot_l2_convergence(
+        iter_histories, iter_labels,
+        str(OUTPUT_DIR / "l2-error-convergence.png"),
+        direct_l2=direct_l2,
+    )
 
-    # --- Summary table (all 4 methods) ---
-    print("\n=== Summary ===")
+    # --- Summary table (Markdown-compatible) ---
+    print("\n=== Summary ===\n")
     all_labels = ["Direct", "ADMM", "Uzawa", "Arrow-Hurwicz"]
-    print(f"{'Algorithm':<16} {'||r_s||':>10} {'||r_u||':>10} "
-          f"{'rel_u':>10} {'rel_sigma':>10} {'Time(s)':>8}")
-    print("-" * 76)
+    print(f"| {'Algorithm':<14} | {'‖r_s‖':>10} | {'‖r_u‖':>10} | "
+          f"{'rel_u':>10} | {'rel_sigma':>10} | {'Time(s)':>8} |")
+    print(f"|:{'-'*15}|{'-'*11}:|{'-'*11}:|{'-'*11}:|{'-'*11}:|{'-'*9}:|")
     for name in all_labels:
         h = results[name]["history"]
         rs_final = h["r_s"][-1]
@@ -820,55 +814,5 @@ if __name__ == "__main__":
         rel_u = h["rel_u"][-1]
         rel_sig = h["rel_sigma"][-1]
         wt = results[name]["wall_time"]
-        print(f"{name:<16} {rs_final:10.2e} {ru_final:10.2e} "
-              f"{rel_u:10.2e} {rel_sig:10.2e} "
-              f"{wt:8.2f}")
-
-    # --- Ablation: M (all 4 methods) ---
-    print("\n=== Ablation: feature count M ===")
-    ablation_M_results = {}  # { M: { method: {rel_u, rel_sigma, kkt_total} } }
-
-    for M_abl in ablation_M_list:
-        print(f"\n--- M={M_abl} ---")
-        a_abl = a_full[:M_abl]
-        r_abl = r_full[:M_abl]
-        xi_abl = eval_features(x_train, a_abl, r_abl, gamma)
-        grad_xi_abl = eval_feature_grads(x_train, a_abl, r_abl, gamma)
-        A_abl, B_abl, F_abl = assemble_system(
-            xi_abl, grad_xi_abl, S, f_train, zeta_train)
-
-        xi_test_abl = eval_features(x_test, a_abl, r_abl, gamma)
-        xi_hat_test_abl = zeta_test.unsqueeze(1) * xi_test_abl
-
-        # Run all 4 methods; eval_every=K_max to only record final L2
-        abl_results = run_all_algorithms(
-            A_abl, B_abl, F_abl, xi_hat_test_abl, xi_test_abl,
-            u_exact, sigma_exact, K_max=K_max, eval_every=K_max, rho=rho,
-            eta_admm=eta_admm, beta_adam=beta_adam,
-            eta_u_uzawa=eta_u_uzawa, eta_s_ah=eta_s_ah, eta_u_ah=eta_u_ah,
-        )
-
-        ablation_M_results[M_abl] = {}
-        for method_name in ["Direct", "ADMM", "Uzawa", "Arrow-Hurwicz"]:
-            h = abl_results[method_name]["history"]
-            rs_f = h["r_s"][-1]
-            ru_f = h["r_u"][-1]
-            rel_u_f = h["rel_u"][-1]
-            rel_sig_f = h["rel_sigma"][-1]
-            ablation_M_results[M_abl][method_name] = {
-                "r_s": rs_f,
-                "r_u": ru_f,
-                "rel_u": rel_u_f,
-                "rel_sigma": rel_sig_f,
-            }
-
-    plot_ablation_M(ablation_M_results, str(OUTPUT_DIR / "ablation-M.png"))
-
-    # --- Print ablation summary table ---
-    print("\n=== Ablation M: Summary ===")
-    print(f"{'M':>5} {'Algorithm':<16} {'rel_u':>12} {'rel_sigma':>12}")
-    print("-" * 48)
-    for M_abl in ablation_M_list:
-        for method in ["Direct", "ADMM", "Uzawa", "Arrow-Hurwicz"]:
-            d = ablation_M_results[M_abl][method]
-            print(f"{M_abl:5d} {method:<16} {d['rel_u']:12.2e} {d['rel_sigma']:12.2e}")
+        print(f"| {name:<14} | {rs_final:>10.2e} | {ru_final:>10.2e} | "
+              f"{rel_u:>10.2e} | {rel_sig:>10.2e} | {wt:>8.2f} |")
