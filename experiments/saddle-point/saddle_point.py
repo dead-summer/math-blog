@@ -434,7 +434,10 @@ def make_eval_callback(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
 # Direct solve (baseline)
 # ---------------------------------------------------------------------------
 def run_direct_solve(A, B, F):
-    """Solve the saddle-point system [A B; B^T 0] [s; u] = [0; -F] directly."""
+    """Solve the saddle-point system [A B; B^T 0] [s; u] = [0; -F] directly.
+
+    Returns NaN-filled tensors if the system is singular.
+    """
     dim_s = A.shape[0]
     dim_u = B.shape[1]
     dim_total = dim_s + dim_u
@@ -448,7 +451,10 @@ def run_direct_solve(A, B, F):
     rhs[dim_s:] = -F
 
     t0 = time.perf_counter()
-    sol = torch.linalg.solve(K, rhs)
+    try:
+        sol = torch.linalg.solve(K, rhs)
+    except torch.linalg.LinAlgError:
+        sol = torch.full((dim_total,), float("nan"), dtype=DTYPE, device=DEVICE)
     wall_time = time.perf_counter() - t0
 
     return sol[:dim_s], sol[dim_s:], wall_time
