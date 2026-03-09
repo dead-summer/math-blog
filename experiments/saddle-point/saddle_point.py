@@ -42,10 +42,10 @@ DTYPE = torch.float64
 # Unified algorithm visual styles (color + marker + linestyle)
 # ---------------------------------------------------------------------------
 ALGO_STYLE = {
-    "ADMM":          {"color": "steelblue",   "marker": "o", "linestyle": "-"},
-    "Uzawa":         {"color": "darkorange",  "marker": "^", "linestyle": "--"},
-    "Arrow-Hurwicz": {"color": "forestgreen", "marker": "D", "linestyle": "-."},
-    "Direct":        {"color": "black",       "marker": "s", "linestyle": ":"},
+    "Direct":        {"color": "#264653",       "marker": "s", "linestyle": ":"},
+    "ADMM":          {"color": "#0077B6",   "marker": "o", "linestyle": "-"},
+    "Uzawa":         {"color": "#E76F51",  "marker": "^", "linestyle": "--"},
+    "Arrow-Hurwicz": {"color": "#2A9D8F", "marker": "D", "linestyle": "-."},
 }
 
 
