@@ -22,21 +22,21 @@ $
 
 === 几何关系
 
-设 $bold(r_0(x))$ 为弹性体内点 $M(bold(x))$ 的位置矢量，$bold(r(x))$ 为变形后的位移矢量，则位移矢量为
-$ bold(u(x)) = bold(r(x)) - bold(r_0(x)). $
-令 $M'(bold(x) + dif bold(x))$ 为无限接近 $M(x)$ 的另一个点，则 $dif bold(r_0)$ 和 $dif bold(r)$ 为变形前后的连接两点的微元向量，
+设 $bold(r)_0 (bold(x))$ 为弹性体内点 $M(bold(x))$ 的位置矢量，$bold(r(x))$ 为变形后的位移矢量，则位移矢量为
+$ bold(u(x)) = bold(r(x)) - bold(r)_0 (bold(x)). $
+令 $M'(bold(x) + dif bold(x))$ 为无限接近 $M(x)$ 的另一个点，则 $dif bold(r)_0$ 和 $dif bold(r)$ 为变形前后的连接两点的微元向量，
 $
-  dif bold(r) = dif bold(r_0) + dif bold(u).
+  dif bold(r) = dif bold(r)_0 + dif bold(u).
 $
 因此，变形前线元 $M M'$ 的距离平方为：
 $
-  dif s_0^2 = dif bold(r_0) dot dif bold(r_0) = dif x_i dif x_i,
+  dif s_0^2 = dif bold(r)_0 dot dif bold(r)_0 = dif x_i dif x_i,
 $
 变形后：
 $
   dif s^2 & = dif bold(r) dot dif bold(r) \
-          & = (dif bold(r_0) + dif bold(u)) dot (dif bold(r_0) + dif bold(u)) \
-          & = dif bold(r_0)^2 + 2 dif bold(r_0) dot dif bold(u) + dif bold(u)^2 \
+          & = (dif bold(r)_0 + dif bold(u)) dot (dif bold(r)_0 + dif bold(u)) \
+          & = dif bold(r)_0^2 + 2 dif bold(r)_0 dot dif bold(u) + dif bold(u)^2 \
           & = dif s_0^2 + 2 partial_j u_i dif x_i dif x_j + partial_i u_k partial_j u_k dif x_i dif x_j \
           & = dif s_0^2 + 2 D_(i j) dif x_i dif x_j,
 $

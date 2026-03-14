@@ -1,7 +1,7 @@
 """
 3D Hellinger-Reissner saddle-point numerical experiments
 
-Implements Direct, ADMM, Uzawa, and Arrow-Hurwicz iterative algorithms for the
+Implements Direct, GDA, Uzawa, and Arrow-Hurwicz iterative algorithms for the
 discrete saddle-point system arising from the Hellinger-Reissner variational
 principle with random neural features. Generates convergence comparison plots.
 """
@@ -43,7 +43,7 @@ DTYPE = torch.float64
 # ---------------------------------------------------------------------------
 ALGO_STYLE = {
     "Direct":        {"color": "#264653",       "marker": "s", "linestyle": ":"},
-    "ADMM":          {"color": "#0077B6",   "marker": "o", "linestyle": "-"},
+    "GDA":          {"color": "#0077B6",   "marker": "o", "linestyle": "-"},
     "Uzawa":         {"color": "#E76F51",  "marker": "^", "linestyle": "--"},
     "Arrow-Hurwicz": {"color": "#2A9D8F", "marker": "D", "linestyle": "-."},
 }
@@ -65,7 +65,7 @@ class Config:
         Q_test: Number of test points
         K_max: Maximum iterations
         rho: Regularization parameter
-        eta_admm: ADMM step size
+        eta_gda: GDA step size
         beta_adam: Adam momentum parameters
         eta_u_uzawa: Uzawa u-step size (None = auto-tune)
         eta_s_ah: Arrow-Hurwicz s-step size (None = auto-tune)
@@ -87,7 +87,7 @@ class Config:
     # Optimization
     K_max: int = 50000
     rho: float = 1e-6
-    eta_admm: float = 2e-02
+    eta_gda: float = 2e-02
     beta_adam: Tuple[float, float] = (0.9, 0.98)
     eta_u_uzawa: Optional[float] = None
     eta_s_ah: Optional[float] = None
@@ -108,13 +108,13 @@ def compute_lame_constants(E: float, nu: float):
 
 
 def build_compliance_matrix(E: float, nu: float) -> torch.Tensor:
-    """6x6 Voigt compliance matrix S, order (11,22,33,12,23,13)."""
-    S = torch.zeros(6, 6, dtype=DTYPE, device=DEVICE)
-    S[0, 0] = S[1, 1] = S[2, 2] = 1.0 / E
-    S[0, 1] = S[0, 2] = S[1, 0] = S[1, 2] = S[2, 0] = S[2, 1] = -nu / E
+    """6x6 Voigt compliance matrix, order (11,22,33,12,23,13)."""
+    compliance_voigt = torch.zeros(6, 6, dtype=DTYPE, device=DEVICE)
+    compliance_voigt[0, 0] = compliance_voigt[1, 1] = compliance_voigt[2, 2] = 1.0 / E
+    compliance_voigt[0, 1] = compliance_voigt[0, 2] = compliance_voigt[1, 0] = compliance_voigt[1, 2] = compliance_voigt[2, 0] = compliance_voigt[2, 1] = -nu / E
     shear = 2.0 * (1.0 + nu) / E
-    S[3, 3] = S[4, 4] = S[5, 5] = shear
-    return S
+    compliance_voigt[3, 3] = compliance_voigt[4, 4] = compliance_voigt[5, 5] = shear
+    return compliance_voigt
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +246,7 @@ def eval_feature_grads(x: torch.Tensor, a: torch.Tensor, r: torch.Tensor,
 # Matrix assembly (Kronecker structure)
 # ---------------------------------------------------------------------------
 def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
-                    S: torch.Tensor, f_vals: torch.Tensor,
+                    compliance_voigt: torch.Tensor, f_vals: torch.Tensor,
                     zeta: torch.Tensor):
     """Assemble A, B, F matrices for the saddle-point system.
 
@@ -256,7 +256,7 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
     Args:
         xi: (Q, M+1) feature values
         grad_xi: (Q, M+1, 3) feature gradients
-        S: (6,6) compliance matrix
+        compliance_voigt: (6,6) Voigt compliance matrix
         f_vals: (Q, 3) body force values
         zeta: (Q,) envelope function ζ(x) = x1(1-x1)x2(1-x2)x3(1-x3)
 
@@ -274,12 +274,13 @@ def assemble_system(xi: torch.Tensor, grad_xi: torch.Tensor,
     # Gram matrix G = (1/Q) xi^T xi (stress-stress)
     G = (1.0 / Q) * (xi.T @ xi)
 
-    # A = kron-like(G, S): A[alpha::6, beta::6] = S[alpha,beta] * G
+    # A = kron-like(G, compliance_voigt):
+    # A[alpha::6, beta::6] = compliance_voigt[alpha, beta] * G
     dim_s = 6 * Mp1
     A = torch.zeros(dim_s, dim_s, dtype=DTYPE, device=DEVICE)
     for alpha in range(6):
         for beta in range(6):
-            A[alpha::6, beta::6] = S[alpha, beta] * G
+            A[alpha::6, beta::6] = compliance_voigt[alpha, beta] * G
 
     # Derivative matrices using displacement features ξ̂ for test:
     # D_k[n, m] = (1/Q) sum_q ξ̂_m(x_q) * d_k ξ_n(x_q)
@@ -460,11 +461,11 @@ def run_direct_solve(A, B, F):
     return sol[:dim_s], sol[dim_s:], wall_time
 
 # ---------------------------------------------------------------------------
-# ADMM (Adam optimizer, full-batch)
+# GDA (Adam optimizer, full-batch)
 # ---------------------------------------------------------------------------
-def run_admm(A, B, F, K_max=2000, eta_admm=0.02, beta_adam=(0.9, 0.98),
+def run_gda(A, B, F, K_max=2000, eta_gda=0.02, beta_adam=(0.9, 0.98),
              tol=1e-6, eval_callback=None):
-    """ADMM with manual Adam: alternate u-ascent / s-descent."""
+    """GDA with manual Adam: alternate u-ascent / s-descent."""
     dim_s = A.shape[0]
     dim_u = B.shape[1]
     eps_adam = 1e-8
@@ -486,14 +487,14 @@ def run_admm(A, B, F, K_max=2000, eta_admm=0.02, beta_adam=(0.9, 0.98),
         v_u = b2 * v_u + (1 - b2) * g_u ** 2
         m_hat_u = m_u / (1 - b1 ** k)
         v_hat_u = v_u / (1 - b2 ** k)
-        u = u + eta_admm * m_hat_u / (v_hat_u.sqrt() + eps_adam)
+        u = u + eta_gda * m_hat_u / (v_hat_u.sqrt() + eps_adam)
 
         g_s = A @ s + B @ u
         m_s = b1 * m_s + (1 - b1) * g_s
         v_s = b2 * v_s + (1 - b2) * g_s ** 2
         m_hat_s = m_s / (1 - b1 ** k)
         v_hat_s = v_s / (1 - b2 ** k)
-        s = s - eta_admm * m_hat_s / (v_hat_s.sqrt() + eps_adam)
+        s = s - eta_gda * m_hat_s / (v_hat_s.sqrt() + eps_adam)
 
         if eval_callback is not None:
             eval_callback(k, s, u)
@@ -579,9 +580,9 @@ def run_arrow_hurwicz(A, B, F, K_max=2000, eta_s=1.0, eta_u=1e-2, rho=1e-6,
 # ---------------------------------------------------------------------------
 def run_all_algorithms(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
                        K_max=2000, eval_every=50, rho=1e-6,
-                       eta_admm=0.02, beta_adam=(0.9, 0.98),
+                       eta_gda=0.02, beta_adam=(0.9, 0.98),
                        eta_u_uzawa=None, eta_s_ah=None, eta_u_ah=None):
-    """Run Direct, ADMM, Uzawa, Arrow-Hurwicz and collect histories.
+    """Run Direct, GDA, Uzawa, Arrow-Hurwicz and collect histories.
 
     Step sizes for Uzawa and Arrow-Hurwicz are auto-tuned via spectral
     analysis when passed as None; explicit values are used as-is.
@@ -628,8 +629,8 @@ def run_all_algorithms(A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
     print(f"    Arrow-Hurwicz: eta_s={eta_s_ah:.4e}, eta_u={eta_u_ah:.4e}")
 
     for name, runner, kwargs in [
-        ("ADMM", run_admm,
-         dict(K_max=K_max, eta_admm=eta_admm, beta_adam=beta_adam)),
+        ("GDA", run_gda,
+         dict(K_max=K_max, eta_gda=eta_gda, beta_adam=beta_adam)),
         ("Uzawa", run_uzawa,
          dict(K_max=K_max, eta_u=eta_u_uzawa, rho=rho)),
         ("Arrow-Hurwicz", run_arrow_hurwicz,
@@ -740,7 +741,7 @@ if __name__ == "__main__":
     print(f"Output: {OUTPUT_DIR}")
 
     mu, lam = compute_lame_constants(cfg.E, cfg.nu)
-    S = build_compliance_matrix(cfg.E, cfg.nu)
+    compliance_voigt = build_compliance_matrix(cfg.E, cfg.nu)
     print(f"Material: E={cfg.E}, nu={cfg.nu}, mu={mu:.4f}, lam={lam:.4f}")
 
     # --- Generate features ---
@@ -761,7 +762,9 @@ if __name__ == "__main__":
 
     # --- Assemble system ---
     print("Assembling saddle-point system...")
-    A, B, F = assemble_system(xi_train, grad_xi_train, S, f_train, zeta_train)
+    A, B, F = assemble_system(
+        xi_train, grad_xi_train, compliance_voigt, f_train, zeta_train
+    )
     print(f"  A: {A.shape}, B: {B.shape}, F: {F.shape}")
     print(f"  A memory: {A.numel() * 8 / 1e6:.1f} MB")
     print(f"  ||A||_F = {A.norm():.4e}, ||B||_F = {B.norm():.4e}, ||F|| = {F.norm():.4e}")
@@ -781,13 +784,13 @@ if __name__ == "__main__":
     results = run_all_algorithms(
         A, B, F, xi_hat_test, xi_test, u_exact, sigma_exact,
         K_max=cfg.K_max, eval_every=cfg.eval_every, rho=cfg.rho,
-        eta_admm=cfg.eta_admm, beta_adam=cfg.beta_adam,
+        eta_gda=cfg.eta_gda, beta_adam=cfg.beta_adam,
         eta_u_uzawa=cfg.eta_u_uzawa, eta_s_ah=cfg.eta_s_ah, eta_u_ah=cfg.eta_u_ah,
     )
 
     # --- Plot KKT convergence (iterative methods only) ---
     print("\nGenerating plots...")
-    iter_labels = ["ADMM", "Uzawa", "Arrow-Hurwicz"]
+    iter_labels = ["GDA", "Uzawa", "Arrow-Hurwicz"]
     iter_histories = [results[name]["history"] for name in iter_labels]
 
     plot_kkt_convergence(
@@ -809,7 +812,7 @@ if __name__ == "__main__":
 
     # --- Summary table (Markdown-compatible) ---
     print("\n=== Summary ===\n")
-    all_labels = ["Direct", "ADMM", "Uzawa", "Arrow-Hurwicz"]
+    all_labels = ["Direct", "GDA", "Uzawa", "Arrow-Hurwicz"]
     print(f"| {'Algorithm':<14} | {'‖r_s‖':>10} | {'‖r_u‖':>10} | "
           f"{'rel_u':>10} | {'rel_sigma':>10} | {'Time(s)':>8} |")
     print(f"|:{'-'*15}|{'-'*11}:|{'-'*11}:|{'-'*11}:|{'-'*11}:|{'-'*9}:|")

@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     # --- Prepare common data ---
     mu, lam = compute_lame_constants(cfg.E, cfg.nu)
-    S = build_compliance_matrix(cfg.E, cfg.nu)
+    compliance_voigt = build_compliance_matrix(cfg.E, cfg.nu)
 
     max_M = max(ablation_M_list)
     a_full, r_full = generate_features(max_M, seed=BASE_SEED)
@@ -137,7 +137,9 @@ if __name__ == "__main__":
         grad_xi_abl = eval_feature_grads(x_train, a_abl, r_abl, cfg.gamma)
 
         # Assemble system
-        A_abl, B_abl, F_abl = assemble_system(xi_abl, grad_xi_abl, S, f_train, zeta_train)
+        A_abl, B_abl, F_abl = assemble_system(
+            xi_abl, grad_xi_abl, compliance_voigt, f_train, zeta_train
+        )
         print(f"  A: {A_abl.shape}, B: {B_abl.shape}, F: {F_abl.shape}")
 
         # Test features
@@ -149,13 +151,13 @@ if __name__ == "__main__":
             A_abl, B_abl, F_abl, xi_hat_test_abl, xi_test_abl,
             u_exact, sigma_exact,
             K_max=cfg.K_max, eval_every=cfg.eval_every, rho=cfg.rho,
-            eta_admm=cfg.eta_admm, beta_adam=cfg.beta_adam,
+            eta_gda=cfg.eta_gda, beta_adam=cfg.beta_adam,
             eta_u_uzawa=cfg.eta_u_uzawa, eta_s_ah=cfg.eta_s_ah, eta_u_ah=cfg.eta_u_ah,
         )
 
         # Plot KKT convergence
         print("\nGenerating plots...")
-        iter_labels = ["ADMM", "Uzawa", "Arrow-Hurwicz"]
+        iter_labels = ["GDA", "Uzawa", "Arrow-Hurwicz"]
         iter_histories = [abl_results[name]["history"] for name in iter_labels]
         plot_kkt_convergence(
             iter_histories, iter_labels,
@@ -175,7 +177,7 @@ if __name__ == "__main__":
 
         # Collect summary data
         ablation_M_results[M_abl] = {}
-        for method in ["Direct", "ADMM", "Uzawa", "Arrow-Hurwicz"]:
+        for method in ["Direct", "GDA", "Uzawa", "Arrow-Hurwicz"]:
             h = abl_results[method]["history"]
             ablation_M_results[M_abl][method] = {
                 "r_s": h["r_s"][-1],
@@ -193,6 +195,6 @@ if __name__ == "__main__":
     print(f"| {'M':>6} | {'Algorithm':<14} | {'rel_u':>12} | {'rel_sigma':>12} |")
     print(f"|{'-'*7}:|:{'-'*14}|{'-'*13}:|{'-'*13}:|")
     for M_abl in ablation_M_list:
-        for method in ["Direct", "ADMM", "Uzawa", "Arrow-Hurwicz"]:
+        for method in ["Direct", "GDA", "Uzawa", "Arrow-Hurwicz"]:
             d = ablation_M_results[M_abl][method]
             print(f"| {M_abl:>6} | {method:<14} | {d['rel_u']:>12.2e} | {d['rel_sigma']:>12.2e} |")
