@@ -4,7 +4,7 @@
 #import templates: *
 #import "mod.typ": *
 #import "theme.typ": *
-#import "math-macros.typ": *
+#import "macros.typ": *
 #import "@preview/tablem:0.3.0": tablem, three-line-table
 #import "@preview/numbly:0.1.0": numbly
 
@@ -104,6 +104,7 @@
   set heading(numbering: numbly("{1:1}", default: "1.1"))
 
   show figure.where(kind: table): set figure.caption(position: top)
+  show figure.where(kind: table): set block(breakable: true)
 
   show: it => context if shiroa-sys-target() == "paged" {
     set page(numbering: "1")

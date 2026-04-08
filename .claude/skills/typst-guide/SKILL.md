@@ -161,7 +161,7 @@ $ -Delta u(bold(x)) = f(bold(x)), quad bold(x) in Omega, $<eq:poisson>
 
 ### 4.6 定理环境
 
-来自 `theorion` 包（`@preview/theorion:0.4.1`），已在模板中通过 `math-macros.typ` 导入。
+来自 `theorion` 包（`@preview/theorion:0.4.1`），已在模板中通过 `macros.typ` 导入。
 
 ```typst
 #proposition[
@@ -215,7 +215,7 @@ $ -Delta u(bold(x)) = f(bold(x)), quad bold(x) in Omega, $<eq:poisson>
 
 ### 项目自定义宏
 
-定义于 `typ/templates/math-macros.typ`：
+定义于 `typ/templates/macros.typ`：
 
 | 宏名        | 含义               |
 | ----------- | ------------------ |
@@ -224,7 +224,7 @@ $ -Delta u(bold(x)) = f(bold(x)), quad bold(x) in Omega, $<eq:poisson>
 | `span`      | 张成 span          |
 | `diag`      | 对角 diag          |
 
-如需新的数学符号宏，在 `typ/templates/math-macros.typ` 中按相同格式添加。
+如需新的数学符号宏，在 `typ/templates/macros.typ` 中按相同格式添加。
 
 ## 6. 完整示例
 
