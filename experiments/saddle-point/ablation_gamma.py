@@ -1,34 +1,48 @@
 """
-Ablation: feature activation scale gamma.
+Ablation: activation scale with synchronized split spaces.
 
-Generates per-gamma convergence plots and summary comparison.
+This script varies gamma_s = gamma_u while keeping the stress and displacement
+feature spaces independent.
 """
 
+import gc
 import os
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 
 from saddle_point import (
-    # Config
+    ALGO_STYLE,
+    BASE_SEED,
+    DEVICE,
+    DISP_SEED,
+    DTYPE,
+    STRESS_SEED,
     Config,
-    # Device and data types
-    DEVICE, DTYPE, BASE_SEED,
-    # Material
-    compute_lame_constants, build_compliance_matrix,
-    # Exact solution
-    eval_exact_displacement, compute_stress_voigt, compute_body_force,
-    # Features
-    generate_features, eval_features, eval_feature_grads, eval_zeta,
-    # System
-    assemble_system,
-    # Algorithms
+    activate_displacement_features,
+    assemble_system_in_batches,
+    build_compliance_matrix,
+    compute_body_force,
+    compute_lame_constants,
+    compute_stress_voigt,
+    eval_exact_displacement,
+    eval_features,
+    eval_zeta,
+    generate_features,
+    get_iterative_plot_data,
+    get_l2_plot_data,
+    get_summary_labels,
+    plot_kkt_convergence,
+    plot_l2_convergence,
     run_all_algorithms,
-    # Plotting
-    ALGO_STYLE, plot_kkt_convergence, plot_l2_convergence,
+    sample_boundary_points,
+    sample_points,
+    validate_algorithms_to_run,
+    validate_config,
 )
+
 
 # ---------------------------------------------------------------------------
 # Path configuration
@@ -37,162 +51,359 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "saddle-point" / "ablation" / "gamma"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-def plot_ablation_gamma(results, save_path):
-    """Line plot comparing final metrics across gamma values for all methods.
 
-    Args:
-        results: { gamma: { method_name: {"r_s", "r_u", "rel_u", "rel_sigma"} } }
-        save_path: output file path
-    """
+def clear_experiment_memory() -> None:
+    """Release CPU references and cached CUDA memory between ablation runs."""
+
+    gc.collect()
+    if DEVICE.type == "cuda":
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+
+
+def collect_summary_metrics(
+    results: dict[str, dict[str, object]],
+) -> dict[str, dict[str, float]]:
+    """Extract scalar summary metrics without retaining tensor results."""
+
+    summary: dict[str, dict[str, float]] = {}
+    for method in get_summary_labels(results):
+        history = results[method]["history"]
+        summary[method] = {
+            "r_c": history["r_c"][-1],
+            "r_e": history["r_e"][-1],
+            "rel_u": history["rel_u"][-1],
+            "rel_sigma": history["rel_sigma"][-1],
+        }
+    return summary
+
+
+def plot_ablation_gamma(
+    results: dict[float, dict[str, dict[str, float]]],
+    save_path: str,
+) -> None:
+    """Line plot comparing final metrics across gamma values for all methods."""
+
     gamma_values = sorted(results.keys())
     method_names = list(results[gamma_values[0]].keys())
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
-    metric_keys = ["r_s", "r_u", "rel_u", "rel_sigma"]
-    titles = [
-        r"$\|r_s\|_2$", r"$\|r_u\|_2$",
-        "Displacement error", "Stress error",
-    ]
-    ylabels = [
-        r"$\|r_s\|_2$", r"$\|r_u\|_2$",
-        "Relative $L^2$ error", "Relative $L^2$ error",
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    metric_specs = [
+        ("r_c", r"$\|r_c\|_2$", r"$\|r_c\|_2$"),
+        ("r_e", r"$\|r_e\|_2$", r"$\|r_e\|_2$"),
+        ("rel_u", "Displacement error", "Relative $L^2$ error"),
+        ("rel_sigma", "Stress error", "Relative $L^2$ error"),
     ]
 
-    for ax, mkey, title, ylabel in zip(
-        axes.flat, metric_keys, titles, ylabels
-    ):
+    axes_flat = list(axes.flat)
+    for ax, (metric_key, title, ylabel) in zip(axes_flat, metric_specs):
         for method in method_names:
-            vals = []
-            for gamma in gamma_values:
-                v = results[gamma].get(method, {}).get(mkey, float("nan"))
-                vals.append(v)
-            vals = np.array(vals, dtype=float)
+            vals = np.array(
+                [
+                    results[gamma].get(method, {}).get(metric_key, float("nan"))
+                    for gamma in gamma_values
+                ],
+                dtype=float,
+            )
             valid = np.isfinite(vals) & (vals > 0)
-            if valid.any():
-                sty = ALGO_STYLE.get(method, {"color": "gray", "marker": "x"})
-                ax.semilogy(
-                    np.array(gamma_values)[valid], vals[valid],
-                    marker=sty["marker"], color=sty["color"],
-                    linestyle=sty.get("linestyle", "-"),
-                    label=method, linewidth=1.5, markersize=6,
-                )
-        ax.set_xlabel(r"Activation scale $\gamma$")
+            if not valid.any():
+                continue
+
+            style = ALGO_STYLE.get(method, {"color": "gray", "marker": "x"})
+            ax.semilogy(
+                np.array(gamma_values)[valid],
+                vals[valid],
+                marker=style["marker"],
+                color=style["color"],
+                linestyle=style.get("linestyle", "-"),
+                label=method,
+                linewidth=1.5,
+                markersize=6,
+            )
+
+        ax.set_xlabel(r"Activation scale $\gamma_s = \gamma_u$")
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.set_xticks(gamma_values)
-        ax.set_xticklabels([str(g) for g in gamma_values])
+        ax.set_xticklabels([str(gamma) for gamma in gamma_values])
         ax.legend()
         ax.grid(alpha=0.3, linestyle="--")
-
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {save_path}")
 
 
+def run_single_gamma_ablation(
+    gamma_abl: float,
+    cfg: Config,
+    *,
+    a_s: torch.Tensor,
+    r_s: torch.Tensor,
+    a_u: torch.Tensor,
+    r_u: torch.Tensor,
+    x_train: torch.Tensor,
+    f_train: torch.Tensor,
+    zeta_train: torch.Tensor,
+    compliance_voigt: torch.Tensor,
+    x_test: torch.Tensor,
+    zeta_test: torch.Tensor,
+    u_exact: torch.Tensor,
+    sigma_exact: torch.Tensor,
+    selected_algorithm_ids: list[str],
+    projection_enabled: bool,
+    u_exact_train: torch.Tensor | None = None,
+    sigma_exact_train: torch.Tensor | None = None,
+    x_bc: torch.Tensor | None = None,
+    w_bc: torch.Tensor | None = None,
+    zeta_bc: torch.Tensor | None = None,
+) -> dict[str, dict[str, float]]:
+    """Run one gamma ablation while releasing large tensors eagerly."""
+
+    print(f"\n{'=' * 60}")
+    print(f"=== Ablation: gamma_s = gamma_u = {gamma_abl} ===")
+    print(f"{'=' * 60}")
+
+    xi_s_train_abl = None
+    xi_u_train_abl = None
+    xi_u_active_train_abl = None
+    A_abl = None
+    B_abl = None
+    C_abl = None
+    F_abl = None
+    xi_s_test_abl = None
+    xi_u_test_abl = None
+    xi_u_active_test_abl = None
+    abl_results = None
+    iter_labels = None
+    iter_histories = None
+    l2_labels = None
+    l2_histories = None
+
+    try:
+        if projection_enabled:
+            xi_s_train_abl = eval_features(x_train, a_s, r_s, gamma_abl)
+            xi_u_train_abl = eval_features(x_train, a_u, r_u, gamma_abl)
+            xi_u_active_train_abl = activate_displacement_features(
+                xi_u_train_abl,
+                zeta_train,
+            )
+            del xi_u_train_abl
+            xi_u_train_abl = None
+
+        A_abl, B_abl, C_abl, F_abl = assemble_system_in_batches(
+            x_train,
+            f_train,
+            a_s,
+            r_s,
+            gamma_abl,
+            a_u,
+            r_u,
+            gamma_abl,
+            compliance_voigt,
+            zeta_train,
+            cfg.assembly_batch_size,
+            x_bc=x_bc,
+            w_bc=w_bc,
+            zeta_bc=zeta_bc,
+            lambda_bc=cfg.lambda_bc if cfg.use_penalty else 0.0,
+        )
+        print(
+            f"  A: {tuple(A_abl.shape)}, B: {tuple(B_abl.shape)}, "
+            f"C: {tuple(C_abl.shape)}, F: {tuple(F_abl.shape)}"
+        )
+
+        xi_s_test_abl = eval_features(x_test, a_s, r_s, gamma_abl)
+        xi_u_test_abl = eval_features(x_test, a_u, r_u, gamma_abl)
+        xi_u_active_test_abl = activate_displacement_features(xi_u_test_abl, zeta_test)
+        del xi_u_test_abl
+        xi_u_test_abl = None
+
+        abl_results = run_all_algorithms(
+            A_abl,
+            B_abl,
+            C_abl,
+            F_abl,
+            xi_u_active_test_abl,
+            xi_s_test_abl,
+            u_exact,
+            sigma_exact,
+            algorithms_to_run=selected_algorithm_ids,
+            K_max=cfg.K_max,
+            eval_every=cfg.eval_every,
+            rho=cfg.rho,
+            eta_gda=cfg.eta_gda,
+            beta_adam=cfg.beta_adam,
+            eta_u_uzawa=cfg.eta_u_uzawa,
+            eta_s_ah=cfg.eta_s_ah,
+            eta_u_ah=cfg.eta_u_ah,
+            xi_s_train=xi_s_train_abl if projection_enabled else None,
+            xi_u_active_train=xi_u_active_train_abl if projection_enabled else None,
+            u_exact_train=u_exact_train,
+            sigma_exact_train=sigma_exact_train,
+            eigh_rtol=cfg.eigh_rtol,
+        )
+
+        summary = collect_summary_metrics(abl_results)
+        iter_labels, iter_histories = get_iterative_plot_data(abl_results)
+        if iter_labels:
+            l2_labels, l2_histories = get_l2_plot_data(abl_results)
+
+        xi_s_train_abl = None
+        xi_u_active_train_abl = None
+        A_abl = None
+        B_abl = None
+        C_abl = None
+        F_abl = None
+        xi_s_test_abl = None
+        xi_u_active_test_abl = None
+        abl_results = None
+        clear_experiment_memory()
+
+        if iter_labels:
+            print("\nGenerating plots...")
+            plot_kkt_convergence(
+                iter_histories,
+                iter_labels,
+                str(OUTPUT_DIR / f"kkt-convergence_gamma={gamma_abl}.png"),
+            )
+            plot_l2_convergence(
+                l2_histories,
+                l2_labels,
+                str(OUTPUT_DIR / f"l2-error-convergence_gamma={gamma_abl}.png"),
+            )
+        else:
+            print("Skipping convergence plots because no iterative algorithms were selected.")
+
+        return summary
+    finally:
+        xi_s_train_abl = None
+        xi_u_train_abl = None
+        xi_u_active_train_abl = None
+        A_abl = None
+        B_abl = None
+        C_abl = None
+        F_abl = None
+        xi_s_test_abl = None
+        xi_u_test_abl = None
+        xi_u_active_test_abl = None
+        abl_results = None
+        clear_experiment_memory()
+
+
 if __name__ == "__main__":
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
     plt.rcParams["axes.unicode_minus"] = False
 
-    # --- Configuration (override defaults as needed) ---
-    cfg = Config(K_max=100000)
-    ablation_gamma_list = [2.0, 2.5, 3.0, 3.5, 4.0]
+    cfg = Config()
+    selected_algorithm_ids = validate_algorithms_to_run(cfg.algorithms_to_run)
+    validate_config(cfg, selected_algorithm_ids)
+    projection_enabled = "projection" in selected_algorithm_ids
+    ablation_gamma_list = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 
     print(f"Device: {DEVICE}")
     print(f"Output: {OUTPUT_DIR}")
     print(f"Ablation gamma list: {ablation_gamma_list}")
 
-    # --- Prepare common data ---
     mu, lam = compute_lame_constants(cfg.E, cfg.nu)
     compliance_voigt = build_compliance_matrix(cfg.E, cfg.nu)
 
-    # Fixed M for gamma ablation
-    a, r = generate_features(cfg.M, seed=BASE_SEED)
+    a_s, r_s = generate_features(cfg.M_s, seed=STRESS_SEED)
+    a_u, r_u = generate_features(cfg.M_u, seed=DISP_SEED)
 
-    print(f"Sampling {cfg.Q_train} training points...")
-    torch.manual_seed(BASE_SEED + 1)
-    x_train = torch.rand(cfg.Q_train, 3, dtype=DTYPE, device=DEVICE)
-    f_train = compute_body_force(x_train, mu, lam)
-    zeta_train = eval_zeta(x_train)
+    print(f"Sampling {cfg.Q_int} training points...")
+    x_train = sample_points(cfg.Q_int, method=cfg.sampling_method, seed=BASE_SEED + 1)
+    f_train = compute_body_force(x_train, mu, lam, batch_size=cfg.body_force_batch_size)
+    zeta_train = (
+        eval_zeta(x_train)
+        if cfg.use_zeta
+        else torch.ones(x_train.shape[0], dtype=DTYPE, device=DEVICE)
+    )
+
+    u_exact_train = None
+    sigma_exact_train = None
+    if projection_enabled:
+        u_exact_train = eval_exact_displacement(x_train)
+        sigma_exact_train = compute_stress_voigt(x_train, mu, lam)
+
+    x_bc = None
+    w_bc = None
+    zeta_bc = None
+    if cfg.use_penalty:
+        print(f"Sampling {cfg.Q_bc} boundary points...")
+        x_bc, w_bc = sample_boundary_points(
+            cfg.Q_bc,
+            method=cfg.sampling_method,
+            seed=BASE_SEED + 2,
+        )
+        zeta_bc = (
+            eval_zeta(x_bc)
+            if cfg.use_zeta
+            else torch.ones(x_bc.shape[0], dtype=DTYPE, device=DEVICE)
+        )
 
     print(f"Sampling {cfg.Q_test} test points...")
-    torch.manual_seed(BASE_SEED + 2)
-    x_test = torch.rand(cfg.Q_test, 3, dtype=DTYPE, device=DEVICE)
-    zeta_test = eval_zeta(x_test)
+    x_test = sample_points(cfg.Q_test, method=cfg.sampling_method, seed=BASE_SEED + 3)
+    zeta_test = (
+        eval_zeta(x_test)
+        if cfg.use_zeta
+        else torch.ones(x_test.shape[0], dtype=DTYPE, device=DEVICE)
+    )
     u_exact = eval_exact_displacement(x_test)
     sigma_exact = compute_stress_voigt(x_test, mu, lam)
 
-    # --- Ablation loop ---
-    ablation_gamma_results = {}
+    ablation_gamma_results: dict[float, dict[str, dict[str, float]]] = {}
 
     for gamma_abl in ablation_gamma_list:
-        print(f"\n{'='*60}")
-        print(f"=== Ablation: gamma={gamma_abl} ===")
-        print(f"{'='*60}")
-
-        # Evaluate features with current gamma
-        xi_abl = eval_features(x_train, a, r, gamma_abl)
-        grad_xi_abl = eval_feature_grads(x_train, a, r, gamma_abl)
-
-        # Assemble system
-        A_abl, B_abl, F_abl = assemble_system(
-            xi_abl, grad_xi_abl, compliance_voigt, f_train, zeta_train
-        )
-        print(f"  A: {A_abl.shape}, B: {B_abl.shape}, F: {F_abl.shape}")
-
-        # Test features with current gamma
-        xi_test_abl = eval_features(x_test, a, r, gamma_abl)
-        xi_hat_test_abl = zeta_test.unsqueeze(1) * xi_test_abl
-
-        # Run all algorithms (record full history)
-        abl_results = run_all_algorithms(
-            A_abl, B_abl, F_abl, xi_hat_test_abl, xi_test_abl,
-            u_exact, sigma_exact,
-            K_max=cfg.K_max, eval_every=cfg.eval_every, rho=cfg.rho,
-            eta_gda=cfg.eta_gda, beta_adam=cfg.beta_adam,
-            eta_u_uzawa=cfg.eta_u_uzawa, eta_s_ah=cfg.eta_s_ah, eta_u_ah=cfg.eta_u_ah,
+        ablation_gamma_results[gamma_abl] = run_single_gamma_ablation(
+            gamma_abl,
+            cfg,
+            a_s=a_s,
+            r_s=r_s,
+            a_u=a_u,
+            r_u=r_u,
+            x_train=x_train,
+            f_train=f_train,
+            zeta_train=zeta_train,
+            compliance_voigt=compliance_voigt,
+            x_test=x_test,
+            zeta_test=zeta_test,
+            u_exact=u_exact,
+            sigma_exact=sigma_exact,
+            selected_algorithm_ids=selected_algorithm_ids,
+            projection_enabled=projection_enabled,
+            u_exact_train=u_exact_train,
+            sigma_exact_train=sigma_exact_train,
+            x_bc=x_bc,
+            w_bc=w_bc,
+            zeta_bc=zeta_bc,
         )
 
-        # Plot KKT convergence
-        print("\nGenerating plots...")
-        iter_labels = ["GDA", "Uzawa", "Arrow-Hurwicz"]
-        iter_histories = [abl_results[name]["history"] for name in iter_labels]
-        plot_kkt_convergence(
-            iter_histories, iter_labels,
-            str(OUTPUT_DIR / f"kkt-convergence_gamma={gamma_abl}.png"),
-        )
-
-        # Plot L2 error convergence
-        direct_l2 = {
-            "rel_u": abl_results["Direct"]["history"]["rel_u"][-1],
-            "rel_sigma": abl_results["Direct"]["history"]["rel_sigma"][-1],
-        }
-        plot_l2_convergence(
-            iter_histories, iter_labels,
-            str(OUTPUT_DIR / f"l2-error-convergence_gamma={gamma_abl}.png"),
-            direct_l2=direct_l2,
-        )
-
-        # Collect summary data
-        ablation_gamma_results[gamma_abl] = {}
-        for method in ["Direct", "GDA", "Uzawa", "Arrow-Hurwicz"]:
-            h = abl_results[method]["history"]
-            ablation_gamma_results[gamma_abl][method] = {
-                "r_s": h["r_s"][-1],
-                "r_u": h["r_u"][-1],
-                "rel_u": h["rel_u"][-1],
-                "rel_sigma": h["rel_sigma"][-1],
-            }
-
-    # --- Summary plot ---
     if ablation_gamma_results:
-        plot_ablation_gamma(ablation_gamma_results, str(OUTPUT_DIR / "ablation-gamma.png"))
+        plot_ablation_gamma(
+            ablation_gamma_results,
+            str(OUTPUT_DIR / "ablation-gamma.png"),
+        )
 
-    # --- Print summary table (Markdown-compatible) ---
     print("\n=== Ablation gamma: Summary ===\n")
-    print(f"| {'gamma':>6} | {'Algorithm':<14} | {'rel_u':>12} | {'rel_sigma':>12} |")
-    print(f"|{'-'*7}:|:{'-'*15}|{'-'*13}:|{'-'*13}:|")
+    summary_methods = (
+        list(next(iter(ablation_gamma_results.values())).keys())
+        if ablation_gamma_results
+        else []
+    )
+    print(
+        f"| {'gamma':>6} | {'Algorithm':<14} | {'||r_c||':>10} | {'||r_e||':>10} | "
+        f"{'rel_u':>12} | {'rel_sigma':>12} |"
+    )
+    print(
+        f"|{'-' * 7}:|:{'-' * 15}|{'-' * 11}:|{'-' * 11}:|"
+        f"{'-' * 13}:|{'-' * 13}:|"
+    )
     for gamma_abl in ablation_gamma_list:
-        for method in ["Direct", "GDA", "Uzawa", "Arrow-Hurwicz"]:
-            d = ablation_gamma_results[gamma_abl][method]
-            print(f"| {gamma_abl:>6} | {method:<14} | {d['rel_u']:>12.2e} | {d['rel_sigma']:>12.2e} |")
+        for method in summary_methods:
+            item = ablation_gamma_results[gamma_abl][method]
+            print(
+                f"| {gamma_abl:>6} | {method:<14} | {item['r_c']:>10.2e} | "
+                f"{item['r_e']:>10.2e} | {item['rel_u']:>12.2e} | "
+                f"{item['rel_sigma']:>12.2e} |"
+            )
