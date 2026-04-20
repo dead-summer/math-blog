@@ -348,6 +348,7 @@
     )
     // math setting
     show: equation-rules
+    set-inherited-levels(0)
     show: show-theorion
     // code block setting
     show: code-block-rules

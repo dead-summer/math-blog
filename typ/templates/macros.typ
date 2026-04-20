@@ -14,7 +14,15 @@
 ///   d — 输入维度（输入层圆圈数）
 ///   n — 输出维度（输出层圆圈数）
 ///   y — 输出符号名称（字符串），如 "sigma"、"u"、"hat(y)"、"tilde(y)" 等
-#let neural-net(d: 3, n: 2, y: "sigma") = canvas({
+///   in-stroke — 输入层到隐藏层的连线样式
+///   out-stroke — 隐藏层到输出层的连线样式
+#let neural-net(
+  d: 3,
+  n: 2,
+  y: "sigma",
+  in-stroke: (paint: blue, thickness: 0.65pt),
+  out-stroke: (paint: red, dash: "dashed", thickness: 0.65pt),
+) = canvas({
   import draw: *
 
   // 布局参数
@@ -43,7 +51,7 @@
       line(
         (x0, vy(i, d)),
         (x1, vy(j, h-slots)),
-        stroke: (paint: blue, thickness: 0.65pt)
+        stroke: in-stroke
       )
     }
   }
@@ -54,7 +62,7 @@
       line(
         (x1, vy(j, h-slots)),
         (x2, vy(k, n)),
-        stroke: (paint: red, dash: "dashed", thickness: 0.65pt)
+        stroke: out-stroke
       )
     }
   }

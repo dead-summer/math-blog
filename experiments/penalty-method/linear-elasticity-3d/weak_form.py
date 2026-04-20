@@ -39,8 +39,8 @@ class WeakConfig:
     nu: float = 0.3
     gamma_s: float = 2.0
     gamma_u: float = 2.0
-    M_s: int = 1000
-    M_u: int = 1000
+    M_s: int = 300
+    M_u: int = 300
     Q_int: int = (2 ** 6) ** 3
     Q_bc: int = 6 * (2 ** 5) ** 2
     Q_test: int = (2 ** 5) ** 3
@@ -52,7 +52,7 @@ class WeakConfig:
     algorithms_to_run: list[str] = field(
         default_factory=lambda: [
             "eigh",
-            # "lstsq",
+            "lstsq",
         ]
     )
 

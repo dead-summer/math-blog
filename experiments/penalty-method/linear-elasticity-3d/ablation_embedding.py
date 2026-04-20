@@ -972,12 +972,12 @@ def plot_ablation_embedding(
     metric_specs = [
         (
             "rel_u",
-            r"Displacement $\|u_M - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
+            r"Displacement $\|\Phi^u - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
             "Relative $L^2$ error",
         ),
         (
             "rel_sigma",
-            r"Stress $\|\sigma_M - \sigma_{ex}\|_{L^2} / \|\sigma_{ex}\|_{L^2}$",
+            r"Stress $\|\Phi^\sigma - \sigma_{ex}\|_{L^2} / \|\sigma_{ex}\|_{L^2}$",
             "Relative $L^2$ error",
         ),
     ]

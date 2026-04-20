@@ -41,8 +41,8 @@ TOP_LEVEL_ALGORITHM_LABELS = {
     "strong(lstsq)": "Strong (Lstsq)",
     "pinn": "PINN",
 }
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "linear-elasticity-3d"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "penalty-method" / "linear-elasticity-3d"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 ALGO_STYLE = {
     "Projection": {"color": "#9B2226", "marker": "P", "linestyle": ":"},
@@ -102,7 +102,7 @@ class MainConfig:
 
     algorithms_to_run: list[str] = field(
         default_factory=lambda: [
-            "projection",
+            # "projection",
             "weak(eigh)",
             "weak(lstsq)",
             "strong(eigh)",
@@ -301,6 +301,9 @@ def eval_exact_displacement(x: torch.Tensor) -> torch.Tensor:
     """Evaluate the manufactured displacement field."""
 
     x1, x2, x3 = x[:, 0], x[:, 1], x[:, 2]
+
+    # Smooth solution: trigonometric manufactured displacement with smooth
+    # derivatives throughout the domain.
     pi = math.pi
     u1 = torch.sin(pi * x1) * torch.sin(pi * x2) * torch.sin(pi * x3)
     u2 = torch.sin(2.0 * pi * x1) * torch.sin(pi * x2) * torch.sin(pi * x3)
@@ -610,36 +613,13 @@ def compute_feature_capacity(M_s: int, M_u: int) -> int:
     return 6 * (M_s + 1) + 3 * (M_u + 1)
 
 
-def compute_pinn_parameter_count(width: int, depth: int) -> int:
-    """Return the trainable parameter count for the mixed PINN MLP."""
+def compute_pinn_parameter_count(M_s: int, M_u: int) -> int:
+    """Return the trainable parameter count for the split single-hidden-layer PINN."""
 
-    if width <= 0 or depth <= 0:
-        raise ValueError("width and depth must be positive.")
+    if M_s <= 0 or M_u <= 0:
+        raise ValueError("M_s and M_u must be positive.")
 
-    total = 3 * width + width
-    total += (depth - 1) * (width * width + width)
-    total += width * 9 + 9
-    return total
-
-
-def select_pinn_width(target_capacity: int, depth: int) -> tuple[int, int]:
-    """Select the widest PINN that does not exceed the target capacity."""
-
-    if target_capacity <= 0:
-        raise ValueError("target_capacity must be positive.")
-
-    best_under: tuple[int, int] | None = None
-    width = 1
-    while True:
-        param_count = compute_pinn_parameter_count(width, depth)
-        if param_count <= target_capacity:
-            best_under = (width, param_count)
-            width += 1
-            continue
-
-        if best_under is not None:
-            return best_under
-        return width, param_count
+    return 10 * M_s + 7 * M_u + 9
 
 
 def compute_l2_errors(
@@ -875,8 +855,8 @@ def plot_l2_summary(
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
     titles = [
-        r"Displacement $\|u_M - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
-        r"Stress $\|\sigma_M - \sigma_{ex}\|_{L^2} / \|\sigma_{ex}\|_{L^2}$",
+        r"Displacement $\|\Phi^u - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
+        r"Stress $\|\Phi^\sigma - \sigma_{ex}\|_{L^2} / \|\sigma_{ex}\|_{L^2}$",
     ]
     keys = ["rel_u", "rel_sigma"]
     labels = [result.name for result in ordered_results]
@@ -972,10 +952,10 @@ def apply_shared_to_pinn_config(
     cfg: "PinnConfig",
     shared_cfg: SharedComparisonConfig,
 ) -> tuple["PinnConfig", int, int]:
-    """Align PINN data settings and width with the shared feature capacity."""
+    """Align PINN data settings and hidden widths with the shared feature counts."""
 
     target_capacity = compute_feature_capacity(shared_cfg.M_s, shared_cfg.M_u)
-    pinn_width, param_count = select_pinn_width(target_capacity, cfg.pinn_depth)
+    param_count = compute_pinn_parameter_count(shared_cfg.M_s, shared_cfg.M_u)
     return (
         replace(
             cfg,
@@ -986,8 +966,9 @@ def apply_shared_to_pinn_config(
             Q_test=shared_cfg.Q_test,
             sampling_method=shared_cfg.sampling_method,
             body_force_batch_size=shared_cfg.body_force_batch_size,
-            pinn_width=pinn_width,
-            pinn_seed=shared_cfg.pinn_init_seed,
+            M_s=shared_cfg.M_s,
+            M_u=shared_cfg.M_u,
+            seed=shared_cfg.pinn_init_seed,
             algorithms_to_run=["pinn"],
         ),
         target_capacity,
@@ -1136,8 +1117,8 @@ def main(cfg: MainConfig | None = None) -> None:
         )
         print(
             "Aligned PINN capacity: "
-            f"target={target_capacity}, width={pinn_cfg.pinn_width}, "
-            f"params={param_count}, depth={pinn_cfg.pinn_depth}"
+            f"target={target_capacity}, M_s={pinn_cfg.M_s}, "
+            f"M_u={pinn_cfg.M_u}, params={param_count}"
         )
         results.extend(
             run_pinn_experiment(

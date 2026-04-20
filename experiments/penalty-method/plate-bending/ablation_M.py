@@ -1,36 +1,38 @@
 from __future__ import annotations
 
 import gc
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from linear_elasticity_3d import (
+from plate_bending import (
     ALGO_STYLE,
-    AlgorithmResult,
     DEVICE,
+    AlgorithmResult,
     FeatureEvaluationData,
-    TOP_LEVEL_ALGORITHM_LABELS,
-    VALID_TOP_LEVEL_ALGORITHMS,
     MainConfig,
     SharedBenchmarkData,
     SharedComparisonConfig,
     SharedFeatureSpace,
-    apply_shared_to_pinn_config,
+    TOP_LEVEL_ALGORITHM_LABELS,
+    VALID_TOP_LEVEL_ALGORITHMS,
     apply_shared_to_strong_config,
     apply_shared_to_weak_config,
     build_feature_evaluation_data,
     build_shared_benchmark,
     build_shared_feature_space,
     clear_cuda_cache,
-    compute_lame_constants,
-    compute_stress_voigt,
+    compute_bending_stiffness,
     configure_plotting,
-    eval_exact_displacement,
+    eval_exact_deflection,
+    eval_exact_moment,
     evaluate_feature_result,
     extract_scoped_algorithm_ids,
     make_default_main_config,
@@ -43,12 +45,6 @@ from projection import (
     run_projection,
     validate_config as validate_projection_config,
 )
-from pinn import (
-    PinnExperimentData,
-    evaluate_pinn_result,
-    train_pinn,
-    validate_config as validate_pinn_config,
-)
 from strong_form import (
     assemble_normal_equations,
     solve_eigh as solve_strong_eigh,
@@ -57,7 +53,7 @@ from strong_form import (
     validate_config as validate_strong_config,
 )
 from weak_form import (
-    accumulate_boundary_gram as accumulate_weak_boundary_gram,
+    accumulate_boundary_grams as accumulate_weak_boundary_grams,
     accumulate_weak_form_moments,
     assemble_system as assemble_weak_system,
     solve_eigh as solve_weak_eigh,
@@ -66,11 +62,11 @@ from weak_form import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "linear-elasticity-3d" / "ablation" / "M"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "penalty-method" / "plate-bending" / "ablation" / "M"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_ABLATION_M_LIST = [200, 400, 600, 800, 1000]
+DEFAULT_ABLATION_M_LIST = [100, 150, 200, 250, 300]
 
 
 def clear_experiment_memory() -> None:
@@ -101,11 +97,11 @@ def build_pair_feature_space(
     """Slice the shared random feature spaces to one synchronized capacity point."""
 
     return SharedFeatureSpace(
-        a_s=full_feature_space.a_s[:M],
-        r_s=full_feature_space.r_s[:M],
+        a_m=full_feature_space.a_m[:M],
+        r_m=full_feature_space.r_m[:M],
         a_u=full_feature_space.a_u[:M],
         r_u=full_feature_space.r_u[:M],
-        gamma_s=full_feature_space.gamma_s,
+        gamma_m=full_feature_space.gamma_m,
         gamma_u=full_feature_space.gamma_u,
     )
 
@@ -145,7 +141,7 @@ def run_projection_ablation(
     feature_space: SharedFeatureSpace,
     eval_data: FeatureEvaluationData,
     u_exact_train: torch.Tensor,
-    sigma_exact_train: torch.Tensor,
+    M_exact_train: torch.Tensor,
 ) -> AlgorithmResult:
     """Run the projection baseline at one paired capacity point."""
 
@@ -154,18 +150,18 @@ def run_projection_ablation(
 
     projection_cfg = apply_shared_to_projection_config(cfg.projection, shared_cfg)
     validate_projection_config(projection_cfg)
-    s, u, wall_time = run_projection(
+    m, u, wall_time = run_projection(
         benchmark.x_int,
-        feature_space.a_s,
-        feature_space.r_s,
-        projection_cfg.gamma_s,
+        feature_space.a_m,
+        feature_space.r_m,
+        projection_cfg.gamma_m,
         feature_space.a_u,
         feature_space.r_u,
         projection_cfg.gamma_u,
         u_exact_train,
-        sigma_exact_train,
+        M_exact_train,
     )
-    result = evaluate_feature_result("Projection", wall_time, s, u, eval_data)
+    result = evaluate_feature_result("Projection", wall_time, m, u, eval_data)
     print_result_summary(result)
     return result
 
@@ -186,38 +182,42 @@ def run_weak_ablation(
     weak_cfg = apply_shared_to_weak_config(cfg.weak, shared_cfg, weak_algorithm_ids)
     validate_weak_config(weak_cfg)
 
-    gram_s, cross_u_grad_s, force_moment = accumulate_weak_form_moments(
+    gram_m, cross_u_hess_m, force_moment = accumulate_weak_form_moments(
         benchmark.x_int,
         benchmark.f_int,
-        feature_space.a_s,
-        feature_space.r_s,
-        weak_cfg.gamma_s,
+        feature_space.a_m,
+        feature_space.r_m,
+        weak_cfg.gamma_m,
         feature_space.a_u,
         feature_space.r_u,
         weak_cfg.gamma_u,
         weak_cfg.assembly_batch_size,
     )
-    gram_bc = accumulate_weak_boundary_gram(
+    gram_bc, gram_dn = accumulate_weak_boundary_grams(
         benchmark.x_bc,
         benchmark.w_bc,
+        benchmark.n_bc,
         feature_space.a_u,
         feature_space.r_u,
         weak_cfg.gamma_u,
         weak_cfg.assembly_batch_size,
     )
-    A, B, C, F = assemble_weak_system(
-        gram_s,
-        cross_u_grad_s,
+    A, B, C0, C1, F = assemble_weak_system(
+        gram_m,
+        cross_u_hess_m,
         gram_bc,
+        gram_dn,
         force_moment,
         benchmark.compliance_voigt,
-        weak_cfg.lambda_bc,
+        weak_cfg.lambda_0,
+        weak_cfg.lambda_1,
     )
 
-    del gram_s
-    del cross_u_grad_s
+    del gram_m
+    del cross_u_hess_m
     del force_moment
     del gram_bc
+    del gram_dn
     clear_cuda_cache()
 
     results: dict[str, AlgorithmResult] = {}
@@ -225,19 +225,27 @@ def run_weak_ablation(
         for algorithm_id in weak_algorithm_ids:
             if algorithm_id == "eigh":
                 print("Running Weak (Eigh)...")
-                s, u, wall_time = solve_weak_eigh(A, B, C, F, weak_cfg.eigh_rtol)
+                m, u, wall_time = solve_weak_eigh(
+                    A,
+                    B,
+                    C0,
+                    C1,
+                    F,
+                    weak_cfg.eigh_rtol,
+                )
                 label = "Weak (Eigh)"
             else:
                 print("Running Weak (Lstsq)...")
-                s, u, wall_time = solve_weak_lstsq(A, B, C, F)
+                m, u, wall_time = solve_weak_lstsq(A, B, C0, C1, F)
                 label = "Weak (Lstsq)"
-            result = evaluate_feature_result(label, wall_time, s, u, eval_data)
+            result = evaluate_feature_result(label, wall_time, m, u, eval_data)
             print_result_summary(result)
             results[label] = result
     finally:
         del A
         del B
-        del C
+        del C0
+        del C1
         del F
         clear_cuda_cache()
 
@@ -266,8 +274,9 @@ def run_strong_ablation(
         benchmark.f_int,
         benchmark.x_bc,
         benchmark.w_bc,
-        feature_space.a_s,
-        feature_space.r_s,
+        benchmark.n_bc,
+        feature_space.a_m,
+        feature_space.r_m,
         feature_space.a_u,
         feature_space.r_u,
     )
@@ -275,7 +284,7 @@ def run_strong_ablation(
 
     results: dict[str, AlgorithmResult] = {}
     try:
-        dim_s = 6 * (strong_cfg.M_s + 1)
+        dim_m = 3 * (strong_cfg.M_m + 1)
         for algorithm_id in strong_algorithm_ids:
             if algorithm_id == "eigh":
                 print("Running Strong (Eigh)...")
@@ -285,8 +294,8 @@ def run_strong_ablation(
                 print("Running Strong (Lstsq)...")
                 z, wall_time = solve_strong_lstsq(H, g)
                 label = "Strong (Lstsq)"
-            s, u = split_strong_solution(z, dim_s)
-            result = evaluate_feature_result(label, wall_time, s, u, eval_data)
+            m, u = split_strong_solution(z, dim_m)
+            result = evaluate_feature_result(label, wall_time, m, u, eval_data)
             print_result_summary(result)
             results[label] = result
     finally:
@@ -295,48 +304,6 @@ def run_strong_ablation(
         clear_cuda_cache()
 
     return results
-
-
-def run_pinn_ablation(
-    cfg: MainConfig,
-    shared_cfg: SharedComparisonConfig,
-    benchmark: SharedBenchmarkData,
-) -> AlgorithmResult:
-    """Run the PINN baseline at one paired capacity point."""
-
-    if cfg.pinn is None:
-        raise ValueError("MainConfig.pinn is required when running pinn.")
-
-    pinn_cfg, target_capacity, param_count = apply_shared_to_pinn_config(cfg.pinn, shared_cfg)
-    validate_pinn_config(pinn_cfg)
-    print(
-        "  Aligned PINN capacity: "
-        f"target={target_capacity}, width={pinn_cfg.pinn_width}, "
-        f"params={param_count}, depth={pinn_cfg.pinn_depth}"
-    )
-    model, wall_time = train_pinn(
-        pinn_cfg,
-        benchmark.x_int,
-        benchmark.f_int,
-        benchmark.x_bc,
-        benchmark.compliance_voigt,
-    )
-    eval_data = PinnExperimentData(
-        x_int=benchmark.x_int,
-        f_int=benchmark.f_int,
-        x_bc=benchmark.x_bc,
-        w_bc=benchmark.w_bc,
-        x_test=benchmark.x_test,
-        u_exact_test=benchmark.u_exact_test,
-        sigma_exact_test=benchmark.sigma_exact_test,
-        compliance_voigt=benchmark.compliance_voigt,
-        eval_batch_size=pinn_cfg.eval_batch_size,
-    )
-    result = evaluate_pinn_result("PINN", wall_time, model, eval_data)
-    print_result_summary(result)
-    del model
-    clear_experiment_memory()
-    return result
 
 
 def plot_ablation_M(
@@ -358,12 +325,12 @@ def plot_ablation_M(
     metric_specs = [
         (
             "rel_u",
-            r"Displacement $\|u_M - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
+            r"Deflection $\|\Phi^u - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
             "Relative $L^2$ error",
         ),
         (
-            "rel_sigma",
-            r"Stress $\|\sigma_M - \sigma_{ex}\|_{L^2} / \|\sigma_{ex}\|_{L^2}$",
+            "rel_M",
+            r"Moment $\|\Phi^M - M_{ex}\|_{L^2} / \|M_{ex}\|_{L^2}$",
             "Relative $L^2$ error",
         ),
     ]
@@ -418,7 +385,7 @@ def print_summary_table(
     print("\n=== Ablation M Summary ===\n")
     print(
         f"| {'M':>6} | {'Algorithm':<16} | "
-        f"{'rel_u':>12} | {'rel_sigma':>12} | {'Time(s)':>8} |"
+        f"{'rel_u':>12} | {'rel_M':>12} | {'Time(s)':>8} |"
     )
     print(
         f"|{'-' * 7}:|:{'-' * 17}|"
@@ -433,7 +400,7 @@ def print_summary_table(
                 continue
             print(
                 f"| {M:>6} | {label:<16} | "
-                f"{metrics.rel_u:>12.2e} | {metrics.rel_sigma:>12.2e} | "
+                f"{metrics.rel_u:>12.2e} | {metrics.rel_M:>12.2e} | "
                 f"{metrics.wall_time:>8.2f} |"
             )
 
@@ -452,7 +419,10 @@ def run_ablation(
         cfg.algorithms_to_run,
         VALID_TOP_LEVEL_ALGORITHMS,
     )
-    ordered_labels = [TOP_LEVEL_ALGORITHM_LABELS[algorithm_id] for algorithm_id in selected_algorithm_ids]
+    ordered_labels = [
+        TOP_LEVEL_ALGORITHM_LABELS[algorithm_id]
+        for algorithm_id in selected_algorithm_ids
+    ]
 
     ablation_M_list = DEFAULT_ABLATION_M_LIST if ablation_M_list is None else list(ablation_M_list)
     M_list = validate_ablation_list(ablation_M_list)
@@ -460,17 +430,23 @@ def run_ablation(
     print(f"Device: {DEVICE}")
     print(f"Output: {OUTPUT_DIR}")
     print(f"Algorithms: {selected_algorithm_ids}")
+    print(
+        "Shared comparison config: "
+        f"h={shared_cfg.h}, M_m={shared_cfg.M_m}, M_u={shared_cfg.M_u}, "
+        f"Q_int={shared_cfg.Q_int}, Q_bc={shared_cfg.Q_bc}, Q_test={shared_cfg.Q_test}, "
+        f"sampling={shared_cfg.sampling_method}"
+    )
     print(f"Ablation M list: {M_list}")
 
     print("Building shared benchmark data...")
     benchmark = build_shared_benchmark(
         E=shared_cfg.E,
         nu=shared_cfg.nu,
+        h=shared_cfg.h,
         Q_int=shared_cfg.Q_int,
         Q_bc=shared_cfg.Q_bc,
         Q_test=shared_cfg.Q_test,
         sampling_method=shared_cfg.sampling_method,
-        body_force_batch_size=shared_cfg.body_force_batch_size,
         interior_seed=shared_cfg.interior_seed,
         boundary_seed=shared_cfg.boundary_seed,
         test_seed=shared_cfg.test_seed,
@@ -484,28 +460,32 @@ def run_ablation(
         "strong(lstsq)",
     }
     use_feature_algorithms = any(
-        algorithm_id in feature_algorithm_ids for algorithm_id in selected_algorithm_ids
+        algorithm_id in feature_algorithm_ids
+        for algorithm_id in selected_algorithm_ids
     )
 
     full_feature_space: SharedFeatureSpace | None = None
     if use_feature_algorithms:
         print("Generating full shared random feature spaces...")
         full_feature_space = build_shared_feature_space(
-            M_s=max(M_list),
+            M_m=max(M_list),
             M_u=max(M_list),
-            gamma_s=shared_cfg.gamma_s,
+            gamma_m=shared_cfg.gamma_m,
             gamma_u=shared_cfg.gamma_u,
-            stress_feature_seed=shared_cfg.stress_feature_seed,
+            moment_feature_seed=shared_cfg.moment_feature_seed,
             disp_feature_seed=shared_cfg.disp_feature_seed,
         )
 
     projection_train_fields: tuple[torch.Tensor, torch.Tensor] | None = None
     if "projection" in selected_algorithm_ids:
-        mu, lam = compute_lame_constants(shared_cfg.E, shared_cfg.nu)
-        print(f"Computing exact projection targets with mu={mu:.4f}, lam={lam:.4f}...")
+        D = compute_bending_stiffness(shared_cfg.E, shared_cfg.nu, shared_cfg.h)
+        print(
+            "Computing exact projection targets with "
+            f"D={D:.4f}, nu={shared_cfg.nu:.4f}..."
+        )
         projection_train_fields = (
-            eval_exact_displacement(benchmark.x_int),
-            compute_stress_voigt(benchmark.x_int, mu, lam),
+            eval_exact_deflection(benchmark.x_int),
+            eval_exact_moment(benchmark.x_int, D, shared_cfg.nu),
         )
 
     weak_algorithm_ids = extract_scoped_algorithm_ids(selected_algorithm_ids, "weak")
@@ -522,10 +502,10 @@ def run_ablation(
     all_results: dict[int, dict[str, AlgorithmResult]] = {}
     for M in M_list:
         print(f"\n{'=' * 72}")
-        print(f"=== Ablation M: M_s = M_u = {M} ===")
+        print(f"=== Ablation M: M_m = M_u = {M} ===")
         print(f"{'=' * 72}")
 
-        pair_shared_cfg = replace(shared_cfg, M_s=M, M_u=M)
+        pair_shared_cfg = replace(shared_cfg, M_m=M, M_u=M)
         pair_results: dict[str, AlgorithmResult] = {}
 
         pair_feature_space: SharedFeatureSpace | None = None
@@ -581,10 +561,6 @@ def run_ablation(
                     strong_algorithm_ids,
                 )
             )
-
-        if "pinn" in selected_algorithm_ids:
-            print("Running PINN...")
-            pair_results["PINN"] = run_pinn_ablation(cfg, pair_shared_cfg, benchmark)
 
         all_results[M] = pair_results
 
