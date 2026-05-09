@@ -72,7 +72,7 @@ $
 #theorem[
   在空间 $bold(Sigma) times bold(U)$ 上，下列三个问题彼此等价：
 
-  1. 二阶线弹性强形式；
+  1. 二阶线弹性方程组；
   2. 最小化 $cal(J)$；
   3. 求 $(bold(sigma), bold(u)) in bold(Sigma) times bold(U)$，使得
     $
@@ -754,8 +754,8 @@ $
   )[
     | 参数 | 设置 |
     |---|---|
-    | 杨氏模量 | $E = 1.0$ |
-    | 泊松比 | $nu = 0.3$ |
+    | 杨氏模量 | $E = 4/3$ |
+    | 泊松比 | $nu = 1/3$ |
     | 数据类型 | `torch.float64` |
     | 激活函数 | $tanh$ |
     | 采样方式 | Sobol 采样 |
@@ -791,39 +791,41 @@ $
   caption: [三维线弹性实验设置],
 )
 
-制造解取为位移场
+参考 @hu2015family 中精确解，设
 $
   bold(u)_"ex" (x)
   =
   mat(
-    sin(pi x_1) sin(pi x_2) sin(pi x_3);
-    sin(2 pi x_1) sin(pi x_2) sin(pi x_3);
-    sin(pi x_1) sin(2 pi x_2) sin(pi x_3)
+    2^4 x_1 (1 - x_1) x_2 (1 - x_2) x_3 (1 - x_3);
+    2^5 x_1 (1 - x_1) x_2 (1 - x_2) x_3 (1 - x_3);
+    2^6 x_1 (1 - x_1) x_2 (1 - x_2) x_3 (1 - x_3)
   ).
 $
-由于正弦因子在边界上为零，故该制造解满足 $bold(u)_"ex" = 0$ 于 $partial Omega$。精确应力 $bold(sigma)_"ex"$ 由各向同性本构关系计算，体力由
+由于公共因子 $x_1 (1 - x_1) x_2 (1 - x_2) x_3 (1 - x_3)$ 在边界上为零，故该制造解满足 $bold(u)_"ex" = 0$ 于 $partial Omega$。精确应力 $bold(sigma)_"ex"$ 由各向同性本构关系计算，体力由
 $
   bold(f)_"ex" = - nabla dot bold(sigma)(bold(u)_"ex")
 $
-通过自动微分生成，因此 $(bold(sigma)_"ex", bold(u)_"ex")$ 构成该算例的精确解。
+通过自动微分生成。
 
 对三维线弹性，位移误差定义为
 $
-  e_bold(u)
-  :=
-  frac(
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(bold(Phi)^bold(u) (bold(x)_p) - bold(u)_"ex" (bold(x)_p))_2^2),
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(bold(u)_"ex" (bold(x)_p))_2^2)
-  ),
+  norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2(Omega))
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(bold(Phi)^bold(u) (bold(x)_p) - bold(u)_"ex" (bold(x)_p))_2^2),
 $
 而在 Voigt 顺序 $(11, 22, 33, 12, 23, 13)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 1, 2, 2, 2)^T$，并定义
 $
-  e_bold(sigma)
-  :=
-  frac(
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^6 w^"V"_alpha ((bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha)^2),
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^6 w^"V"_alpha ((bold(sigma)_"ex" (bold(x)_p))_alpha)^2)
-  ).
+  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2(Omega))
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^6 w^"V"_alpha ((bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha)^2).
+$
+散度误差定义为
+$
+  norm(div(bold(Phi)^bold(u) - bold(u)_"ex"))_(L^2(Omega))
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_2^2).
+$
+由于精确解满足 $nabla dot bold(sigma)_"ex" + bold(f)_"ex" = 0$，故计算时可等价写为
+$
+  norm(div(bold(Phi)^bold(u) - bold(u)_"ex"))_(L^2(Omega))
+  = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_2^2).
 $
 
 === 实验结果
@@ -832,13 +834,16 @@ $
 
 #figure(
   three-line-table(
-    columns: 4,
-    align: (left, right, right, right),
+    columns: 5,
+    align: (left, center, center, center, right),
   )[
-    | 方法 | $e_bold(u)$ | $e_bold(sigma)$ | Time(s) |
-    |:-----|---------:|---------:|--------:|
-    | LS (Eigh)          |   1.74e-03 |   1.16e-02 |     0.77 |
-    | LS (Lstsq)         |   7.60e-03 |   5.78e-02 |     0.20 |
+    | 方法 | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2)$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2)$ | $norm(div(bold(Phi)^bold(u) - bold(u)_"ex"))_(L^2)$ | DOF |
+    |:-----------|:----------:|:--------------:|:------------------:|:-------:|
+    | Hu--Zhang (1) |   6.13e-02 |   1.99e-01 |       1.47e-00      |  1215   |
+    | Hu--Zhang (2) |   7.15e-03 |   8.05e-03 |       9.20e-02      |  8472   |
+    | Hu--Zhang (3) |   4.91e-04 |   2.91e-04 |       5.75e-03      |  63666  |
+    | LS (Eigh)  |  2.03e-04  |    1.13e-02    |      1.77e-02      |  2709   |
+    | LS (Lstsq) |  5.99e-04  |    3.41e-02    |      2.29e-02      |  2709   |
   ],
   caption: [三维线弹性主实验结果（$M = 300$）],
 )<tb:3d-main>
@@ -848,7 +853,6 @@ $
   caption: [三维线弹性主实验结果（$M = 300$）],
 )
 
-由 @tb:3d-main 可见，在当前三维制造解与 $M = 300$ 的设置下，两种求解器都得到收敛解，但 Eigh 在位移与应力两个指标上均优于 Lstsq，而耗时约增加到其 $4$ 倍。
 
 === 特征数消融
 
@@ -856,21 +860,21 @@ $
 
 #figure(
   three-line-table(
-    columns: 5,
-    align: (left, right, right, right, right),
+    columns: 6,
+    align: (left, right, right, right, right, right),
   )[
-    | 方法 | $M$ | $e_bold(u)$ | $e_bold(sigma)$ |  Time(s) |
-    |:-------------------|-------:|-----------:|-----------:|---------:|
-    | LS (Eigh)          |    200 |   5.44e-03 |   3.41e-02 |     0.39 |
-    | LS (Eigh)          |    400 |   7.51e-04 |   5.65e-03 |     1.30 |
-    | LS (Eigh)          |    600 |   2.33e-04 |   1.75e-03 |     3.72 |
-    | LS (Eigh)          |    800 |   1.10e-04 |   7.88e-04 |     7.93 |
-    | LS (Eigh)          |   1000 |   8.50e-05 |   5.98e-04 |    14.90 |
-    | LS (Lstsq)         |    200 |   4.88e-03 |   3.25e-02 |     0.09 |
-    | LS (Lstsq)         |    400 |   2.48e-03 |   1.92e-02 |     0.41 |
-    | LS (Lstsq)         |    600 |   9.52e-04 |   7.27e-03 |     1.21 |
-    | LS (Lstsq)         |    800 |   1.02e-03 |   5.47e-03 |     2.68 |
-    | LS (Lstsq)         |   1000 |   1.88e-03 |   1.06e-02 |     5.09 |
+    | 方法 | $M$ | $E_bold(u)$ | $E_bold(sigma)$ | $E_"div"$ | Time(s) |
+    |:-------------------|-------:|-------------:|------------------:|-----------:|--------:|
+    | LS (Eigh)  | 200  |  6.49e-04  |    3.49e-02    |      4.97e-02      |  0.31   |
+    | LS (Eigh)  | 400  |  1.02e-04  |    5.98e-03    |      1.02e-02      |  1.32   |
+    | LS (Eigh)  | 600  |  4.17e-05  |    2.57e-03    |      3.47e-03      |  3.56   |
+    | LS (Eigh)  | 800  |  1.76e-05  |    1.18e-03    |      1.71e-03      |  8.31   |
+    | LS (Eigh)  | 1000 |  1.46e-05  |    9.02e-04    |      1.03e-03      |  15.10  |
+    | LS (Lstsq) | 200  |  5.79e-04  |    3.26e-02    |      4.89e-02      |  0.08   |
+    | LS (Lstsq) | 400  |  3.91e-04  |    1.76e-02    |      1.54e-02      |  0.41   |
+    | LS (Lstsq) | 600  |  6.59e-04  |    4.48e-02    |      3.46e-02      |  1.21   |
+    | LS (Lstsq) | 800  |  7.21e-04  |    3.48e-02    |      2.64e-02      |  2.71   |
+    | LS (Lstsq) | 1000 |  5.82e-05  |    2.95e-03    |      2.07e-03      |  5.20   |
   ],
   caption: [三维线弹性特征数 $M$ 的消融实验],
 )<tb:3d-ablation>
@@ -880,7 +884,6 @@ $
   caption: [三维线弹性特征数 $M$ 的消融实验],
 )
 
-由 @tb:3d-ablation 可见，Eigh 随 $M$ 增大呈现较稳定的误差下降，而 Lstsq 虽在 $M = 200$ 到 $600$ 区间也有改善，但在 $M = 800$ 以后出现非单调回退，尤其在 $M = 1000$ 时位移与应力误差同时上升。这说明在当前三维设置下，误差水平不仅受特征数影响，也明显受代数求解稳定性影响；单纯增加特征数并不能保证 Lstsq 持续受益。
 
 == 平面应力
 

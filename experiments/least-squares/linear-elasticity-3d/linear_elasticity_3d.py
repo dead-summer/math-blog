@@ -29,7 +29,6 @@ ALGO_STYLE = {
     "LS (Lstsq)": {"color": "#264653", "marker": "s", "linestyle": "--"},
 }
 
-
 def detect_device() -> torch.device:
     """Prefer CUDA when available and stay quiet otherwise."""
 
@@ -41,6 +40,12 @@ def detect_device() -> torch.device:
 
 
 DEVICE = detect_device()
+
+VOIGT_WEIGHT = torch.tensor(
+    [1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
+    dtype=DTYPE,
+    device=DEVICE,
+)
 
 torch.manual_seed(BASE_SEED)
 if torch.cuda.is_available():
@@ -99,10 +104,9 @@ class AlgorithmResult:
     """Compact metrics for one completed algorithm."""
 
     name: str
-    r_c: float
-    r_e: float
-    rel_u: float
-    rel_sigma: float
+    u_l2_error: float
+    sigma_l2_error: float
+    div_sigma_l2_error: float
     wall_time: float
 
 
@@ -115,6 +119,7 @@ class SharedBenchmarkData:
     f_int: torch.Tensor
     x_test: torch.Tensor
     w_test: torch.Tensor
+    f_test: torch.Tensor
     u_exact_test: torch.Tensor
     sigma_exact_test: torch.Tensor
     compliance_voigt: torch.Tensor
@@ -148,8 +153,10 @@ class FeatureEvaluationData:
     compliance_voigt: torch.Tensor
     assembly_batch_size: int
     xi_s_test: torch.Tensor
+    grad_xi_s_test: torch.Tensor
     psi_u_test: torch.Tensor
     w_test: torch.Tensor
+    f_test: torch.Tensor
     u_exact_test: torch.Tensor
     sigma_exact_test: torch.Tensor
 
@@ -158,8 +165,8 @@ class FeatureEvaluationData:
 class LeastSquaresConfig:
     """Configuration for the conforming least-squares experiment."""
 
-    E: float = 1.0
-    nu: float = 0.3
+    E: float = 4.0 / 3.0
+    nu: float = 1.0 / 3.0
     gamma_s: float = 2.0
     gamma_u: float = 2.0
     M_s: int = 300
@@ -300,10 +307,10 @@ def eval_exact_displacement(x: torch.Tensor) -> torch.Tensor:
     """Evaluate the manufactured displacement field."""
 
     x1, x2, x3 = x[:, 0], x[:, 1], x[:, 2]
-    pi = math.pi
-    u1 = torch.sin(pi * x1) * torch.sin(pi * x2) * torch.sin(pi * x3)
-    u2 = torch.sin(2.0 * pi * x1) * torch.sin(pi * x2) * torch.sin(pi * x3)
-    u3 = torch.sin(pi * x1) * torch.sin(2.0 * pi * x2) * torch.sin(pi * x3)
+    bubble = x1 * (1.0 - x1) * x2 * (1.0 - x2) * x3 * (1.0 - x3)
+    u1 = 16.0 * bubble
+    u2 = 32.0 * bubble
+    u3 = 64.0 * bubble
     return torch.stack([u1, u2, u3], dim=1)
 
 
@@ -583,6 +590,7 @@ def build_shared_benchmark(
         method=sampling_method,
         seed=test_seed,
     )
+    f_test = compute_body_force(x_test, mu, lam, batch_size=body_force_batch_size)
     u_exact_test = eval_exact_displacement(x_test)
     sigma_exact_test = compute_stress_voigt(x_test, mu, lam)
     return SharedBenchmarkData(
@@ -591,6 +599,7 @@ def build_shared_benchmark(
         f_int=f_int,
         x_test=x_test,
         w_test=w_test,
+        f_test=f_test,
         u_exact_test=u_exact_test,
         sigma_exact_test=sigma_exact_test,
         compliance_voigt=compliance_voigt,
@@ -644,6 +653,12 @@ def build_feature_evaluation_data(
             feature_space.r_s,
             feature_space.gamma_s,
         ),
+        grad_xi_s_test=eval_feature_grads(
+            benchmark.x_test,
+            feature_space.a_s,
+            feature_space.r_s,
+            feature_space.gamma_s,
+        ),
         psi_u_test=eval_active_displacement_features(
             benchmark.x_test,
             feature_space.a_u,
@@ -651,6 +666,7 @@ def build_feature_evaluation_data(
             feature_space.gamma_u,
         ),
         w_test=benchmark.w_test,
+        f_test=benchmark.f_test,
         u_exact_test=benchmark.u_exact_test,
         sigma_exact_test=benchmark.sigma_exact_test,
     )
@@ -918,16 +934,18 @@ def split_solution(z: torch.Tensor, dim_s: int) -> tuple[torch.Tensor, torch.Ten
     return z[:dim_s], z[dim_s:]
 
 
-def compute_l2_errors(
+def compute_absolute_errors(
     psi_u_test: torch.Tensor,
     xi_s_test: torch.Tensor,
+    grad_xi_s_test: torch.Tensor,
     sigma_coeffs: torch.Tensor,
     displacement_coeffs: torch.Tensor,
     w_test: torch.Tensor,
+    f_test: torch.Tensor,
     u_exact: torch.Tensor,
     sigma_exact: torch.Tensor,
-) -> tuple[float, float]:
-    """Compute relative L2 errors for displacement and stress."""
+) -> tuple[float, float, float]:
+    """Compute the absolute L2 errors for displacement, stress, and divergence."""
 
     displacement_blocks = displacement_coeffs.reshape(-1, 3)
     stress_blocks = sigma_coeffs.reshape(-1, 6)
@@ -935,91 +953,30 @@ def compute_l2_errors(
     u_h = psi_u_test @ displacement_blocks
     sigma_h = xi_s_test @ stress_blocks
 
-    voigt_weight = torch.tensor(
-        [1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
-        dtype=DTYPE,
-        device=DEVICE,
+    u_l2_error = torch.sqrt((w_test * (u_h - u_exact).square().sum(dim=1)).sum())
+    sigma_l2_error = torch.sqrt(
+        (w_test * (VOIGT_WEIGHT * (sigma_h - sigma_exact).square()).sum(dim=1)).sum()
     )
 
-    u_err = torch.sqrt((w_test * (u_h - u_exact).square().sum(dim=1)).sum())
-    u_ref = torch.sqrt((w_test * u_exact.square().sum(dim=1)).sum())
-    rel_u = (u_err / u_ref).item() if u_ref > 0 else float("inf")
-
-    sigma_err = torch.sqrt(
-        (w_test * (voigt_weight * (sigma_h - sigma_exact).square()).sum(dim=1)).sum()
+    ds_dx1 = grad_xi_s_test[:, :, 0] @ stress_blocks
+    ds_dx2 = grad_xi_s_test[:, :, 1] @ stress_blocks
+    ds_dx3 = grad_xi_s_test[:, :, 2] @ stress_blocks
+    div_sigma_h = torch.stack(
+        [
+            ds_dx1[:, 0] + ds_dx2[:, 3] + ds_dx3[:, 5],
+            ds_dx1[:, 3] + ds_dx2[:, 1] + ds_dx3[:, 4],
+            ds_dx1[:, 5] + ds_dx2[:, 4] + ds_dx3[:, 2],
+        ],
+        dim=1,
     )
-    sigma_ref = torch.sqrt(
-        (w_test * (voigt_weight * sigma_exact.square()).sum(dim=1)).sum()
+    div_sigma_l2_error = torch.sqrt(
+        (w_test * (div_sigma_h + f_test).square().sum(dim=1)).sum()
     )
-    rel_sigma = (sigma_err / sigma_ref).item() if sigma_ref > 0 else float("inf")
-    return rel_u, rel_sigma
-
-
-def compute_coefficient_residual_norms(
-    data: FeatureEvaluationData,
-    sigma_coeffs: torch.Tensor,
-    displacement_coeffs: torch.Tensor,
-) -> tuple[float, float]:
-    """Evaluate least-squares residual norms on sampled interior points."""
-
-    if not torch.isfinite(sigma_coeffs).all() or not torch.isfinite(displacement_coeffs).all():
-        return float("nan"), float("nan")
-
-    stress_blocks = sigma_coeffs.reshape(-1, 6)
-    displacement_blocks = displacement_coeffs.reshape(-1, 3)
-    constitutive_sq = 0.0
-    equilibrium_sq = 0.0
-    with torch.no_grad():
-        for start in range(0, data.x_int.shape[0], data.assembly_batch_size):
-            end = min(start + data.assembly_batch_size, data.x_int.shape[0])
-            xb = data.x_int[start:end]
-            wb = data.w_int[start:end]
-            fb = data.f_int[start:end]
-
-            xi_s_batch = eval_features(xb, data.a_s, data.r_s, data.gamma_s)
-            grad_s_batch = eval_feature_grads(xb, data.a_s, data.r_s, data.gamma_s)
-            _, grad_psi_batch = eval_active_displacement_feature_data(
-                xb,
-                data.a_u,
-                data.r_u,
-                data.gamma_u,
-            )
-
-            sigma_h = xi_s_batch @ stress_blocks
-
-            du_dx1 = grad_psi_batch[:, :, 0] @ displacement_blocks
-            du_dx2 = grad_psi_batch[:, :, 1] @ displacement_blocks
-            du_dx3 = grad_psi_batch[:, :, 2] @ displacement_blocks
-            eps_h = torch.stack(
-                [
-                    du_dx1[:, 0],
-                    du_dx2[:, 1],
-                    du_dx3[:, 2],
-                    du_dx2[:, 0] + du_dx1[:, 1],
-                    du_dx3[:, 1] + du_dx2[:, 2],
-                    du_dx3[:, 0] + du_dx1[:, 2],
-                ],
-                dim=1,
-            )
-
-            ds_dx1 = grad_s_batch[:, :, 0] @ stress_blocks
-            ds_dx2 = grad_s_batch[:, :, 1] @ stress_blocks
-            ds_dx3 = grad_s_batch[:, :, 2] @ stress_blocks
-            div_sigma_h = torch.stack(
-                [
-                    ds_dx1[:, 0] + ds_dx2[:, 3] + ds_dx3[:, 5],
-                    ds_dx1[:, 3] + ds_dx2[:, 1] + ds_dx3[:, 4],
-                    ds_dx1[:, 5] + ds_dx2[:, 4] + ds_dx3[:, 2],
-                ],
-                dim=1,
-            )
-
-            r_c = sigma_h @ data.compliance_voigt.T - eps_h
-            r_e = div_sigma_h + fb
-            constitutive_sq += (wb * r_c.square().sum(dim=1)).sum().item()
-            equilibrium_sq += (wb * r_e.square().sum(dim=1)).sum().item()
-
-    return constitutive_sq**0.5, equilibrium_sq**0.5
+    return (
+        u_l2_error.item(),
+        sigma_l2_error.item(),
+        div_sigma_l2_error.item(),
+    )
 
 
 def evaluate_feature_result(
@@ -1031,26 +988,22 @@ def evaluate_feature_result(
 ) -> AlgorithmResult:
     """Evaluate one coefficient-based method and package the metrics."""
 
-    r_c, r_e = compute_coefficient_residual_norms(
-        data,
-        sigma_coeffs,
-        displacement_coeffs,
-    )
-    rel_u, rel_sigma = compute_l2_errors(
+    u_l2_error, sigma_l2_error, div_sigma_l2_error = compute_absolute_errors(
         data.psi_u_test,
         data.xi_s_test,
+        data.grad_xi_s_test,
         sigma_coeffs,
         displacement_coeffs,
         data.w_test,
+        data.f_test,
         data.u_exact_test,
         data.sigma_exact_test,
     )
     return AlgorithmResult(
         name=name,
-        r_c=r_c,
-        r_e=r_e,
-        rel_u=rel_u,
-        rel_sigma=rel_sigma,
+        u_l2_error=u_l2_error,
+        sigma_l2_error=sigma_l2_error,
+        div_sigma_l2_error=div_sigma_l2_error,
         wall_time=wall_time,
     )
 
@@ -1060,11 +1013,63 @@ def print_result_summary(result: AlgorithmResult) -> None:
 
     print(
         f"    Done in {result.wall_time:.2f}s, "
-        f"||r_c||={result.r_c:.2e}, "
-        f"||r_e||={result.r_e:.2e}, "
-        f"rel_u={result.rel_u:.2e}, "
-        f"rel_sigma={result.rel_sigma:.2e}"
+        f"u_l2_error={result.u_l2_error:.2e}, "
+        f"sigma_l2_error={result.sigma_l2_error:.2e}, "
+        f"div_sigma_l2_error={result.div_sigma_l2_error:.2e}"
     )
+
+
+def print_aligned_markdown_table(
+    title: str,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    alignments: Sequence[str],
+) -> None:
+    """Print a compact markdown-style table with content-aware widths."""
+
+    if not rows:
+        return
+    if len(headers) != len(alignments):
+        raise ValueError("headers and alignments must have the same length.")
+    if any(len(row) != len(headers) for row in rows):
+        raise ValueError("Each row must have the same number of columns as headers.")
+
+    widths = [
+        max(len(header), max(len(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    ]
+
+    def format_row(row: Sequence[str]) -> str:
+        cells: list[str] = []
+        for index, cell in enumerate(row):
+            if alignments[index] == "left":
+                cells.append(f"{cell:<{widths[index]}}")
+            elif alignments[index] == "center":
+                cells.append(f"{cell:^{widths[index]}}")
+            elif alignments[index] == "right":
+                cells.append(f"{cell:>{widths[index]}}")
+            else:
+                raise ValueError(f"Unsupported alignment: {alignments[index]}")
+        return f"| {' | '.join(cells)} |"
+
+    def format_separator() -> str:
+        cells: list[str] = []
+        for index, alignment in enumerate(alignments):
+            if alignment == "left":
+                cells.append(f":{'-' * (widths[index] + 1)}")
+            elif alignment == "center":
+                cells.append(f":{'-' * widths[index]}:")
+            elif alignment == "right":
+                cells.append(f"{'-' * (widths[index] + 1)}:")
+            else:
+                raise ValueError(f"Unsupported alignment: {alignment}")
+        return f"|{'|'.join(cells)}|"
+
+    print(f"\n=== {title} ===\n")
+    print(format_row(headers))
+    print(format_separator())
+    for row in rows:
+        print(format_row(row))
 
 
 def print_summary_table(
@@ -1076,21 +1081,29 @@ def print_summary_table(
     if not results:
         return
 
-    method_width = max(18, max(len(result.name) for result in results))
-    print(f"\n=== {title} ===\n")
-    print(
-        f"| {'Method':<{method_width}} | {'rel_u':>10} | "
-        f"{'rel_sigma':>10} | {'Time(s)':>8} |"
+    headers = (
+        "Method",
+        "u_l2_error",
+        "sigma_l2_error",
+        "div_sigma_l2_error",
+        "Time(s)",
     )
-    print(
-        f"|:{'-' * (method_width + 1)}|{'-' * 11}:|"
-        f"{'-' * 11}:|{'-' * 9}:|"
-    )
-    for result in results:
-        print(
-            f"| {result.name:<{method_width}} | {result.rel_u:>10.2e} | "
-            f"{result.rel_sigma:>10.2e} | {result.wall_time:>8.2f} |"
+    rows = [
+        (
+            result.name,
+            f"{result.u_l2_error:.2e}",
+            f"{result.sigma_l2_error:.2e}",
+            f"{result.div_sigma_l2_error:.2e}",
+            f"{result.wall_time:.2f}",
         )
+        for result in results
+    ]
+    print_aligned_markdown_table(
+        title=title,
+        headers=headers,
+        rows=rows,
+        alignments=("left", "center", "center", "center", "center"),
+    )
 
 
 def configure_plotting() -> None:
@@ -1104,19 +1117,20 @@ def plot_l2_summary(
     results: Sequence[AlgorithmResult],
     save_path: str,
 ) -> None:
-    """Plot final relative L2 errors as bar charts."""
+    """Plot the final absolute error metrics as bar charts."""
 
     if not results:
         print(f"  Skipped: {save_path} (no results to plot)")
         return
 
     configure_plotting()
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
     titles = [
-        r"Displacement $\|\Phi^u - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
-        r"Stress $\|\Phi^\sigma - \sigma_{ex}\|_{L^2} / \|\sigma_{ex}\|_{L^2}$",
+        r"$\|\Phi^u - u_{ex}\|_{L^2}$",
+        r"$\|\Phi^{\sigma} - \sigma_{ex}\|_{L^2}$",
+        r"$\|\operatorname{div}(\Phi^{\sigma} - \sigma_{ex})\|_{L^2}$",
     ]
-    keys = ["rel_u", "rel_sigma"]
+    keys = ["u_l2_error", "sigma_l2_error", "div_sigma_l2_error"]
     labels = [result.name for result in results]
     x_positions = np.arange(len(results), dtype=float)
     colors = [
@@ -1141,7 +1155,7 @@ def plot_l2_summary(
             print(f"  Skipped {labels[index]} {key}={values[index]!r} in {save_path}")
 
         ax.set_yscale("log")
-        ax.set_ylabel("Relative $L^2$ error")
+        ax.set_ylabel("$L^2$ error")
         ax.set_title(title)
         ax.set_xticks(x_positions)
         ax.set_xticklabels(labels, rotation=20, ha="right")

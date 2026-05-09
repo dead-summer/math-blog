@@ -22,6 +22,7 @@ from linear_elasticity_3d import (
     build_shared_feature_space,
     clear_cuda_cache,
     configure_plotting,
+    print_aligned_markdown_table,
     run_experiment,
     validate_algorithm_selection,
 )
@@ -117,35 +118,38 @@ def print_ablation_summary_table(
     if not ordered_records:
         return
 
-    method_width = max(
-        18,
-        max(len(record.algorithm_name) for record in ordered_records),
+    headers = (
+        "Method",
+        "M",
+        "u_l2_error",
+        "sigma_l2_error",
+        "div_sigma_l2_error",
+        "Time(s)",
     )
-
-    print("\n=== M Ablation Summary ===\n")
-    print(
-        f"| {'Method':<{method_width}} | {'M':>6} | "
-        f"{'rel_u':>10} | {'rel_sigma':>10} | {'Time(s)':>8} |"
-    )
-    print(
-        f"|:{'-' * (method_width + 1)}|{'-' * 7}:|"
-        f"{'-' * 11}:|{'-' * 11}:|{'-' * 9}:|"
-    )
-    for record in ordered_records:
-        result = record.result
-        print(
-            f"| {record.algorithm_name:<{method_width}} | {record.M:>6} | "
-            f"{result.rel_u:>10.2e} | {result.rel_sigma:>10.2e} | "
-            f"{result.wall_time:>8.2f} |"
+    rows = [
+        (
+            record.algorithm_name,
+            str(record.M),
+            f"{record.result.u_l2_error:.2e}",
+            f"{record.result.sigma_l2_error:.2e}",
+            f"{record.result.div_sigma_l2_error:.2e}",
+            f"{record.result.wall_time:.2f}",
         )
-
+        for record in ordered_records
+    ]
+    print_aligned_markdown_table(
+        title="M Ablation Summary",
+        headers=headers,
+        rows=rows,
+        alignments=("left", "center", "center", "center", "center", "center"),
+    )
 
 def plot_ablation_M(
     results: dict[int, dict[str, AlgorithmResult]],
     algorithm_ids: list[str],
     save_path: str,
 ) -> None:
-    """Plot relative L2 error versus M for each configured solver."""
+    """Plot absolute L2 error versus M for each configured solver."""
 
     if not results:
         print(f"  Skipped: {save_path} (no results to plot)")
@@ -156,17 +160,22 @@ def plot_ablation_M(
     x_positions = np.arange(len(M_list), dtype=float)
 
     fig_width = max(10.0, 1.6 * len(M_list))
-    fig, axes = plt.subplots(1, 2, figsize=(fig_width, 4.8))
+    fig, axes = plt.subplots(1, 3, figsize=(max(13.5, 2.2 * len(M_list)), 4.8))
     metric_specs = [
         (
-            "rel_u",
-            r"Displacement $\|\Phi^u - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
-            "Relative $L^2$ error",
+            "u_l2_error",
+            r"Displacement $\|u - u_h\|_{L^2}$",
+            "$L^2$ error",
         ),
         (
-            "rel_sigma",
-            r"Stress $\|\Phi^\sigma - \sigma_{ex}\|_{L^2} / \|\sigma_{ex}\|_{L^2}$",
-            "Relative $L^2$ error",
+            "sigma_l2_error",
+            r"Stress $\|\sigma - \sigma_h\|_{L^2}$",
+            "$L^2$ error",
+        ),
+        (
+            "div_sigma_l2_error",
+            r"Divergence $\|\operatorname{div}(\sigma - \sigma_h)\|_{L^2}$",
+            "$L^2$ error",
         ),
     ]
 
