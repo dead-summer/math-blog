@@ -33,8 +33,9 @@ ABLATION_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_ABLATION_M_LIST = [200, 400, 600, 800, 1000]
 ALGORITHM_LABELS = {
-    "eigh": "LS (Eigh)",
     "lstsq": "LS (Lstsq)",
+    "tsvd": "LS (TSVD)",
+    "ridge": "LS (Ridge)",
 }
 
 
@@ -121,9 +122,9 @@ def print_ablation_summary_table(
     headers = (
         "Method",
         "M",
-        "u_l2_error",
-        "sigma_l2_error",
-        "div_sigma_l2_error",
+        "‖Φ^u-u‖",
+        "‖Φ^σ-σ‖",
+        "‖div(Φ^σ-σ)‖",
         "Time(s)",
     )
     rows = [
@@ -164,17 +165,17 @@ def plot_ablation_M(
     metric_specs = [
         (
             "u_l2_error",
-            r"Displacement $\|u - u_h\|_{L^2}$",
+            r"$\|\Phi^u - u_{ex}\|_0$",
             "$L^2$ error",
         ),
         (
             "sigma_l2_error",
-            r"Stress $\|\sigma - \sigma_h\|_{L^2}$",
+            r"$\|\Phi^{\sigma} - \sigma_{ex}\|_0$",
             "$L^2$ error",
         ),
         (
             "div_sigma_l2_error",
-            r"Divergence $\|\operatorname{div}(\sigma - \sigma_h)\|_{L^2}$",
+            r"$\|\operatorname{div}(\Phi^{\sigma} - \sigma_{ex})\|_0$",
             "$L^2$ error",
         ),
     ]

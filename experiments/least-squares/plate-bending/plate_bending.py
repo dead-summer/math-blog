@@ -20,13 +20,14 @@ MOMENT_SEED = BASE_SEED
 DEFLECTION_SEED = BASE_SEED + 1_000
 DTYPE = torch.float64
 VALID_SAMPLING_METHODS = ("mc", "sobol", "gauss_legendre")
-VALID_ALGORITHMS = ("eigh", "lstsq")
+VALID_ALGORITHMS = ("lstsq", "tsvd", "ridge")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "least-squares" / "plate-bending"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 ALGO_STYLE = {
-    "LS (Eigh)": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
     "LS (Lstsq)": {"color": "#264653", "marker": "s", "linestyle": "--"},
+    "LS (TSVD)": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
+    "LS (Ridge)": {"color": "#E76F51", "marker": "D", "linestyle": "-."},
 }
 
 
@@ -127,12 +128,14 @@ class LeastSquaresConfig:
     Q_train: int = (2 ** 8) ** 2
     Q_test: int = (2 ** 7) ** 2
     sampling_method: str = "sobol"
-    eigh_rtol: float = 1.0e-15
+    tsvd_tau_rel: float = 1.0e-15
+    ridge_alpha_rel: float = 1.0e-15
     assembly_batch_size: int = 5_000
     algorithms_to_run: list[str] = field(
         default_factory=lambda: [
-            "eigh",
             "lstsq",
+            "tsvd",
+            "ridge",
         ]
     )
 
@@ -219,8 +222,10 @@ def validate_config(cfg: LeastSquaresConfig) -> None:
         raise ValueError("Config.Q_train must be positive.")
     if cfg.Q_test <= 0:
         raise ValueError("Config.Q_test must be positive.")
-    if not math.isfinite(cfg.eigh_rtol) or cfg.eigh_rtol < 0.0:
-        raise ValueError("Config.eigh_rtol must be finite and non-negative.")
+    if not math.isfinite(cfg.tsvd_tau_rel) or cfg.tsvd_tau_rel < 0.0:
+        raise ValueError("Config.tsvd_tau_rel must be finite and non-negative.")
+    if not math.isfinite(cfg.ridge_alpha_rel) or cfg.ridge_alpha_rel <= 0.0:
+        raise ValueError("Config.ridge_alpha_rel must be finite and positive.")
     if cfg.assembly_batch_size <= 0:
         raise ValueError("Config.assembly_batch_size must be positive.")
     validate_sampling_method(cfg.sampling_method)
@@ -836,14 +841,14 @@ def solve_lstsq(G: torch.Tensor, F: torch.Tensor) -> tuple[torch.Tensor, float]:
     return sol, time.perf_counter() - t0
 
 
-def solve_eigh(G: torch.Tensor, F: torch.Tensor, rtol: float) -> tuple[torch.Tensor, float]:
-    """Solve the linear system with truncated eigen decomposition."""
+def solve_tsvd(G: torch.Tensor, F: torch.Tensor, tau_rel: float) -> tuple[torch.Tensor, float]:
+    """Solve the linear system with relative TSVD threshold tau_TSVD."""
 
     synchronize_device()
     t0 = time.perf_counter()
     try:
         eigvals, eigvecs = torch.linalg.eigh(G)
-        threshold = rtol * eigvals.abs().max()
+        threshold = tau_rel * eigvals.abs().max()
         keep = eigvals > threshold
         if not keep.any():
             raise RuntimeError("all eigenvalues were truncated")
@@ -854,12 +859,42 @@ def solve_eigh(G: torch.Tensor, F: torch.Tensor, rtol: float) -> tuple[torch.Ten
         if not torch.isfinite(sol).all():
             raise RuntimeError("non-finite solution")
         print(
-            f"    eigh truncation: kept {int(keep.sum().item())}/{eigvals.numel()} "
-            f"eigenvalues, threshold={threshold.item():.2e}"
+            f"    tsvd truncation: kept {int(keep.sum().item())}/{eigvals.numel()} "
+            f"eigenvalues, tau_TSVD={tau_rel:.2e}, threshold={threshold.item():.2e}"
         )
     except (RuntimeError, torch.linalg.LinAlgError) as exc:
         sol = torch.full((G.shape[0],), float("nan"), dtype=DTYPE, device=DEVICE)
         print(f"    Warning: torch.linalg.eigh failed with {type(exc).__name__}")
+
+    synchronize_device()
+    return sol, time.perf_counter() - t0
+
+
+def solve_ridge(G: torch.Tensor, F: torch.Tensor, alpha_Ridge: float) -> tuple[torch.Tensor, float]:
+    """Solve the standard Tikhonov/ridge system with alpha_Ridge."""
+
+    synchronize_device()
+    t0 = time.perf_counter()
+    try:
+        spectral_scale = torch.linalg.eigvalsh(G).abs().max()
+        alpha = alpha_Ridge * spectral_scale
+        if not torch.isfinite(spectral_scale) or spectral_scale <= 0.0:
+            raise RuntimeError("invalid spectral scale")
+        if not torch.isfinite(alpha) or alpha <= 0.0:
+            raise RuntimeError("invalid ridge strength")
+
+        ridge_matrix = G + alpha * torch.eye(G.shape[0], dtype=DTYPE, device=DEVICE)
+        # sol = torch.linalg.solve(ridge_matrix, F)
+        sol = torch.linalg.lstsq(ridge_matrix, F.unsqueeze(1)).solution.squeeze(1)
+        if not torch.isfinite(sol).all():
+            raise RuntimeError("non-finite solution")
+        print(
+            f"    ridge shift: alpha_Ridge={alpha_Ridge:.2e}, "
+            f"alpha={alpha.item():.2e}, scale={spectral_scale.item():.2e}"
+        )
+    except (RuntimeError, torch.linalg.LinAlgError) as exc:
+        sol = torch.full((G.shape[0],), float("nan"), dtype=DTYPE, device=DEVICE)
+        print(f"    Warning: torch.linalg.solve failed with {type(exc).__name__}")
 
     synchronize_device()
     return sol, time.perf_counter() - t0
@@ -1086,12 +1121,23 @@ def run_algorithm(
 ) -> AlgorithmResult:
     """Run one configured least-squares algorithm and evaluate it."""
 
-    if algorithm_id == "eigh":
-        print("Running LS (Eigh)...")
-        z, wall_time = solve_eigh(data.G, data.F, cfg.eigh_rtol)
+    if algorithm_id == "tsvd":
+        print("Running LS (TSVD)...")
+        z, wall_time = solve_tsvd(data.G, data.F, cfg.tsvd_tau_rel)
         moment_coeffs, deflection_coeffs = split_solution(z, data.dim_m)
         result = evaluate_feature_result(
-            "LS (Eigh)",
+            "LS (TSVD)",
+            wall_time,
+            moment_coeffs,
+            deflection_coeffs,
+            data.eval_data,
+        )
+    elif algorithm_id == "ridge":
+        print("Running LS (Ridge)...")
+        z, wall_time = solve_ridge(data.G, data.F, cfg.ridge_alpha_rel)
+        moment_coeffs, deflection_coeffs = split_solution(z, data.dim_m)
+        result = evaluate_feature_result(
+            "LS (Ridge)",
             wall_time,
             moment_coeffs,
             deflection_coeffs,
@@ -1135,7 +1181,9 @@ def run_experiment(
         f"Config: h={cfg.h}, M_m={cfg.M_m}, M_u={cfg.M_u}, "
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
         f"gamma_m={cfg.gamma_m}, gamma_u={cfg.gamma_u}, "
-        f"eigh_rtol={cfg.eigh_rtol:.2e}, sampling={cfg.sampling_method}"
+        f"tsvd_tau_rel={cfg.tsvd_tau_rel:.2e}, "
+        f"ridge_alpha_rel={cfg.ridge_alpha_rel:.2e}, "
+        f"sampling={cfg.sampling_method}"
     )
     print(f"Algorithms: {selected_algorithm_ids}")
 

@@ -33,8 +33,9 @@ ABLATION_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_ABLATION_M_LIST = [200, 400, 600, 800, 1000]
 ALGORITHM_LABELS = {
-    "eigh": "LS (Eigh)",
     "lstsq": "LS (Lstsq)",
+    "tsvd": "LS (TSVD)",
+    "ridge": "LS (Ridge)",
 }
 
 
