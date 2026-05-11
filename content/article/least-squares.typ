@@ -754,8 +754,6 @@ $
   )[
     | 参数 | 设置 |
     |---|---|
-    | 杨氏模量 | $E = 4/3$ |
-    | 泊松比 | $nu = 1/3$ |
     | 数据类型 | `torch.float64` |
     | 激活函数 | $tanh$ |
     | 采样方式 | Sobol 采样 |
@@ -781,6 +779,8 @@ $
     | 项目         | 具体说明 |
     |-------------|---------|
     | 算例名称     | 三维线弹性 |
+    | 杨氏模量 | $E = 4/3$ |
+    | 泊松比 | $nu = 1/3$ |
     | 计算区域     | $[0, 1]^3$ |
     | 形状参数     | $gamma = 2.0$ |
     | 超平面法向量  | $bold(X) tilde.op cal(N)(0, bold(I)_3)$ |
@@ -791,7 +791,7 @@ $
   caption: [三维线弹性实验设置],
 )
 
-参考 @hu2015family 中精确解，设
+参考 @hu2015tetrahedral 中精确解，设
 $
   bold(u)_"ex" (x)
   =
@@ -801,7 +801,13 @@ $
     2^6 x_1 (1 - x_1) x_2 (1 - x_2) x_3 (1 - x_3)
   ).
 $
-由于公共因子 $x_1 (1 - x_1) x_2 (1 - x_2) x_3 (1 - x_3)$ 在边界上为零，故该制造解满足 $bold(u)_"ex" = 0$ 于 $partial Omega$。精确应力 $bold(sigma)_"ex"$ 由各向同性本构关系计算，体力由
+这里取 $E = 4/3$、$nu = 1/3$，则 Lamé 参数
+$
+  mu = E / (2 (1 + nu)) = 1/2,
+  quad
+  lambda = (E nu) / (1 - nu^2) = 1,
+$
+与文献中的三维线弹性系数一致。由于公共因子 $x_1 (1 - x_1) x_2 (1 - x_2) x_3 (1 - x_3)$ 在边界上为零，故该制造解满足 $bold(u)_"ex" = 0$ 于 $partial Omega$。精确应力 $bold(sigma)_"ex"$ 由各向同性本构关系计算，体力由
 $
   bold(f)_"ex" = - nabla dot bold(sigma)(bold(u)_"ex")
 $
@@ -809,22 +815,22 @@ $
 
 对三维线弹性，位移误差定义为
 $
-  norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2(Omega))
+  norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
   := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(bold(Phi)^bold(u) (bold(x)_p) - bold(u)_"ex" (bold(x)_p))_2^2),
 $
 而在 Voigt 顺序 $(11, 22, 33, 12, 23, 13)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 1, 2, 2, 2)^T$，并定义
 $
-  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2(Omega))
+  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
   := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^6 w^"V"_alpha ((bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha)^2).
 $
 散度误差定义为
 $
-  norm(div(bold(Phi)^bold(u) - bold(u)_"ex"))_(L^2(Omega))
+  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
   := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_2^2).
 $
 由于精确解满足 $nabla dot bold(sigma)_"ex" + bold(f)_"ex" = 0$，故计算时可等价写为
 $
-  norm(div(bold(Phi)^bold(u) - bold(u)_"ex"))_(L^2(Omega))
+  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
   = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_2^2).
 $
 
@@ -835,23 +841,25 @@ $
 #figure(
   three-line-table(
     columns: 5,
-    align: (left, center, center, center, right),
+    align: (left, center, center, center, center),
   )[
-    | 方法 | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2)$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2)$ | $norm(div(bold(Phi)^bold(u) - bold(u)_"ex"))_(L^2)$ | DOF |
+    | 方法 | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | $norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0$ | DOF |
     |:-----------|:----------:|:--------------:|:------------------:|:-------:|
     | Hu--Zhang (1) |   6.13e-02 |   1.99e-01 |       1.47e-00      |  1215   |
     | Hu--Zhang (2) |   7.15e-03 |   8.05e-03 |       9.20e-02      |  8472   |
     | Hu--Zhang (3) |   4.91e-04 |   2.91e-04 |       5.75e-03      |  63666  |
-    | LS (Eigh)  |  2.03e-04  |    1.13e-02    |      1.77e-02      |  2709   |
-    | LS (Lstsq) |  5.99e-04  |    3.41e-02    |      2.29e-02      |  2709   |
+    | LS (Eigh)  |  5.78e-05  |    3.70e-03    |      7.67e-03      |  2709   |
+    | LS (Lstsq) |  5.86e-05  |    3.71e-03    |      7.67e-03      |  2709   |
   ],
   caption: [三维线弹性主实验结果（$M = 300$）],
 )<tb:3d-main>
 
-#figure(
-  image("/public/images/least-squares/linear-elasticity-3d/l2-error-summary.png"),
-  caption: [三维线弹性主实验结果（$M = 300$）],
-)
+表中 Hu--Zhang (1)--(3) 取自 @hu2015tetrahedral 的 Hu-Zhang 有限元结果，数字代表网格细化等级。
+
+// #figure(
+//   image("/public/images/least-squares/linear-elasticity-3d/l2-error-summary.png"),
+//   caption: [三维线弹性主实验结果（$M = 300$）],
+// )
 
 
 === 特征数消融
@@ -861,20 +869,20 @@ $
 #figure(
   three-line-table(
     columns: 6,
-    align: (left, right, right, right, right, right),
+    align: (left, center, center, center, center, center),
   )[
-    | 方法 | $M$ | $E_bold(u)$ | $E_bold(sigma)$ | $E_"div"$ | Time(s) |
-    |:-------------------|-------:|-------------:|------------------:|-----------:|--------:|
-    | LS (Eigh)  | 200  |  6.49e-04  |    3.49e-02    |      4.97e-02      |  0.31   |
-    | LS (Eigh)  | 400  |  1.02e-04  |    5.98e-03    |      1.02e-02      |  1.32   |
-    | LS (Eigh)  | 600  |  4.17e-05  |    2.57e-03    |      3.47e-03      |  3.56   |
-    | LS (Eigh)  | 800  |  1.76e-05  |    1.18e-03    |      1.71e-03      |  8.31   |
-    | LS (Eigh)  | 1000 |  1.46e-05  |    9.02e-04    |      1.03e-03      |  15.10  |
-    | LS (Lstsq) | 200  |  5.79e-04  |    3.26e-02    |      4.89e-02      |  0.08   |
-    | LS (Lstsq) | 400  |  3.91e-04  |    1.76e-02    |      1.54e-02      |  0.41   |
-    | LS (Lstsq) | 600  |  6.59e-04  |    4.48e-02    |      3.46e-02      |  1.21   |
-    | LS (Lstsq) | 800  |  7.21e-04  |    3.48e-02    |      2.64e-02      |  2.71   |
-    | LS (Lstsq) | 1000 |  5.82e-05  |    2.95e-03    |      2.07e-03      |  5.20   |
+    | 方法 | $M$ | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | $norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0$ | Time(s) |
+    |:-----------|:----:|:---------:|:---------:|:--------------:|:-------:|
+    | LS (Eigh)  | 200  | 4.05e-04  | 2.27e-02  |    3.86e-02    |  0.44   |
+    | LS (Eigh)  | 400  | 2.23e-05  | 1.51e-03  |    2.51e-03    |  1.44   |
+    | LS (Eigh)  | 600  | 7.18e-06  | 4.65e-04  |    7.40e-04    |  4.05   |
+    | LS (Eigh)  | 800  | 3.78e-06  | 2.41e-04  |    3.09e-04    |  8.65   |
+    | LS (Eigh)  | 1000 | 3.00e-06  | 1.70e-04  |    1.99e-04    |  16.22  |
+    | LS (Lstsq) | 200  | 4.06e-04  | 2.27e-02  |    3.86e-02    |  0.09   |
+    | LS (Lstsq) | 400  | 2.15e-05  | 1.47e-03  |    2.50e-03    |  0.44   |
+    | LS (Lstsq) | 600  | 3.97e-06  | 3.12e-04  |    6.11e-04    |  1.31   |
+    | LS (Lstsq) | 800  | 6.78e-05  | 3.14e-03  |    1.47e-03    |  2.86   |
+    | LS (Lstsq) | 1000 | 3.00e-05  | 1.43e-03  |    9.49e-04    |  5.51   |
   ],
   caption: [三维线弹性特征数 $M$ 的消融实验],
 )<tb:3d-ablation>
@@ -897,6 +905,8 @@ $
     | 项目         | 具体说明 |
     |:-------------|:---------|
     | 算例名称     | 平面应力 |
+    | 杨氏模量 | $E = 3/2$ |
+    | 泊松比 | $nu = 1/2$ |
     | 计算区域     | $[0, 1]^2$ |
     | 形状参数     | $gamma = 3.0$ |
     | 超平面法向量  | $bold(X) tilde.op cal(N)(0, bold(I)_2)$ |
@@ -907,38 +917,46 @@ $
   caption: [平面应力实验设置],
 )
 
-制造解取为面内位移场
+参考 @hu2014triangle 中的二维制造解，取面内位移场
 $
   bold(u)_"ex" (x)
   =
   mat(
-    sin(pi x_1) sin(pi x_2);
-    sin(2 pi x_1) sin(pi x_2)
+    e^(x_1 - x_2) x_1 (1 - x_1) x_2 (1 - x_2);
+    sin(pi x_1) sin(pi x_2)
   ).
 $
-同样地，该制造解在边界上满足 $bold(u)_"ex" = 0$。精确应力 $bold(sigma)_"ex"$ 由平面应力本构计算，体力仍由
+这里取 $E = 3/2$、$nu = 1/2$，则平面应力的有效参数满足
+$
+  mu = E / (2 (1 + nu)) = 1/2,
+  quad
+  lambda = (E nu) / (1 - nu^2) = 1,
+$
+与文献中的二维线弹性系数一致。同样地，该制造解在边界上满足 $bold(u)_"ex" = 0$。精确应力 $bold(sigma)_"ex"$ 由平面应力本构计算，体力仍由
 $
   bold(f)_"ex" = - nabla dot bold(sigma)(bold(u)_"ex")
 $
 自动生成，因此可直接用来评估位移与应力误差。
 
-对平面应力，仍使用同样的位移误差定义：
+对平面应力，位移误差定义为
 $
-  e_bold(u)
-  :=
-  frac(
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(bold(Phi)^bold(u) (bold(x)_p) - bold(u)_"ex" (bold(x)_p))_2^2),
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(bold(u)_"ex" (bold(x)_p))_2^2)
-  ),
+  norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(bold(Phi)^bold(u) (bold(x)_p) - bold(u)_"ex" (bold(x)_p))_2^2),
 $
 而在 Voigt 顺序 $(11, 22, 12)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 2)^T$：
 $
-  e_bold(sigma)
-  :=
-  frac(
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^3 w^"V"_alpha ((bold(Phi)^bold(sigma) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha)^2),
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^3 w^"V"_alpha ((bold(sigma)_"ex" (bold(x)_p))_alpha)^2)
-  ).
+  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^3 w^"V"_alpha ((bold(Phi)^bold(sigma) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha)^2).
+$
+散度误差定义为
+$
+  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_2^2).
+$
+由于精确解满足 $nabla dot bold(sigma)_"ex" + bold(f)_"ex" = 0$，故计算时可等价写为
+$
+  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
+  = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_2^2).
 $
 
 === 实验结果
@@ -947,23 +965,26 @@ $
 
 #figure(
   three-line-table(
-    columns: 4,
-    align: (left, right, right, right),
+    columns: 5,
+    align: (left, center, center, center, center),
   )[
-    | 方法 | $e_bold(u)$ | $e_bold(sigma)$ | Time(s) |
-    |:-----|---------:|---------:|--------:|
-    | LS (Eigh)          |   8.27e-06 |   8.58e-05 |     0.23 |
-    | LS (Lstsq)         |   3.69e-05 |   4.43e-04 |     0.05 |
+    | 方法 | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | $norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0$ | DOF |
+    |:-----------|:----------:|:--------------:|:------------------:|:-------:|
+    | Hu--Zhang (1) |   2.46e-03 |   1.07e-02 |       1.32e-01      |   971   |
+    | Hu--Zhang (2) |   2.85e-04 |   6.98e-04 |       1.68e-02      |  3763   |
+    | Hu--Zhang (3) |   3.50e-05 |   4.42e-05 |       2.12e-03      | 14819   |
+    | LS (Eigh)     |   1.69e-06 |   1.22e-04 |       1.74e-04      |  1505   |
+    | LS (Lstsq)    |   3.06e-03 |   4.90e-02 |       3.67e-02      |  1505   |
   ],
   caption: [平面应力主实验结果（$M = 300$）],
 )<tb:ps-main>
 
-#figure(
-  image("/public/images/least-squares/plane-stress/l2-error-summary.png"),
-  caption: [平面应力主实验结果（$M = 300$）],
-)
+// #figure(
+//   image("/public/images/least-squares/plane-stress/l2-error-summary.png"),
+//   caption: [平面应力主实验结果（$M = 300$）],
+// )
 
-由 @tb:ps-main 可见，在当前平面应力算例中，两种求解器都已达到较小的相对误差，说明该二维制造解在现有离散设置下并不难逼近。Eigh 仍在位移和应力指标上保持更低误差。
+表中 Hu--Zhang (1)--(3) 取自 @hu2014triangle 的 Hu-Zhang 有限元结果，数字代表网格细化等级。由 @tb:ps-main 可见，在当前平面应力算例中，LS (Eigh) 以 $1505$ 个自由度便把三项绝对误差降到了 $10^(-6)$、$10^(-4)$ 与 $10^(-4)$ 量级，整体上已优于表中的三个 Hu--Zhang 参考层级。相比之下，LS (Lstsq) 在同一离散维数下出现明显退化：其位移误差与 Hu--Zhang (1) 接近，但应力与散度指标都显著更大。这说明在当前制造解与参数设置下，对称正定结构配合谱截断的 Eigh 版本更能稳定释放随机特征离散的逼近能力。
 
 === 特征数消融
 
@@ -971,21 +992,21 @@ $
 
 #figure(
   three-line-table(
-    columns: 5,
-    align: (left, right, right, right, right),
+    columns: 6,
+    align: (left, center, center, center, center, center),
   )[
-    | 方法 | $M$ | $e_bold(u)$ | $e_bold(sigma)$ |  Time(s) |
-    |:-------------------|-------:|-----------:|-----------:|---------:|
-    | LS (Eigh)          |    200 |   1.90e-05 |   1.95e-04 |     0.18 |
-    | LS (Eigh)          |    400 |   3.64e-06 |   2.95e-05 |     0.23 |
-    | LS (Eigh)          |    600 |   1.81e-06 |   1.54e-05 |     0.73 |
-    | LS (Eigh)          |    800 |   1.70e-06 |   1.58e-05 |     1.74 |
-    | LS (Eigh)          |   1000 |   1.33e-06 |   1.15e-05 |     3.00 |
-    | LS (Lstsq)         |    200 |   2.07e-04 |   2.85e-03 |     0.02 |
-    | LS (Lstsq)         |    400 |   7.89e-05 |   7.47e-04 |     0.09 |
-    | LS (Lstsq)         |    600 |   2.46e-05 |   1.80e-04 |     0.25 |
-    | LS (Lstsq)         |    800 |   3.62e-05 |   2.66e-04 |     0.54 |
-    | LS (Lstsq)         |   1000 |   7.54e-05 |   6.04e-04 |     0.99 |
+    | 方法 | $M$ | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | $norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0$ | Time(s) |
+    |:-----------|:----:|:---------:|:---------:|:--------------:|:-------:|
+    | LS (Eigh)  | 200  | 5.84e-06  | 4.57e-04  |    7.51e-04    |  0.08   |
+    | LS (Eigh)  | 400  | 5.00e-07  | 3.58e-05  |    4.97e-05    |  0.25   |
+    | LS (Eigh)  | 600  | 2.74e-07  | 2.13e-05  |    3.72e-05    |  1.18   |
+    | LS (Eigh)  | 800  | 3.11e-07  | 1.86e-05  |    2.65e-05    |  2.72   |
+    | LS (Eigh)  | 1000 | 2.14e-07  | 1.55e-05  |    1.90e-05    |  6.59   |
+    | LS (Lstsq) | 200  | 6.60e-03  | 1.18e-01  |    9.13e-02    |  0.03   |
+    | LS (Lstsq) | 400  | 7.22e-03  | 1.00e-01  |    5.54e-02    |  0.08   |
+    | LS (Lstsq) | 600  | 1.19e-02  | 1.15e-01  |    1.12e-01    |  0.24   |
+    | LS (Lstsq) | 800  | 6.42e-03  | 1.07e-01  |    7.86e-02    |  0.44   |
+    | LS (Lstsq) | 1000 | 7.48e-03  | 8.65e-02  |    5.70e-02    |  0.86   |
   ],
   caption: [平面应力特征数消融实验],
 )<tb:ps-ablation>
@@ -995,7 +1016,7 @@ $
   caption: [平面应力特征数消融实验],
 )
 
-由 @tb:ps-ablation 可见，Eigh 的误差随 $M$ 增大整体下降，并在 $M >= 600$ 后进入边际收益减弱的区间；Lstsq 在 $M = 200$ 到 $600$ 间下降明显，但之后同样出现非单调波动。结合两组结果可以看出，平面应力问题对特征数的需求相对温和，当 $M$ 达到中等规模后，两种方法都已进入较小误差区间。若追求更可预期的精度表现，Eigh 仍更稳健。
+由 @tb:ps-ablation 可见，Eigh 在 $M = 200$ 到 $400$ 间误差下降最明显，之后继续增大 $M$ 仍有收益，但已进入边际改进逐步减弱的区间；其中位移误差基本维持在 $10^(-7)$ 量级，而应力与散度误差稳定落在 $10^(-5)$ 量级。Lstsq 则没有表现出随 $M$ 增大而稳定收敛的趋势：三项误差始终停留在 $10^(-2)$ 到 $10^(-1)$ 量级，并伴随明显波动。结合主实验与消融结果可以看出，在当前平面应力制造解下，Eigh 不仅精度更高，而且对特征数变化的响应也更可预测。
 
 == 板弯曲
 
