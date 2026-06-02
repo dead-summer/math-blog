@@ -16,7 +16,7 @@
 
 在固定随机特征方法中，隐藏层参数首先随机生成并冻结，随后仅对输出层系数求解。这样一来，偏微分方程的近似被转化为有限维线性代数问题。对于弹性问题而言，混合表示尤其自然：本构关系与平衡关系可以被显式分离，应力、弯矩等辅助变量也可以被独立近似。
 
-本文的核心不是把弹性问题方程组本身作为主要对象，而是面向一类弹性问题构造混合最小二乘泛函，并由其一阶最优性条件得到对应的变分问题，进而建立固定随机特征离散方法。在这一框架下，离散设计的关键是按照连续模型的自然空间构造保形试探空间，并通过包络函数硬编码齐次边界条件。连续稳定性、离散稳定性以及准最优误差估计为该离散构造提供理论支撑；在线弹性、平面应力与 Kirchhoff-Love 板弯曲三个算例中的数值实验则用于检验这一方法在不同模型下的实际表现。
+本文的核心不是把弹性问题方程组本身作为主要对象，而是面向一类弹性问题构造混合最小二乘泛函，并由其一阶最优性条件得到对应的变分问题，进而建立固定随机特征离散方法。在这一框架下，离散设计的关键是按照连续模型的自然空间构造保形试探空间，并通过包络函数强制施加齐次边界条件。连续稳定性、离散稳定性以及准最优误差估计为该离散构造提供理论支撑；在线弹性、平面应力与 Kirchhoff-Love 板弯曲三个算例中的数值实验则用于检验这一方法在不同模型下的实际表现。
 
 = 二阶线弹性模型
 
@@ -37,8 +37,9 @@ $
   c_A norm(bold(tau))_(L^2(Omega))^2
   <= integral_Omega (bold(cal(A)) : bold(tau)) : bold(tau) dif x
   <= C_A norm(bold(tau))_(L^2(Omega))^2,
-  quad forall bold(tau) (L^2(Omega))^(d times d) inter SS^d.
+  quad forall bold(tau) in (L^2(Omega))^(d times d) inter SS^d.
 $
+这里 $bold(cal(A))$ 可视为四阶张量；$bold(cal(A)) : bold(tau)$ 表示它对二阶对称张量 $bold(tau)$ 的双重缩并，结果仍为二阶对称张量。
 定义
 $
   bold(Sigma) := bold(H)(div, Omega; SS^d),
@@ -48,7 +49,7 @@ $
 
 == 最小二乘泛函与变分
 
-定义二阶模型的最小二乘泛函
+定义二阶线弹性的最小二乘泛函
 $
   cal(J) ((bold(tau), bold(v)); bold(f))
   := norm(bold(cal(A)) : bold(tau) - bold(epsilon)(bold(v)))_(L^2(Omega))^2
@@ -67,12 +68,12 @@ $
   := - (bold(f), nabla dot bold(tau))_(L^2(Omega)).
 $
 
-可以证明，线弹性方程组、最小二乘泛函极小化与变分问题等价。
+可以证明：当连续强形式解在上述空间中存在时，线弹性方程组、最小二乘泛函极小化与变分问题三者等价。
 
-#theorem[
-  在空间 $bold(Sigma) times bold(U)$ 上，下列三个问题彼此等价：
+#theorem(title: [二阶线弹性强形式、最小二乘极小化与变分问题的等价性])[
+  若二阶线弹性的强形式在 $bold(Sigma) times bold(U)$ 中解存在，则下列三个问题彼此等价：
 
-  1. 二阶线弹性方程组；
+  1. 二阶线弹性的强形式；
   2. 最小化 $cal(J)$；
   3. 求 $(bold(sigma), bold(u)) in bold(Sigma) times bold(U)$，使得
     $
@@ -83,29 +84,84 @@ $
 ]
 
 #proof[
-  若 $(bold(sigma), bold(u))$ 满足强形式，则两个残差都为零，从而 $cal(J) ((bold(sigma), bold(u)); bold(f)) = 0$，因此它必是全局极小点。
+  先证强形式与最小二乘极小化等价。若 $(bold(sigma), bold(u))$ 满足强形式，则两个残差都为零，从而
+  $
+    cal(J) ((bold(sigma), bold(u)); bold(f)) = 0.
+  $
+  由于 $cal(J)$ 是两个 $L^2$ 范数平方之和，必有 $cal(J) >= 0$，因此该解是全局极小点。
 
-  反之，若 $cal(J) ((bold(sigma), bold(u)); bold(f)) = 0$，则
+  另一方面，假设二阶线弹性方程组在 $bold(Sigma) times bold(U)$ 中存在解 $(bold(sigma)^*, bold(u)^*)$，则
+  $
+    cal(J) ((bold(sigma)^*, bold(u)^*); bold(f)) = 0,
+  $
+  从而 $cal(J)$ 的全局最小值为 $0$。因此任意全局极小点 $(bold(sigma), bold(u))$ 都满足
+  $
+    cal(J) ((bold(sigma), bold(u)); bold(f)) = 0.
+  $
+  于是
   $
     bold(cal(A)) : bold(sigma) - bold(epsilon)(bold(u)) = 0,
     quad
     nabla dot bold(sigma) + bold(f) = 0
   $
-  在 $Omega$ 中几乎处处成立，而 $bold(u) in (H_0^1(Omega))^d$ 已经内嵌了齐次位移边界条件，因此 $(bold(sigma), bold(u))$ 满足原强形式。
+  在 $Omega$ 中几乎处处成立，而 $bold(u) in (H_0^1(Omega))^d$ 已自动满足齐次位移边界条件，因此 $(bold(sigma), bold(u))$ 满足原强形式。
 
-  另一方面，将 $cal(J)$ 展开可得
+  下面证明最小二乘极小化与变分问题等价。将 $cal(J)$ 展开可得
   $
     cal(J) ((bold(tau), bold(v)); bold(f))
     = a ((bold(tau), bold(v)), (bold(tau), bold(v)))
-    + 2 (bold(f), nabla dot bold(tau))_(L^2(Omega))
+    - 2 ell (bold(tau), bold(v))
     + norm(bold(f))_(L^2(Omega))^2.
   $
-  对二次泛函取一阶最优性条件便得到所述变分问题。证毕。
+
+  若 $(bold(sigma), bold(u))$ 是 $cal(J)$ 的全局极小点，则对任意 $(bold(eta), bold(w)) in bold(Sigma) times bold(U)$，函数
+  $
+    phi(t) :=& cal(J) ((bold(sigma) + t bold(eta), bold(u) + t bold(w)); bold(f)) \
+    =& a((bold(sigma) + t bold(eta), bold(u) + t bold(w)), (bold(sigma) + t bold(eta), bold(u) + t bold(w)))
+    \
+    &- 2 ell (bold(sigma) + t bold(eta), bold(u) + t bold(w)) + norm(f)_(L^2(Omega))^2 \
+    =& a((bold(sigma), bold(u)), (bold(sigma), bold(u))) + 2 t a((bold(sigma), bold(u)), (bold(eta), bold(w))) + t^2 a((bold(eta), bold(w)), (bold(eta), bold(w))) \
+    &- 2 ell(bold(sigma), bold(u)) - 2 t ell (bold(eta), bold(w)) + norm(f)_(L^2(Omega))^2,
+  $
+  在 $t = 0$ 处取极小值。对上式求导，得到
+  $
+    phi'(t) = 2 a((bold(sigma), bold(u)), (bold(eta), bold(w))) + 2t a((bold(eta), bold(w)), (bold(eta), bold(w))) - 2 ell (bold(eta), bold(w)),
+  $
+  令 $t = 0$，则
+  $
+    0 = phi'(0)
+    = 2 a ((bold(sigma), bold(u)), (bold(eta), bold(w)))
+    - 2 ell (bold(eta), bold(w)).
+  $
+  因此
+  $
+    a ((bold(sigma), bold(u)), (bold(eta), bold(w)))
+    = ell (bold(eta), bold(w)),
+    quad forall (bold(eta), bold(w)) in bold(Sigma) times bold(U),
+  $
+  即得到变分问题。
+
+  反之，若 $(bold(sigma), bold(u))$ 满足变分问题，则对任意 $(bold(tau), bold(v)) in bold(Sigma) times bold(U)$，记
+  $
+    (bold(eta), bold(w))
+    := (bold(tau) - bold(sigma), bold(v) - bold(u)).
+  $
+  利用上面的二次展开与变分等式，有
+  $
+    & cal(J) ((bold(tau), bold(v)); bold(f))
+      - cal(J) ((bold(sigma), bold(u)); bold(f)) \
+    & = 2 a ((bold(sigma), bold(u)), (bold(eta), bold(w)))
+      + a ((bold(eta), bold(w)), (bold(eta), bold(w)))
+      - 2 ell (bold(eta), bold(w)) \
+    & = a ((bold(eta), bold(w)), (bold(eta), bold(w)))
+      >= 0.
+  $
+  因此 $(bold(sigma), bold(u))$ 是 $cal(J)$ 的全局极小点。证毕。
 ]
 
 == 连续稳定性
 
-#theorem(title: [二阶模型连续稳定性的双边估计])[
+#theorem(title: [二阶线弹性连续稳定性的双边估计])[
   存在常数 $0 < c <= C < oo$，仅依赖于 $Omega$ 与材料参数，使得对任意 $(bold(tau), bold(v)) in bold(Sigma) times bold(U)$ 都有
   $
     c (
@@ -118,7 +174,7 @@ $
       + norm(bold(v))_(H^1(Omega))^2
     ).
   $
-]
+]<thm:continuous-stability>
 
 #proof[
   先证上界。由 $bold(cal(A))$ 的有界性与
@@ -150,7 +206,7 @@ $
   $
     bold(epsilon)(bold(v)) = bold(cal(A)) : bold(tau) - bold(r)_"c".
   $
-  由 Korn 不等式 @difratta2025korn，存在常数 $C_K > 0$，使得
+  由 Korn 第一不等式（参考 @BrennerScott2008 推论 11.2.25），存在常数 $C_K > 0$，使得
   $
     norm(bold(v))_(H^1(Omega))
     <= C_K norm(bold(epsilon)(bold(v)))_(L^2(Omega))
@@ -200,10 +256,72 @@ $
     = norm(bold(tau))_(L^2(Omega))^2
     + norm(bold(r)_"e")_(L^2(Omega))^2
   $
-  即得下界。证毕。
+  即得下界，证毕。
 ]
 
-上述定理说明，二阶最小二乘双线性形式 $a$ 在 $bold(H)(div, Omega; SS^d) times (H_0^1(Omega))^d$ 上连续且强制，因此对应离散系统天然是对称正定的 @bochev1998least @cai1997fosls。
+#corollary(title: [二阶线弹性双线性形式 $a$ 的连续性])[
+  对任意 $(bold(sigma), bold(u)), (bold(tau), bold(v)) in bold(Sigma) times bold(U)$，
+  $
+    abs(a ((bold(sigma), bold(u)), (bold(tau), bold(v))))
+    <= C (
+      norm(bold(sigma))_(bold(H)(div))^2
+      + norm(bold(u))_(H^1(Omega))^2
+    )^(1/2)
+    (
+      norm(bold(tau))_(bold(H)(div))^2
+      + norm(bold(v))_(H^1(Omega))^2
+    )^(1/2),
+  $
+  其中常数 $C$ 来源于 @thm:continuous-stability。
+]<cor:a-continuity>
+
+#proof[
+  令 $bold(f) = bold(0)$。由最小二乘泛函的定义，
+  $
+    cal(J) ((bold(tau), bold(v)); bold(0))
+    = norm(bold(cal(A)) : bold(tau) - bold(epsilon)(bold(v)))_(L^2(Omega))^2
+    + norm(nabla dot bold(tau))_(L^2(Omega))^2.
+  $
+  因此 $a$ 正是该二次型对应的极化双线性形式。对任意
+  $(bold(sigma), bold(u)), (bold(tau), bold(v)) in bold(Sigma) times bold(U)$，
+  由 Cauchy-Schwarz 不等式，
+  $
+    abs(a ((bold(sigma), bold(u)), (bold(tau), bold(v))))
+    & <=
+    norm(bold(cal(A)) : bold(sigma) - bold(epsilon)(bold(u)))_(L^2(Omega))
+    norm(bold(cal(A)) : bold(tau) - bold(epsilon)(bold(v)))_(L^2(Omega))
+    \
+    & quad
+    + norm(nabla dot bold(sigma))_(L^2(Omega))
+    norm(nabla dot bold(tau))_(L^2(Omega)) \
+    & <=
+    cal(J) ((bold(sigma), bold(u)); bold(0))^(1/2)
+    cal(J) ((bold(tau), bold(v)); bold(0))^(1/2).
+  $
+  再由 @thm:continuous-stability 的上界，
+  $
+    cal(J) ((bold(sigma), bold(u)); bold(0))
+    <= C (
+      norm(bold(sigma))_(bold(H)(div))^2
+      + norm(bold(u))_(H^1(Omega))^2
+    ),
+  $
+  且对 $(bold(tau), bold(v))$ 同理。代入上式可得
+  $
+    abs(a ((bold(sigma), bold(u)), (bold(tau), bold(v))))
+    <= C (
+      norm(bold(sigma))_(bold(H)(div))^2
+      + norm(bold(u))_(H^1(Omega))^2
+    )^(1/2)
+    (
+      norm(bold(tau))_(bold(H)(div))^2
+      + norm(bold(v))_(H^1(Omega))^2
+    )^(1/2).
+  $
+  即 $a$ 在 $bold(Sigma) times bold(U)$ 上连续。证毕。
+]
+
+上述定理说明，二阶最小二乘双线性形式 $a$ 在 $bold(H)(div, Omega; SS^d) times (H_0^1(Omega))^d$ 上连续（上界）且强制（下界），因此对应离散系统自然导出对称正定结构。
 
 == 离散稳定性与准最优误差估计
 
@@ -214,56 +332,97 @@ $
   quad forall (bold(tau)_M, bold(v)_M) in bold(Sigma)_M times bold(U)_M.
 $
 
-对于有限维保形子空间，同样可证明一致稳定性。
+在任意保形有限维子空间上仍可建立一致稳定性。
 
-#theorem[
-  对任意有限维保形空间对 $bold(Sigma)_M subset bold(Sigma)$ 与 $bold(U)_M subset bold(U)$，离散问题存在唯一解，并且存在与离散维数无关的常数 $C > 0$，使得
+#theorem(title: [二阶线弹性离散问题的存在唯一性与稳定性])[
+  对任意保形有限维子空间 $bold(Sigma)_M subset bold(Sigma)$ 与 $bold(U)_M subset bold(U)$，离散问题存在唯一解。记离散问题的解为 $(bold(sigma)_M, bold(u)_M)$，则有
   $
     norm(bold(sigma)_M)_(bold(H)(div))
     + norm(bold(u)_M)_(H^1(Omega))
-    <= C norm(bold(f))_(L^2(Omega)).
+    <= sqrt(2)/c norm(bold(f))_(L^2(Omega)),
   $
+  其中常数 $c$ 来源于 @thm:continuous-stability。
 ]
 
 #proof[
-  由上一节的连续强制性，常数 $c$ 在子空间 $bold(Sigma)_M times bold(U)_M$ 上保持有效，因此离散双线性形式依旧强制。再由
+  由于 $bold(Sigma)_M subset bold(Sigma)$ 且 $bold(U)_M subset bold(U)$，上一节的连续强制性可直接限制到离散子空间上，并且强制性常数不随 $M$ 改变。也就是说，对任意 $(bold(tau)_M, bold(v)_M) in bold(Sigma)_M times bold(U)_M$，都有
+  $
+    c (
+      norm(bold(tau)_M)_(bold(H)(div))^2
+      + norm(bold(v)_M)_(H^1(Omega))^2
+    )
+    <= a ((bold(tau)_M, bold(v)_M), (bold(tau)_M, bold(v)_M)).
+  $
+  同时由 $a$ 的连续性，$a$ 在离散子空间上也是连续的，且连续性常数同样不依赖于离散维数。
+
+  右端泛函 $ell$ 满足
   $
     abs(ell (bold(tau)_M, bold(v)_M))
     = abs((bold(f), nabla dot bold(tau)_M)_(L^2(Omega)))
     <= norm(bold(f))_(L^2(Omega)) norm(bold(tau)_M)_(bold(H)(div))
+    <= norm(bold(f))_(L^2(Omega)) (
+      norm(bold(tau)_M)_(bold(H)(div))^2
+      + norm(bold(v)_M)_(H^1(Omega))^2
+    )^(1/2),
   $
-  可知右端连续。由有限维 Hilbert 空间上的 Lax-Milgram 定理，离散解存在唯一。
+  因此 $ell$ 在离散空间上一致连续。由 Lax-Milgram 定理（参考 @BrennerScott2008 定理 2.7.7），离散解存在唯一。
 
   取测试函数 $(bold(tau)_M, bold(v)_M) = (bold(sigma)_M, bold(u)_M)$，得到
   $
     a ((bold(sigma)_M, bold(u)_M), (bold(sigma)_M, bold(u)_M))
+    = ell (bold(sigma)_M, bold(u)_M)
     <= norm(bold(f))_(L^2(Omega)) norm(bold(sigma)_M)_(bold(H)(div)).
   $
-  结合强制性即可推出
+  记
+  $
+    C_M
+    := (
+      norm(bold(sigma)_M)_(bold(H)(div))^2
+      + norm(bold(u)_M)_(H^1(Omega))^2
+    )^(1/2).
+  $
+  由强制性与上式可得
+  $
+    c C_M^2 & <= cal(J) ((bold(sigma)_M, bold(u)_M); bold(0)) = a ((bold(sigma)_M, bold(u)_M), (bold(sigma)_M, bold(u)_M)) \
+            & <= norm(bold(f))_(L^2(Omega)) norm(bold(sigma)_M)_(bold(H)(div))
+              <= norm(bold(f))_(L^2(Omega)) C_M.
+  $
+  若 $C_M = 0$，稳定性估计显然成立；若 $C_M > 0$，两端同除以 $C_M$，得到
+  $
+    C_M <= c^(-1) norm(bold(f))_(L^2(Omega)).
+  $
+  最后利用
   $
     norm(bold(sigma)_M)_(bold(H)(div))
     + norm(bold(u)_M)_(H^1(Omega))
-    <= C norm(bold(f))_(L^2(Omega)).
+    <= sqrt(2) C_M,
+  $
+  即得
+  $
+    norm(bold(sigma)_M)_(bold(H)(div))
+    + norm(bold(u)_M)_(H^1(Omega))
+    <= sqrt(2)/c norm(bold(f))_(L^2(Omega)),
   $
   证毕。
 ]
 
-#theorem(title: [二阶模型的准最优误差估计])[
-  设连续解 $(bold(sigma), bold(u)) in bold(Sigma) times bold(U)$ 存在，离散解 $(bold(sigma)_M, bold(u)_M) in bold(Sigma)_M times bold(U)_M$ 由上式给出。则存在与离散维数无关的常数 $C > 0$，使得
+#theorem(title: [二阶线弹性的准最优误差估计])[
+  设连续解 $(bold(sigma), bold(u)) in bold(Sigma) times bold(U)$ 存在，离散解 $(bold(sigma)_M, bold(u)_M) in bold(Sigma)_M times bold(U)_M$ 由上式给出。则有
   $
     norm(bold(sigma) - bold(sigma)_M)_(bold(H)(div))
     + norm(bold(u) - bold(u)_M)_(H^1(Omega))
-    <= C
+    <= (sqrt(2) C) / c
     inf_((bold(tau)_M, bold(v)_M) in bold(Sigma)_M times bold(U)_M)
     (
       norm(bold(sigma) - bold(tau)_M)_(bold(H)(div))
       + norm(bold(u) - bold(v)_M)_(H^1(Omega))
-    ).
+    ),
   $
+  其中常数 $c$ 和 $C$ 来源于 @thm:continuous-stability 。
 ]
 
 #proof[
-  连续解与离散解满足同一右端，因此有 Galerkin 正交性
+  连续解满足连续变分问题，离散解满足离散变分问题。由于 $bold(Sigma)_M subset bold(Sigma)$ 且 $bold(U)_M subset bold(U)$，任意离散测试函数也可作为连续测试函数。因此二者相减可得 Galerkin 正交性：
   $
     a (
       (bold(sigma) - bold(sigma)_M, bold(u) - bold(u)_M),
@@ -272,7 +431,82 @@ $
     = 0,
     quad forall (bold(tau)_M, bold(v)_M) in bold(Sigma)_M times bold(U)_M.
   $
-  再结合 $a$ 的连续性与强制性，对称正定情形下的标准 Céa 引理便给出结论 @bochev1998least。证毕。
+
+  记误差
+  $
+    (bold(e)_sigma, bold(e)_u)
+    := (bold(sigma) - bold(sigma)_M, bold(u) - bold(u)_M).
+  $
+  对任意 $(bold(tau)_M, bold(v)_M) in bold(Sigma)_M times bold(U)_M$，有
+  $
+    (bold(e)_sigma, bold(e)_u)
+    = (bold(sigma) - bold(tau)_M, bold(u) - bold(v)_M)
+    + (bold(tau)_M - bold(sigma)_M, bold(v)_M - bold(u)_M),
+  $
+  其中第二项属于 $bold(Sigma)_M times bold(U)_M$。由连续强制性与 Galerkin 正交性，
+  $
+    & c (
+        norm(bold(e)_sigma)_(bold(H)(div))^2
+        + norm(bold(e)_u)_(H^1(Omega))^2
+      ) \
+    & <= a ((bold(e)_sigma, bold(e)_u), (bold(e)_sigma, bold(e)_u)) \
+    & = a (
+        (bold(e)_sigma, bold(e)_u),
+        (bold(sigma) - bold(tau)_M, bold(u) - bold(v)_M)
+      ).
+  $
+  由 @cor:a-continuity，
+  $
+       & a (
+           (bold(e)_sigma, bold(e)_u),
+           (bold(sigma) - bold(tau)_M, bold(u) - bold(v)_M)
+         ) \
+    <= & C (
+           norm(bold(e)_sigma)_(bold(H)(div))^2
+           + norm(bold(e)_u)_(H^1(Omega))^2
+         )^(1/2) times (
+           norm(bold(sigma) - bold(tau)_M)_(bold(H)(div))^2
+           + norm(bold(u) - bold(v)_M)_(H^1(Omega))^2
+         )^(1/2).
+  $
+  若误差范数为零，则结论显然成立；否则两端同除以
+  $
+    (
+      norm(bold(e)_sigma)_(bold(H)(div))^2
+      + norm(bold(e)_u)_(H^1(Omega))^2
+    )^(1/2),
+  $
+  得到
+  $
+    (
+      norm(bold(e)_sigma)_(bold(H)(div))^2
+      + norm(bold(e)_u)_(H^1(Omega))^2
+    )^(1/2)
+    <= C/c
+    (
+      norm(bold(sigma) - bold(tau)_M)_(bold(H)(div))^2
+      + norm(bold(u) - bold(v)_M)_(H^1(Omega))^2
+    )^(1/2).
+  $
+  再利用
+  $
+    norm(bold(e)_sigma)_(bold(H)(div))
+    + norm(bold(e)_u)_(H^1(Omega))
+    <= sqrt(2) (
+      norm(bold(e)_sigma)_(bold(H)(div))^2
+      + norm(bold(e)_u)_(H^1(Omega))^2
+    )^(1/2)
+  $
+  以及
+  $
+    (
+      norm(bold(sigma) - bold(tau)_M)_(bold(H)(div))^2
+      + norm(bold(u) - bold(v)_M)_(H^1(Omega))^2
+    )^(1/2)
+    <= norm(bold(sigma) - bold(tau)_M)_(bold(H)(div))
+    + norm(bold(u) - bold(v)_M)_(H^1(Omega)),
+  $
+  并对所有 $(bold(tau)_M, bold(v)_M) in bold(Sigma)_M times bold(U)_M$ 取下确界，即得所述估计。
 ]
 
 = Kirchhoff-Love 板弯曲模型
@@ -300,7 +534,14 @@ $
 $
   D = (E h^3)/(12(1 - nu^2))
 $
-为弯曲刚度。定义函数空间
+为弯曲刚度。一般地，假设 $bold(cal(A))$ 在 $SS^2$ 上有界且一致正定，即存在常数 $0 < c_A <= C_A < oo$ 使得
+$
+  c_A norm(bold(tau))_(L^2(Omega))^2
+  <= integral_Omega (bold(cal(A)) : bold(tau)) : bold(tau) dif x
+  <= C_A norm(bold(tau))_(L^2(Omega))^2,
+  quad forall bold(tau) in (L^2(Omega))^(2 times 2) inter SS^2.
+$
+定义函数空间
 $
   bold(Sigma) := bold(H)(div div, Omega; SS^2),
   quad
@@ -335,10 +576,10 @@ $
   := - (f, nabla dot (nabla dot bold(tau)))_(L^2(Omega)).
 $
 
-#proposition(title: [板弯曲的强形式、最小二乘极小化与变分问题等价])[
-  在空间 $bold(Sigma) times U$ 上，下列三个问题彼此等价：
+#theorem(title: [板弯曲强形式、最小二乘极小化与变分问题的等价性])[
+  若 Kirchhoff-Love 板弯曲的强形式在 $bold(Sigma) times U$ 中解存在，则下列三个问题彼此等价：
 
-  1. Kirchhoff-Love 板弯曲的混合强形式；
+  1. Kirchhoff-Love 板弯曲的强形式；
   2. 最小化 $cal(J)_"plate"$；
   3. 求 $(bold(cal(M)), u) in bold(Sigma) times U$，使得
     $
@@ -349,13 +590,85 @@ $
 ]
 
 #proof[
-  证明与二阶模型完全平行：强形式解使两个残差同时为零，因此使 $cal(J)_"plate"$ 取零最小值；反之，若 $cal(J)_"plate" = 0$，则本构关系与平衡关系几乎处处成立，而 $u in H_0^2(Omega)$ 已内嵌了固支边界条件。将二次泛函展开后再取一阶最优性条件，即得所述变分方程。证毕。
+  若 $(bold(cal(M)), u)$ 满足混合强形式，则两个残差同时为零，从而
+  $
+    cal(J)_"plate" ((bold(cal(M)), u); f) = 0.
+  $
+  由于 $cal(J)_"plate"$ 是两个 $L^2$ 范数平方之和，必有 $cal(J)_"plate" >= 0$，因此该解是全局极小点。
+
+  另一方面，设混合强形式在 $bold(Sigma) times U$ 中存在解 $(bold(cal(M))^*, u^*)$，则
+  $
+    cal(J)_"plate" ((bold(cal(M))^*, u^*); f) = 0,
+  $
+  从而 $cal(J)_"plate"$ 的全局最小值为 $0$。因此任意全局极小点 $(bold(cal(M)), u)$ 都满足
+  $
+    cal(J)_"plate" ((bold(cal(M)), u); f) = 0.
+  $
+  于是
+  $
+    bold(cal(A)) : bold(cal(M)) - bold(cal(K))(u) = 0,
+    quad
+    nabla dot (nabla dot bold(cal(M))) + f = 0
+  $
+  在 $Omega$ 中几乎处处成立，而 $u in H_0^2(Omega)$ 已自动满足固支边界条件，因此 $(bold(cal(M)), u)$ 满足混合强形式。
+
+  接下来证明最小二乘极小化与变分问题等价。将 $cal(J)_"plate"$ 展开可得
+  $
+    cal(J)_"plate" ((bold(tau), v); f)
+    = a_"plate" ((bold(tau), v), (bold(tau), v))
+    - 2 ell_"plate" (bold(tau), v)
+    + norm(f)_(L^2(Omega))^2.
+  $
+
+  若 $(bold(cal(M)), u)$ 是 $cal(J)_"plate"$ 的全局极小点，则对任意 $(bold(eta), w) in bold(Sigma) times U$，函数
+  $
+    phi(t) :=& cal(J)_"plate" ((bold(cal(M)) + t bold(eta), u + t w); f) \
+    =& a_"plate" ((bold(cal(M)) + t bold(eta), u + t w), (bold(cal(M)) + t bold(eta), u + t w))
+    \
+    &- 2 ell_"plate" (bold(cal(M)) + t bold(eta), u + t w) + norm(f)_(L^2(Omega))^2 \
+    =& a_"plate" ((bold(cal(M)), u), (bold(cal(M)), u)) + 2 t a_"plate" ((bold(cal(M)), u), (bold(eta), w)) + t^2 a_"plate" ((bold(eta), w), (bold(eta), w)) \
+    &- 2 ell_"plate" (bold(cal(M)), u) - 2 t ell_"plate" (bold(eta), w) + norm(f)_(L^2(Omega))^2,
+  $
+  在 $t = 0$ 处取极小值。对上式求导，得到
+  $
+    phi'(t) = 2 a_"plate" ((bold(cal(M)), u), (bold(eta), w)) + 2t a_"plate" ((bold(eta), w), (bold(eta), w)) - 2 ell_"plate" (bold(eta), w),
+  $
+  令 $t = 0$，则
+  $
+    0 = phi'(0)
+    = 2 a_"plate" ((bold(cal(M)), u), (bold(eta), w))
+    - 2 ell_"plate" (bold(eta), w).
+  $
+  因此
+  $
+    a_"plate" ((bold(cal(M)), u), (bold(eta), w))
+    = ell_"plate" (bold(eta), w),
+    quad forall (bold(eta), w) in bold(Sigma) times U,
+  $
+  即得到变分问题。
+
+  反之，若 $(bold(cal(M)), u)$ 满足变分问题，则对任意 $(bold(tau), v) in bold(Sigma) times U$，记
+  $
+    (bold(eta), w)
+    := (bold(tau) - bold(cal(M)), v - u).
+  $
+  利用上面的二次展开与变分等式，有
+  $
+    & cal(J)_"plate" ((bold(tau), v); f)
+      - cal(J)_"plate" ((bold(cal(M)), u); f) \
+    & = 2 a_"plate" ((bold(cal(M)), u), (bold(eta), w))
+      + a_"plate" ((bold(eta), w), (bold(eta), w))
+      - 2 ell_"plate" (bold(eta), w) \
+    & = a_"plate" ((bold(eta), w), (bold(eta), w))
+      >= 0.
+  $
+  因此 $(bold(cal(M)), u)$ 是 $cal(J)_"plate"$ 的全局极小点。证毕。
 ]
 
 == 连续稳定性
 
 #theorem(title: [板弯曲连续稳定性的双边估计])[
-  设 $bold(cal(A))$ 在 $SS^2$ 上有界且一致正定，则存在常数 $0 < c_"plate" <= C_"plate" < oo$，使得对任意 $(bold(tau), v) in bold(Sigma) times U$ 都有
+  存在常数 $0 < c_"plate" <= C_"plate" < oo$，仅依赖于 $Omega$ 与材料参数，使得对任意 $(bold(tau), v) in bold(Sigma) times U$ 都有
   $
     c_"plate" (
       norm(bold(tau))_(bold(H)(div div))^2
@@ -367,7 +680,7 @@ $
       + norm(v)_(H^2(Omega))^2
     ).
   $
-]
+]<thm:plate-continuous-stability>
 
 #proof[
   上界由 $bold(cal(A))$ 的有界性直接得到：
@@ -399,12 +712,32 @@ $
   $
     bold(cal(K))(v) = bold(cal(A)) : bold(tau) - bold(r)_"c".
   $
-  由于 $v in H_0^2(Omega)$，标准二阶 Poincaré 型估计给出某个常数 $C_H > 0$，使得
+  由于 $v in H_0^2(Omega)$，有 $v in H_0^1(Omega)$ 且 $partial_i v in H_0^1(Omega)$，$i = 1, 2$。由 Poincaré 不等式（参考 @BrennerScott2008 命题 5.3.5），存在常数 $C_P > 0$，使得
+  $
+    norm(w)_(H^1(Omega))
+    <= C_P abs(w)_(H^1(Omega)),
+    quad forall w in H_0^1(Omega).
+  $
+  分别取 $w = v$ 与 $w = partial_i v$，得到
+  $
+    norm(v)_(H^1(Omega))
+    <= C_P norm(nabla v)_(L^2(Omega)),
+    quad
+    norm(partial_i v)_(H^1(Omega))
+    <= C_P norm(nabla partial_i v)_(L^2(Omega)).
+  $
+  因此
+  $
+    norm(v)_(H^2(Omega))^2 & = norm(v)_(L^2(Omega))^2
+                             + norm(nabla v)_(L^2(Omega))^2 + norm(nabla^2 v)_(L^2(Omega))^2 \
+                           & <= (C_P^4 + C_P^2 + 1) norm(nabla^2 v)_(L^2(Omega))^2,
+  $
+  令 $tilde(C)_P = C_P^4 + C_P^2 + 1$，则 $tilde(C)_P$ 仅依赖于 $C_P$ 与 $Omega$。于是
   $
     norm(v)_(H^2(Omega))
-    <= C_H norm(nabla^2 v)_(L^2(Omega))
-    = C_H norm(bold(cal(K))(v))_(L^2(Omega))
-    <= C_H (
+    <= tilde(C)_P norm(nabla^2 v)_(L^2(Omega))
+    = tilde(C)_P norm(bold(cal(K))(v))_(L^2(Omega))
+    <= tilde(C)_P (
       norm(bold(r)_"c")_(L^2(Omega))
       + C_A norm(bold(tau))_(L^2(Omega))
     ).
@@ -419,8 +752,8 @@ $
   又由于 $v in H_0^2(Omega)$，对 $bold(cal(K))(v) = - nabla^2 v$ 作两次分部积分可得
   $
     integral_Omega bold(cal(K))(v) : bold(tau) dif x
-    = integral_Omega v nabla dot (nabla dot bold(tau)) dif x
-    = integral_Omega v r_"e" dif x.
+    = - integral_Omega v nabla dot (nabla dot bold(tau)) dif x
+    = - integral_Omega v r_"e" dif x.
   $
   因而
   $
@@ -453,6 +786,67 @@ $
   即得下界。证毕。
 ]
 
+#corollary(title: [板弯曲双线性形式 $a_"plate"$ 的连续性])[
+  对任意 $(bold(cal(M)), u), (bold(tau), v) in bold(Sigma) times U$，
+  $
+    abs(a_"plate" ((bold(cal(M)), u), (bold(tau), v)))
+    <= C_"plate" (
+      norm(bold(cal(M)))_(bold(H)(div div))^2
+      + norm(u)_(H^2(Omega))^2
+    )^(1/2)
+    (
+      norm(bold(tau))_(bold(H)(div div))^2
+      + norm(v)_(H^2(Omega))^2
+    )^(1/2),
+  $
+  其中常数 $C_"plate"$ 来源于 @thm:plate-continuous-stability。
+]<cor:a-plate-continuity>
+
+#proof[
+  取 $f = 0$。由板弯曲最小二乘泛函的定义，
+  $
+    cal(J)_"plate" ((bold(tau), v); 0)
+    = norm(bold(cal(A)) : bold(tau) - bold(cal(K))(v))_(L^2(Omega))^2
+    + norm(nabla dot (nabla dot bold(tau)))_(L^2(Omega))^2.
+  $
+  因此 $a_"plate"$ 正是该二次型对应的极化双线性形式。对任意
+  $(bold(cal(M)), u), (bold(tau), v) in bold(Sigma) times U$，
+  由 Cauchy-Schwarz 不等式，
+  $
+    & abs(a_"plate" ((bold(cal(M)), u), (bold(tau), v))) \
+    & <=
+      norm(bold(cal(A)) : bold(cal(M)) - bold(cal(K))(u))_(L^2(Omega))
+      norm(bold(cal(A)) : bold(tau) - bold(cal(K))(v))_(L^2(Omega)) \
+    & quad
+      + norm(nabla dot (nabla dot bold(cal(M))))_(L^2(Omega))
+      norm(nabla dot (nabla dot bold(tau)))_(L^2(Omega)) \
+    & <=
+      cal(J)_"plate" ((bold(cal(M)), u); 0)^(1/2)
+      cal(J)_"plate" ((bold(tau), v); 0)^(1/2).
+  $
+  再由 @thm:plate-continuous-stability 的上界，
+  $
+    cal(J)_"plate" ((bold(cal(M)), u); 0)
+    <= C_"plate" (
+      norm(bold(cal(M)))_(bold(H)(div div))^2
+      + norm(u)_(H^2(Omega))^2
+    ),
+  $
+  且对 $(bold(tau), v)$ 同理。代入上式可得
+  $
+    abs(a_"plate" ((bold(cal(M)), u), (bold(tau), v)))
+    <= C_"plate" (
+      norm(bold(cal(M)))_(bold(H)(div div))^2
+      + norm(u)_(H^2(Omega))^2
+    )^(1/2)
+    (
+      norm(bold(tau))_(bold(H)(div div))^2
+      + norm(v)_(H^2(Omega))^2
+    )^(1/2).
+  $
+  即 $a_"plate"$ 在 $bold(Sigma) times U$ 上连续。证毕。
+]
+
 == 离散稳定性与准最优误差估计
 
 设 $bold(Sigma)_M subset bold(Sigma)$、$U_M subset U$ 为任意有限维保形子空间。离散板弯曲问题为：求 $(bold(cal(M))_M, u_M) in bold(Sigma)_M times U_M$，使得
@@ -462,49 +856,94 @@ $
   quad forall (bold(tau)_M, v_M) in bold(Sigma)_M times U_M.
 $
 
-#theorem(title: [板弯曲在任意保形离散空间上的一致稳定性])[
-  对任意有限维保形空间对 $bold(Sigma)_M subset bold(Sigma)$ 与 $U_M subset U$，离散问题存在唯一解，并且存在与离散维数无关的常数 $C > 0$，使得
+#theorem(title: [板弯曲离散问题的存在唯一性与稳定性])[
+  对任意保形有限维子空间 $bold(Sigma)_M subset bold(Sigma)$ 与 $U_M subset U$，离散问题存在唯一解。记离散问题的解为 $(bold(cal(M))_M, u_M)$，则有
   $
     norm(bold(cal(M))_M)_(bold(H)(div div))
     + norm(u_M)_(H^2(Omega))
-    <= C norm(f)_(L^2(Omega)).
+    <= sqrt(2)/c_"plate" norm(f)_(L^2(Omega)),
   $
+  其中常数 $c_"plate"$ 来源于 @thm:plate-continuous-stability。
 ]
 
 #proof[
-  由上一节，连续强制性常数 $c_"plate"$ 在任何保形子空间上都保持有效。又有
+  由于 $bold(Sigma)_M subset bold(Sigma)$ 且 $U_M subset U$，上一节的连续强制性可直接限制到任意保形离散子空间上，并且强制性常数不随 $M$ 改变。也就是说，对任意 $(bold(tau)_M, v_M) in bold(Sigma)_M times U_M$，都有
   $
-    abs(ell_"plate" (bold(tau)_M, v_M))
-    = abs((f, nabla dot (nabla dot bold(tau)_M))_(L^2(Omega)))
-    <= norm(f)_(L^2(Omega)) norm(bold(tau)_M)_(bold(H)(div div)),
+    c_"plate" (
+      norm(bold(tau)_M)_(bold(H)(div div))^2
+      + norm(v_M)_(H^2(Omega))^2
+    )
+    <= a_"plate" ((bold(tau)_M, v_M), (bold(tau)_M, v_M)).
   $
-  因此右端连续。有限维 Lax-Milgram 定理给出离散解存在唯一。
+  同时由 $a_"plate"$ 的连续性，$a_"plate"$ 在离散子空间上也是连续的，且连续性常数不依赖于离散维数。
 
-  令测试函数取为离散解自身，并结合强制性，即得
+  右端泛函 $ell_"plate"$ 满足
+  $
+    abs(ell_"plate" (bold(tau)_M, v_M)) & = abs((f, nabla dot (nabla dot bold(tau)_M))_(L^2(Omega))) \
+                                        & <= norm(f)_(L^2(Omega)) norm(bold(tau)_M)_(bold(H)(div div)) \
+                                        & <= norm(f)_(L^2(Omega)) (
+                                            norm(bold(tau)_M)_(bold(H)(div div))^2
+                                            + norm(v_M)_(H^2(Omega))^2
+                                          )^(1/2),
+  $
+  因此 $ell_"plate"$ 在离散空间上一致连续。由 Lax-Milgram 定理（参考 @BrennerScott2008 定理 2.7.7），离散解存在唯一。
+
+  取测试函数 $(bold(tau)_M, v_M) = (bold(cal(M))_M, u_M)$，得到
+  $
+    a_"plate" ((bold(cal(M))_M, u_M), (bold(cal(M))_M, u_M))
+    = ell_"plate" (bold(cal(M))_M, u_M)
+    <= norm(f)_(L^2(Omega)) norm(bold(cal(M))_M)_(bold(H)(div div)).
+  $
+  记
+  $
+    C_M
+    := (
+      norm(bold(cal(M))_M)_(bold(H)(div div))^2
+      + norm(u_M)_(H^2(Omega))^2
+    )^(1/2).
+  $
+  由强制性与上式可得
+  $
+    c_"plate" C_M^2
+    <= norm(f)_(L^2(Omega)) norm(bold(cal(M))_M)_(bold(H)(div div))
+    <= norm(f)_(L^2(Omega)) C_M.
+  $
+  若 $C_M = 0$，稳定性估计显然成立；若 $C_M > 0$，两端同除以 $C_M$，得到
+  $
+    C_M <= c_"plate"^(-1) norm(f)_(L^2(Omega)).
+  $
+  最后利用
   $
     norm(bold(cal(M))_M)_(bold(H)(div div))
     + norm(u_M)_(H^2(Omega))
-    <= C norm(f)_(L^2(Omega)).
+    <= sqrt(2) C_M,
+  $
+  即得
+  $
+    norm(bold(cal(M))_M)_(bold(H)(div div))
+    + norm(u_M)_(H^2(Omega))
+    <= sqrt(2)/c_"plate" norm(f)_(L^2(Omega)),
   $
   证毕。
 ]
 
 #theorem(title: [板弯曲的准最优误差估计])[
-  设连续解 $(bold(cal(M)), u) in bold(Sigma) times U$ 存在，离散解 $(bold(cal(M))_M, u_M) in bold(Sigma)_M times U_M$ 由上式给出。则存在与离散维数无关的常数 $C > 0$，使得
+  设连续解 $(bold(cal(M)), u) in bold(Sigma) times U$ 存在，离散解 $(bold(cal(M))_M, u_M) in bold(Sigma)_M times U_M$ 由上式给出。则有
   $
-    norm(bold(cal(M)) - bold(cal(M))_M)_(bold(H)(div div))
-    + norm(u - u_M)_(H^2(Omega))
-    <= C
-    inf_((bold(tau)_M, v_M) in bold(Sigma)_M times U_M)
-    (
-      norm(bold(cal(M)) - bold(tau)_M)_(bold(H)(div div))
-      + norm(u - v_M)_(H^2(Omega))
-    ).
+       & norm(bold(cal(M)) - bold(cal(M))_M)_(bold(H)(div div))
+         + norm(u - u_M)_(H^2(Omega)) \
+    <= & (sqrt(2) C_"plate") / c_"plate"
+         inf_((bold(tau)_M, v_M) in bold(Sigma)_M times U_M)
+         (
+           norm(bold(cal(M)) - bold(tau)_M)_(bold(H)(div div))
+           + norm(u - v_M)_(H^2(Omega))
+         ),
   $
+  其中常数 $c_"plate"$ 和 $C_"plate"$ 来源于 @thm:plate-continuous-stability。
 ]
 
 #proof[
-  连续与离散问题共享同一右端，因此有 Galerkin 正交性
+  连续解满足连续变分问题，离散解满足离散变分问题。由于 $bold(Sigma)_M subset bold(Sigma)$ 且 $U_M subset U$，任意离散测试函数也可作为连续测试函数。因此二者相减可得 Galerkin 正交性：
   $
     a_"plate" (
       (bold(cal(M)) - bold(cal(M))_M, u - u_M),
@@ -513,10 +952,86 @@ $
     = 0,
     quad forall (bold(tau)_M, v_M) in bold(Sigma)_M times U_M.
   $
-  再利用 $a_"plate"$ 的连续性与强制性，对称正定情形下的 Céa 引理便给出所述估计。证毕。
+
+  记误差
+  $
+    (bold(e)_M, e_u)
+    := (bold(cal(M)) - bold(cal(M))_M, u - u_M).
+  $
+  对任意 $(bold(tau)_M, v_M) in bold(Sigma)_M times U_M$，有
+  $
+    (bold(e)_M, e_u)
+    = (bold(cal(M)) - bold(tau)_M, u - v_M)
+    + (bold(tau)_M - bold(cal(M))_M, v_M - u_M),
+  $
+  其中第二项属于 $bold(Sigma)_M times U_M$。由连续强制性与 Galerkin 正交性，
+  $
+       & c_"plate" (
+           norm(bold(e)_M)_(bold(H)(div div))^2
+           + norm(e_u)_(H^2(Omega))^2
+         ) \
+    <= & a_"plate" ((bold(e)_M, e_u), (bold(e)_M, e_u)) \
+     = & a_"plate" (
+           (bold(e)_M, e_u),
+           (bold(cal(M)) - bold(tau)_M, u - v_M)
+         ).
+  $
+  由 @cor:a-plate-continuity，
+  $
+       & a_"plate" (
+           (bold(e)_M, e_u),
+           (bold(cal(M)) - bold(tau)_M, u - v_M)
+         ) \
+    <= & C_"plate" (
+           norm(bold(e)_M)_(bold(H)(div div))^2
+           + norm(e_u)_(H^2(Omega))^2
+         )^(1/2) \
+       & quad times (
+           norm(bold(cal(M)) - bold(tau)_M)_(bold(H)(div div))^2
+           + norm(u - v_M)_(H^2(Omega))^2
+         )^(1/2).
+  $
+  若误差范数为零，则结论显然成立；否则两端同除以
+  $
+    (
+      norm(bold(e)_M)_(bold(H)(div div))^2
+      + norm(e_u)_(H^2(Omega))^2
+    )^(1/2),
+  $
+  得到
+  $
+    (
+      norm(bold(e)_M)_(bold(H)(div div))^2
+      + norm(e_u)_(H^2(Omega))^2
+    )^(1/2)
+    <= C_"plate" / c_"plate"
+    (
+      norm(bold(cal(M)) - bold(tau)_M)_(bold(H)(div div))^2
+      + norm(u - v_M)_(H^2(Omega))^2
+    )^(1/2).
+  $
+  再利用
+  $
+    norm(bold(e)_M)_(bold(H)(div div))
+    + norm(e_u)_(H^2(Omega))
+    <= sqrt(2) (
+      norm(bold(e)_M)_(bold(H)(div div))^2
+      + norm(e_u)_(H^2(Omega))^2
+    )^(1/2)
+  $
+  以及
+  $
+    (
+      norm(bold(cal(M)) - bold(tau)_M)_(bold(H)(div div))^2
+      + norm(u - v_M)_(H^2(Omega))^2
+    )^(1/2)
+    <= norm(bold(cal(M)) - bold(tau)_M)_(bold(H)(div div))
+    + norm(u - v_M)_(H^2(Omega)),
+  $
+  并对所有 $(bold(tau)_M, v_M) in bold(Sigma)_M times U_M$ 取下确界，即得所述估计。证毕。
 ]
 
-上述三条结论表明，板弯曲与二阶线弹性虽然不共享同一个自然能量空间，但二者的最小二乘结构完全平行：都通过“残差平方和控制自然范数”的方式获得连续与离散稳定性，都不需要弱混合方法中的 inf-sup 匹配条件。差别只在于板弯曲要求 $H_0^2$ 保形，因此离散空间必须能够同时硬编码 $u = 0$ 与 $partial_n u = 0$。
+上述三条结论表明，板弯曲与二阶线弹性虽然不共享同一个自然能量空间，但二者的最小二乘结构完全平行：都通过“残差平方和控制自然范数”的方式获得连续与离散稳定性，都不需要弱混合方法中的 inf-sup 匹配条件。差别只在于板弯曲要求 $H_0^2$ 保形，因此离散空间必须能够同时强制施加 $u = 0$ 与 $partial_n u = 0$。
 
 = 离散空间逼近
 
@@ -807,7 +1322,7 @@ $
 $
   mu = E / (2 (1 + nu)) = 1/2,
   quad
-  lambda = (E nu) / (1 - nu^2) = 1,
+  lambda = (E nu) / ((1 + nu)(1 - 2 nu)) = 1,
 $
 与文献中的三维线弹性系数一致。由于公共因子 $x_1 (1 - x_1) x_2 (1 - x_2) x_3 (1 - x_3)$ 在边界上为零，故该制造解满足 $bold(u)_"ex" = 0$ 于 $partial Omega$。精确应力 $bold(sigma)_"ex"$ 由各向同性本构关系计算，体力由
 $
@@ -818,22 +1333,22 @@ $
 对三维线弹性，位移误差定义为
 $
   norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(bold(Phi)^bold(u) (bold(x)_p) - bold(u)_"ex" (bold(x)_p))_2^2),
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(i = 1)^3 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
 $
 而在 Voigt 顺序 $(11, 22, 33, 12, 23, 13)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 1, 2, 2, 2)^T$，并定义
 $
   norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^6 w^"V"_alpha ((bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha)^2).
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^6 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
 $
 散度误差定义为
 $
   norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_2^2).
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^6 w^"V"_alpha [(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_alpha]^2).
 $
 由于精确解满足 $nabla dot bold(sigma)_"ex" + bold(f)_"ex" = 0$，故计算时可等价写为
 $
   norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_2^2).
+  = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^6 w^"V"_alpha [(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_alpha]^2).
 $
 
 === 实验结果
@@ -947,22 +1462,22 @@ $
 对平面应力，位移误差定义为
 $
   norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(bold(Phi)^bold(u) (bold(x)_p) - bold(u)_"ex" (bold(x)_p))_2^2),
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(i = 1)^2 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
 $
-而在 Voigt 顺序 $(11, 22, 12)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 2)^T$：
+而在 Voigt 顺序 $(11, 22, 12)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 2)^T$，并定义
 $
   norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^3 w^"V"_alpha ((bold(Phi)^bold(sigma) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha)^2).
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^3 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
 $
 散度误差定义为
 $
   norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_2^2).
+  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^3 w^"V"_alpha [(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_alpha]^2).
 $
 由于精确解满足 $nabla dot bold(sigma)_"ex" + bold(f)_"ex" = 0$，故计算时可等价写为
 $
   norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") norm(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_2^2).
+  = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^3 w^"V"_alpha [(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_alpha]^2).
 $
 
 === 实验结果
@@ -980,7 +1495,7 @@ $
     | Hu--Zhang (2) |   2.85e-04 |   6.98e-04 |       1.68e-02      |  3763   |
     | Hu--Zhang (3) |   3.50e-05 |   4.42e-05 |       2.12e-03      | 14819   |
     | LS (Lstsq) | 2.72e-06 | 2.53e-04 |   1.87e-04   |  1505   |
-    | LS (Eigh)  | 1.84e-07 | 1.48e-05 |   2.77e-05   |  1505   |
+    | LS (TSVD)  | 1.84e-07 | 1.48e-05 |   2.77e-05   |  1505   |
     | LS (Ridge) | 8.59e-08 | 1.02e-05 |   2.56e-05   |  1505   |
   ],
   caption: [平面应力主实验结果（$M = 300$）],
@@ -1109,10 +1624,10 @@ $
   caption: [板弯曲主实验结果（$M = 300$）],
 )<tb:pb-main>
 
-#figure(
-  image("/public/images/least-squares/plate-bending/l2-error-summary.png"),
-  caption: [板弯曲主实验结果（$M = 300$）],
-)
+// #figure(
+//   image("/public/images/least-squares/plate-bending/l2-error-summary.png"),
+//   caption: [板弯曲主实验结果（$M = 300$）],
+// )
 
 === 特征数消融
 
