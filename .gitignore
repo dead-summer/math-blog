@@ -1,27 +1,39 @@
-# build output
-dist/
-# generated types
+# Build artifacts
 .astro/
-
-# dependencies
-node_modules/
+dist/
 target/
 
-# logs
+# Dependencies
+node_modules/
+
+# Logs
 npm-debug.log*
+pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
 
-# environment variables
+# Environment files
 .env.*
 
-# macOS-specific files
+# OS files
 .DS_Store
 
-# jetbrains setting folder
+# Editors and agents
+.agents/
+.claude/
+.codex/
+.cursor/
 .idea/
+.vscode/
 
+# Python cache
 __pycache__/
 
+# Local scratch content
+test/
+
+# Reference thesis
+public/reference/*.md
+
+# Generated documents
 *.pdf
