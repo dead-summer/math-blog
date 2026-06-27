@@ -2,6 +2,7 @@
 #import "../packages/zebraw.typ": *
 #import "@preview/shiroa:0.2.3": is-html-target, is-pdf-target, is-web-target, plain-text, templates
 #import templates: *
+#import "html.typ" as html
 #import "mod.typ": *
 #import "theme.typ": *
 #import "macros.typ": *
@@ -13,7 +14,7 @@
 #let is-pdf-target = is-pdf-target()
 #let is-web-target = is-web-target() or sys-is-html-target
 #let is-md-target = target == "md"
-#let sys-is-html-target = ("target" in dictionary(std))
+#let sys-is-html-target = is-html-target
 
 #let default-kind = "post"
 
@@ -30,13 +31,11 @@
 )
 
 // Sizes
-#let main-size = if sys-is-html-target {
-  16pt
-} else {
-  10.5pt
-}
+#let html-main-size = 16pt
+#let main-size = if sys-is-html-target { html-main-size } else { 10.5pt }
 // ,
 #let heading-sizes = (22pt, 18pt, 14pt, 12pt, main-size)
+#let html-heading-sizes = (22pt, 18pt, 14pt, 12pt, html-main-size)
 #let list-indent = 0.5em
 
 /// Creates an embedded block typst frame.
@@ -59,11 +58,16 @@
   set text(region: region) if region != none
   set text(font: text-fonts)
 
-  set text(main-size) if sys-is-html-target
-  set text(fill: rgb("dfdfd6")) if is-dark-theme and sys-is-html-target
+  show: it => context if std.target() == "html" {
+    set text(html-main-size)
+    set text(fill: rgb("dfdfd6"))
+    it
+  } else {
+    it
+  }
   show link: set text(fill: dash-color)
   // 将引用转换为 HTML 超链接
-  show ref: it => context if sys-is-html-target {
+  show ref: it => context if std.target() == "html" {
     let target-label = it.target
     let label-id = (
       "label-"
@@ -85,14 +89,14 @@
     it
   }
 
-  show heading: it => {
-    set text(size: heading-sizes.at(it.level))
+  show heading: it => context {
+    set text(size: if std.target() == "html" { html-heading-sizes.at(it.level) } else { heading-sizes.at(it.level) })
 
     block(
       spacing: 0.7em * 1.5 * 1.2,
       below: 0.7em * 1.2,
       {
-        if is-web-target {
+        if is-web-target or std.target() == "html" {
           show link: static-heading-link(it)
           heading-hash(it, hash-color: dash-color)
         }
@@ -119,7 +123,7 @@
 #let equation-rules(body) = {
   show math.equation: set text(weight: 400)
 
-  show math.equation.where(block: true): it => if sys-is-html-target { it } else { block(width: 100%, it) }
+  show math.equation.where(block: true): it => context if std.target() == "html" { it } else { block(width: 100%, it) }
   
   show math.equation.where(block: true): it => context if shiroa-sys-target() == "html" {
     // 为带标签的方程式生成 HTML id，使引用可以链接到此处
@@ -262,7 +266,7 @@
       let use-fg = not inline and code-extra-colors.fg != none
       set text(fill: code-extra-colors.fg) if use-fg
       set text(fill: if theme.is-dark { rgb("dfdfd6") } else { black }) if not use-fg
-      set raw(theme: theme-style.code-theme) if theme.style.code-theme.len() > 0
+      set raw(theme: theme.style.code-theme) if theme.style.code-theme.len() > 0
       set par(justify: false)
       zebraw(
         block-width: 100%,
@@ -355,7 +359,7 @@
     // visualization setting
     show: visual-rules
 
-    show: it => if sys-is-html-target {
+    show: it => context if std.target() == "html" {
       show footnote: it => context {
         let num = counter(footnote).get().at(0)
         link(label("footnote-" + str(num)), super(str(num)))
@@ -385,7 +389,7 @@
     )) <frontmatter>
   ]
 
-  context if show-outline and is-same-kind and sys-is-html-target {
+  context if show-outline and is-same-kind and shiroa-sys-target() == "html" {
     if query(heading).len() == 0 {
       return
     }
@@ -466,7 +470,7 @@
 
   body
 
-  context if is-same-kind and sys-is-html-target {
+  context if is-same-kind and shiroa-sys-target() == "html" {
     query(footnote)
       .enumerate()
       .map(((idx, it)) => {
