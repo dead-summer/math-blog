@@ -11,7 +11,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from linear_elasticity_3d import (
+from plane_stress import (
     ALGO_STYLE,
     OUTPUT_DIR,
     AlgorithmResult,
@@ -28,10 +28,10 @@ from linear_elasticity_3d import (
 )
 
 
-ABLATION_OUTPUT_DIR = OUTPUT_DIR / "ablation" / "M"
+ABLATION_OUTPUT_DIR = OUTPUT_DIR / "ablation" / "N"
 ABLATION_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_ABLATION_M_LIST = [200, 400, 600, 800, 1000]
+DEFAULT_ABLATION_N_LIST = [200, 400, 600, 800, 1000]
 ALGORITHM_LABELS = {
     "lstsq": "LS (Lstsq)",
     "tsvd": "LS (TSVD)",
@@ -45,7 +45,7 @@ class AblationRecord:
 
     algorithm_id: str
     algorithm_name: str
-    M: int
+    N: int
     result: AlgorithmResult
 
 
@@ -56,36 +56,36 @@ def clear_experiment_memory() -> None:
     clear_cuda_cache()
 
 
-def validate_ablation_list(ablation_M_list: Sequence[int]) -> list[int]:
+def validate_ablation_list(ablation_N_list: Sequence[int]) -> list[int]:
     """Validate and sort the ablation feature-count list."""
 
-    if not ablation_M_list:
-        raise ValueError("ablation_M_list must be non-empty.")
+    if not ablation_N_list:
+        raise ValueError("ablation_N_list must be non-empty.")
 
     seen: set[int] = set()
     validated_list: list[int] = []
-    for M in ablation_M_list:
-        M_int = int(M)
-        if M_int <= 0:
-            raise ValueError("All M values must be positive integers.")
-        if M_int in seen:
-            raise ValueError(f"Duplicate M value detected: {M_int}")
-        seen.add(M_int)
-        validated_list.append(M_int)
+    for N in ablation_N_list:
+        N_int = int(N)
+        if N_int <= 0:
+            raise ValueError("All N values must be positive integers.")
+        if N_int in seen:
+            raise ValueError(f"Duplicate N value detected: {N_int}")
+        seen.add(N_int)
+        validated_list.append(N_int)
     return sorted(validated_list)
 
 
 def build_pair_feature_space(
     full_feature_space: SharedFeatureSpace,
-    M: int,
+    N: int,
 ) -> SharedFeatureSpace:
     """Slice one synchronized feature-space pair from the shared maximum space."""
 
     return SharedFeatureSpace(
-        a_s=full_feature_space.a_s[:M],
-        r_s=full_feature_space.r_s[:M],
-        a_u=full_feature_space.a_u[:M],
-        r_u=full_feature_space.r_u[:M],
+        a_s=full_feature_space.a_s[:N],
+        r_s=full_feature_space.r_s[:N],
+        a_u=full_feature_space.a_u[:N],
+        r_u=full_feature_space.r_u[:N],
         gamma_s=full_feature_space.gamma_s,
         gamma_u=full_feature_space.gamma_u,
     )
@@ -95,7 +95,7 @@ def sort_ablation_records(
     records: list[AblationRecord],
     algorithm_ids: list[str],
 ) -> list[AblationRecord]:
-    """Group rows by solver, then by ascending M."""
+    """Group rows by solver, then by ascending N."""
 
     algorithm_order = {
         algorithm_id: index for index, algorithm_id in enumerate(algorithm_ids)
@@ -104,7 +104,7 @@ def sort_ablation_records(
         records,
         key=lambda record: (
             algorithm_order[record.algorithm_id],
-            record.M,
+            record.N,
         ),
     )
 
@@ -113,7 +113,7 @@ def print_ablation_summary_table(
     records: list[AblationRecord],
     algorithm_ids: list[str],
 ) -> None:
-    """Print the M ablation summary grouped by method."""
+    """Print the N ablation summary grouped by method."""
 
     ordered_records = sort_ablation_records(records, algorithm_ids)
     if not ordered_records:
@@ -121,47 +121,46 @@ def print_ablation_summary_table(
 
     headers = (
         "Method",
-        "M",
+        "N",
         "‖Φ^u-u‖",
         "‖Φ^σ-σ‖",
-        "‖div(Φ^σ-σ)‖",
         "Time(s)",
     )
     rows = [
         (
             record.algorithm_name,
-            str(record.M),
+            str(record.N),
             f"{record.result.u_l2_error:.2e}",
             f"{record.result.sigma_l2_error:.2e}",
-            f"{record.result.div_sigma_l2_error:.2e}",
             f"{record.result.wall_time:.2f}",
         )
         for record in ordered_records
     ]
     print_aligned_markdown_table(
-        title="M Ablation Summary",
+        title="N Ablation Summary",
         headers=headers,
         rows=rows,
-        alignments=("left", "center", "center", "center", "center", "center"),
+        alignments=("left", "center", "center", "center", "center"),
     )
 
-def plot_ablation_M(
+
+def plot_ablation_N(
     results: dict[int, dict[str, AlgorithmResult]],
     algorithm_ids: list[str],
     save_path: str,
 ) -> None:
-    """Plot absolute L2 error versus M for each configured solver."""
+    """Plot absolute L2 error versus N for each configured solver."""
 
     if not results:
         print(f"  Skipped: {save_path} (no results to plot)")
         return
 
     configure_plotting()
-    M_list = sorted(results.keys())
-    x_positions = np.arange(len(M_list), dtype=float)
+    N_list = sorted(results.keys())
+    x_positions = np.arange(len(N_list), dtype=float)
 
-    fig_width = max(10.0, 1.6 * len(M_list))
-    fig, axes = plt.subplots(1, 3, figsize=(max(13.5, 2.2 * len(M_list)), 4.8))
+    fig_width = max(10.0, 1.6 * len(N_list))
+    fig, axes = plt.subplots(1, 2, figsize=(max(10.5, fig_width + 0.5), 4.8))
     metric_specs = [
         (
             "u_l2_error",
@@ -170,12 +169,7 @@ def plot_ablation_M(
         ),
         (
             "sigma_l2_error",
-            r"$\|\Phi^{\sigma} - \sigma_{ex}\|_0$",
-            "$L^2$ error",
-        ),
-        (
-            "div_sigma_l2_error",
-            r"$\|\operatorname{div}(\Phi^{\sigma} - \sigma_{ex})\|_0$",
+            r"$\|\Phi^\sigma - \sigma_{ex}\|_0$",
             "$L^2$ error",
         ),
     ]
@@ -185,10 +179,10 @@ def plot_ablation_M(
             algorithm_name = ALGORITHM_LABELS[algorithm_id]
             values = np.array(
                 [
-                    getattr(results[M][algorithm_name], metric_name)
-                    if algorithm_name in results[M]
+                    getattr(results[N][algorithm_name], metric_name)
+                    if algorithm_name in results[N]
                     else float("nan")
-                    for M in M_list
+                    for N in N_list
                 ],
                 dtype=float,
             )
@@ -212,10 +206,10 @@ def plot_ablation_M(
             )
 
         ax.set_title(title)
-        ax.set_xlabel(r"Feature count $M$")
+        ax.set_xlabel(r"Feature count $N$")
         ax.set_ylabel(ylabel)
         ax.set_xticks(x_positions)
-        ax.set_xticklabels([str(M) for M in M_list])
+        ax.set_xticklabels([str(N) for N in N_list])
         ax.grid(alpha=0.3, linestyle="--")
         if ax.lines:
             ax.legend()
@@ -227,21 +221,21 @@ def plot_ablation_M(
     print(f"  Saved: {save_path}")
 
 
-def run_ablation_M(
+def run_ablation_N(
     cfg: LeastSquaresConfig | None = None,
-    ablation_M_list: Sequence[int] | None = None,
+    ablation_N_list: Sequence[int] | None = None,
 ) -> dict[int, dict[str, AlgorithmResult]]:
-    """Run the synchronized M ablation study and return all metrics."""
+    """Run the synchronized N ablation study and return all metrics."""
 
     cfg = LeastSquaresConfig() if cfg is None else cfg
     algorithm_ids = validate_algorithm_selection(cfg.algorithms_to_run, VALID_ALGORITHMS)
-    M_list = validate_ablation_list(
-        DEFAULT_ABLATION_M_LIST if ablation_M_list is None else list(ablation_M_list)
+    N_list = validate_ablation_list(
+        DEFAULT_ABLATION_N_LIST if ablation_N_list is None else list(ablation_N_list)
     )
 
     print(f"Output: {ABLATION_OUTPUT_DIR}")
     print(f"Algorithms: {algorithm_ids}")
-    print(f"Ablation M list: {M_list}")
+    print(f"Ablation N list: {N_list}")
 
     print("Building shared benchmark data...")
     benchmark = build_shared_benchmark(
@@ -255,23 +249,23 @@ def run_ablation_M(
 
     print("Building full shared random feature space...")
     full_feature_space = build_shared_feature_space(
-        M_s=max(M_list),
-        M_u=max(M_list),
+        N_s=max(N_list),
+        N_u=max(N_list),
         gamma_s=cfg.gamma_s,
         gamma_u=cfg.gamma_u,
     )
 
     all_results: dict[int, dict[str, AlgorithmResult]] = {}
     records: list[AblationRecord] = []
-    for M in M_list:
-        print(f"\n=== Ablation M: M_s = M_u = {M} ===")
+    for N in N_list:
+        print(f"\n=== Ablation N: N_s = N_u = {N} ===")
         pair_cfg = replace(
             cfg,
-            M_s=M,
-            M_u=M,
+            N_s=N,
+            N_u=N,
             algorithms_to_run=list(algorithm_ids),
         )
-        pair_feature_space = build_pair_feature_space(full_feature_space, M)
+        pair_feature_space = build_pair_feature_space(full_feature_space, N)
         results = run_experiment(
             pair_cfg,
             print_table=False,
@@ -288,20 +282,20 @@ def run_ablation_M(
                 AblationRecord(
                     algorithm_id=algorithm_id,
                     algorithm_name=algorithm_name,
-                    M=M,
+                    N=N,
                     result=result,
                 )
             )
-        all_results[M] = method_results
+        all_results[N] = method_results
 
         del pair_feature_space
         clear_experiment_memory()
 
-    print("\nGenerating M ablation plot...")
-    plot_ablation_M(
+    print("\nGenerating N ablation plot...")
+    plot_ablation_N(
         all_results,
         algorithm_ids,
-        str(ABLATION_OUTPUT_DIR / "ablation-M.png"),
+        str(ABLATION_OUTPUT_DIR / "ablation-N.png"),
     )
     print_ablation_summary_table(records, algorithm_ids)
     return all_results
@@ -309,13 +303,13 @@ def run_ablation_M(
 
 def main(
     cfg: LeastSquaresConfig | None = None,
-    ablation_M_list: Sequence[int] | None = None,
+    ablation_N_list: Sequence[int] | None = None,
 ) -> None:
     """Script entrypoint."""
 
-    run_ablation_M(
+    run_ablation_N(
         cfg=cfg,
-        ablation_M_list=ablation_M_list,
+        ablation_N_list=ablation_N_list,
     )
 
 

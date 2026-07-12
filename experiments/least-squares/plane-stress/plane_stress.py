@@ -88,7 +88,6 @@ class AlgorithmResult:
     name: str
     u_l2_error: float
     sigma_l2_error: float
-    div_sigma_l2_error: float
     wall_time: float
 
 
@@ -101,7 +100,6 @@ class SharedBenchmarkData:
     f_int: torch.Tensor
     x_test: torch.Tensor
     w_test: torch.Tensor
-    f_test: torch.Tensor
     u_exact_test: torch.Tensor
     sigma_exact_test: torch.Tensor
     compliance_voigt: torch.Tensor
@@ -124,10 +122,8 @@ class FeatureEvaluationData:
     """All tensors needed to evaluate coefficient-based methods."""
 
     xi_s_test: torch.Tensor
-    grad_xi_s_test: torch.Tensor
     psi_u_test: torch.Tensor
     w_test: torch.Tensor
-    f_test: torch.Tensor
     u_exact_test: torch.Tensor
     sigma_exact_test: torch.Tensor
 
@@ -140,8 +136,8 @@ class LeastSquaresConfig:
     nu: float = 0.5
     gamma_s: float = 3.0
     gamma_u: float = 3.0
-    M_s: int = 300
-    M_u: int = 300
+    N_s: int = 300
+    N_u: int = 300
     Q_train: int = (2 ** 8) ** 2
     Q_test: int = (2 ** 7) ** 2
     sampling_method: str = "sobol"
@@ -232,8 +228,8 @@ def validate_config(cfg: LeastSquaresConfig) -> None:
         raise ValueError("Config.nu must lie in (-1, 0.5].")
     if cfg.gamma_s <= 0.0 or cfg.gamma_u <= 0.0:
         raise ValueError("Config.gamma_s and Config.gamma_u must be positive.")
-    if cfg.M_s <= 0 or cfg.M_u <= 0:
-        raise ValueError("Config.M_s and Config.M_u must be positive.")
+    if cfg.N_s <= 0 or cfg.N_u <= 0:
+        raise ValueError("Config.N_s and Config.N_u must be positive.")
     if cfg.Q_train <= 0:
         raise ValueError("Config.Q_train must be positive.")
     if cfg.Q_test <= 0:
@@ -469,16 +465,16 @@ def build_quadrature_rule(
     return points, weights
 
 
-def generate_features(M: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
+def generate_features(N: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Generate random feature normals and offsets."""
 
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
 
-    raw = torch.randn(M, 2, generator=generator, dtype=DTYPE)
+    raw = torch.randn(N, 2, generator=generator, dtype=DTYPE)
     norms = raw.norm(dim=1, keepdim=True).clamp_min(1.0e-12)
     a = (raw / norms).to(DEVICE)
-    r = torch.rand(M, generator=generator, dtype=DTYPE).to(DEVICE)
+    r = torch.rand(N, generator=generator, dtype=DTYPE).to(DEVICE)
     return a, r
 
 
@@ -578,7 +574,6 @@ def build_shared_benchmark(
         method=sampling_method,
         seed=test_seed,
     )
-    f_test = compute_body_force(x_test, mu, lambda_plane, batch_size=body_force_batch_size)
     u_exact_test = eval_exact_displacement(x_test)
     sigma_exact_test = compute_stress_voigt(x_test, mu, lambda_plane)
     return SharedBenchmarkData(
@@ -587,7 +582,6 @@ def build_shared_benchmark(
         f_int=f_int,
         x_test=x_test,
         w_test=w_test,
-        f_test=f_test,
         u_exact_test=u_exact_test,
         sigma_exact_test=sigma_exact_test,
         compliance_voigt=compliance_voigt,
@@ -595,8 +589,8 @@ def build_shared_benchmark(
 
 
 def build_shared_feature_space(
-    M_s: int,
-    M_u: int,
+    N_s: int,
+    N_u: int,
     gamma_s: float,
     gamma_u: float,
     stress_feature_seed: int = STRESS_SEED,
@@ -604,8 +598,8 @@ def build_shared_feature_space(
 ) -> SharedFeatureSpace:
     """Build the shared random feature spaces used by coefficient-based methods."""
 
-    a_s, r_s = generate_features(M_s, seed=stress_feature_seed)
-    a_u, r_u = generate_features(M_u, seed=disp_feature_seed)
+    a_s, r_s = generate_features(N_s, seed=stress_feature_seed)
+    a_u, r_u = generate_features(N_u, seed=disp_feature_seed)
     return SharedFeatureSpace(
         a_s=a_s,
         r_s=r_s,
@@ -629,12 +623,6 @@ def build_feature_evaluation_data(
             feature_space.r_s,
             feature_space.gamma_s,
         ),
-        grad_xi_s_test=eval_feature_grads(
-            benchmark.x_test,
-            feature_space.a_s,
-            feature_space.r_s,
-            feature_space.gamma_s,
-        ),
         psi_u_test=eval_active_displacement_features(
             benchmark.x_test,
             feature_space.a_u,
@@ -642,7 +630,6 @@ def build_feature_evaluation_data(
             feature_space.gamma_u,
         ),
         w_test=benchmark.w_test,
-        f_test=benchmark.f_test,
         u_exact_test=benchmark.u_exact_test,
         sigma_exact_test=benchmark.sigma_exact_test,
     )
@@ -939,15 +926,13 @@ def split_solution(z: torch.Tensor, dim_s: int) -> tuple[torch.Tensor, torch.Ten
 def compute_absolute_errors(
     psi_u_test: torch.Tensor,
     xi_s_test: torch.Tensor,
-    grad_xi_s_test: torch.Tensor,
     sigma_coeffs: torch.Tensor,
     displacement_coeffs: torch.Tensor,
     w_test: torch.Tensor,
-    f_test: torch.Tensor,
     u_exact: torch.Tensor,
     sigma_exact: torch.Tensor,
-) -> tuple[float, float, float]:
-    """Compute absolute L2 errors for displacement, stress, and divergence."""
+) -> tuple[float, float]:
+    """Compute absolute L2 errors for displacement and stress."""
 
     displacement_blocks = displacement_coeffs.reshape(-1, 2)
     stress_blocks = sigma_coeffs.reshape(-1, 3)
@@ -962,22 +947,9 @@ def compute_absolute_errors(
         (w_test * (voigt_weight * (sigma_h - sigma_exact).square()).sum(dim=1)).sum()
     )
 
-    ds_dx1 = grad_xi_s_test[:, :, 0] @ stress_blocks
-    ds_dx2 = grad_xi_s_test[:, :, 1] @ stress_blocks
-    div_sigma_h = torch.stack(
-        [
-            ds_dx1[:, 0] + ds_dx2[:, 2],
-            ds_dx1[:, 2] + ds_dx2[:, 1],
-        ],
-        dim=1,
-    )
-    div_sigma_l2_error = torch.sqrt(
-        (w_test * (div_sigma_h + f_test).square().sum(dim=1)).sum()
-    )
     return (
         u_l2_error.item(),
         sigma_l2_error.item(),
-        div_sigma_l2_error.item(),
     )
 
 
@@ -990,14 +962,12 @@ def evaluate_feature_result(
 ) -> AlgorithmResult:
     """Evaluate one coefficient-based method and package the metrics."""
 
-    u_l2_error, sigma_l2_error, div_sigma_l2_error = compute_absolute_errors(
+    u_l2_error, sigma_l2_error = compute_absolute_errors(
         data.psi_u_test,
         data.xi_s_test,
-        data.grad_xi_s_test,
         sigma_coeffs,
         displacement_coeffs,
         data.w_test,
-        data.f_test,
         data.u_exact_test,
         data.sigma_exact_test,
     )
@@ -1005,7 +975,6 @@ def evaluate_feature_result(
         name=name,
         u_l2_error=u_l2_error,
         sigma_l2_error=sigma_l2_error,
-        div_sigma_l2_error=div_sigma_l2_error,
         wall_time=wall_time,
     )
 
@@ -1016,8 +985,7 @@ def print_result_summary(result: AlgorithmResult) -> None:
     print(
         f"    Done in {result.wall_time:.2f}s, "
         f"‖Φ^u-u‖={result.u_l2_error:.2e}, "
-        f"‖Φ^σ-σ‖={result.sigma_l2_error:.2e}, "
-        f"‖div(Φ^σ-σ)‖={result.div_sigma_l2_error:.2e}"
+        f"‖Φ^σ-σ‖={result.sigma_l2_error:.2e}"
     )
 
 
@@ -1087,7 +1055,6 @@ def print_summary_table(
         "Method",
         "‖Φ^u-u‖",
         "‖Φ^σ-σ‖",
-        "‖div(Φ^σ-σ)‖",
         "Time(s)",
     )
     rows = [
@@ -1095,7 +1062,6 @@ def print_summary_table(
             result.name,
             f"{result.u_l2_error:.2e}",
             f"{result.sigma_l2_error:.2e}",
-            f"{result.div_sigma_l2_error:.2e}",
             f"{result.wall_time:.2f}",
         )
         for result in results
@@ -1104,7 +1070,7 @@ def print_summary_table(
         title=title,
         headers=headers,
         rows=rows,
-        alignments=("left", "center", "center", "center", "center"),
+        alignments=("left", "center", "center", "center"),
     )
 
 
@@ -1126,13 +1092,12 @@ def plot_l2_summary(
         return
 
     configure_plotting()
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.5))
     titles = [
         r"$\|\Phi^u - u_{ex}\|_0$",
         r"$\|\Phi^\sigma - \sigma_{ex}\|_0$",
-        r"$\|\operatorname{div}(\Phi^\sigma - \sigma_{ex})\|_0$",
     ]
-    keys = ["u_l2_error", "sigma_l2_error", "div_sigma_l2_error"]
+    keys = ["u_l2_error", "sigma_l2_error"]
     labels = [result.name for result in results]
     x_positions = np.arange(len(results), dtype=float)
     colors = [
@@ -1234,7 +1199,7 @@ def run_experiment(
     print(f"Device: {DEVICE}")
     print(f"Output: {OUTPUT_DIR}")
     print(
-        f"Config: M_s={cfg.M_s}, M_u={cfg.M_u}, "
+        f"Config: N_s={cfg.N_s}, N_u={cfg.N_u}, "
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
         f"gamma_s={cfg.gamma_s}, gamma_u={cfg.gamma_u}, "
         f"tsvd_tau_rel={cfg.tsvd_tau_rel:.2e}, "
@@ -1265,8 +1230,8 @@ def run_experiment(
     if feature_space is None:
         print("Generating random feature spaces...")
         feature_space = build_shared_feature_space(
-            M_s=cfg.M_s,
-            M_u=cfg.M_u,
+            N_s=cfg.N_s,
+            N_u=cfg.N_u,
             gamma_s=cfg.gamma_s,
             gamma_u=cfg.gamma_u,
         )
@@ -1275,7 +1240,7 @@ def run_experiment(
 
     if feature_space.gamma_s != cfg.gamma_s or feature_space.gamma_u != cfg.gamma_u:
         raise ValueError("SharedFeatureSpace gamma does not match LeastSquaresConfig.")
-    if feature_space.a_s.shape[0] != cfg.M_s or feature_space.a_u.shape[0] != cfg.M_u:
+    if feature_space.a_s.shape[0] != cfg.N_s or feature_space.a_u.shape[0] != cfg.N_u:
         raise ValueError("SharedFeatureSpace feature counts do not match LeastSquaresConfig.")
 
     print("Assembling conforming least-squares system...")
@@ -1297,7 +1262,7 @@ def run_experiment(
     experiment_data = LeastSquaresExperimentData(
         G=G,
         F=F,
-        dim_s=3 * (cfg.M_s + 1),
+        dim_s=3 * (cfg.N_s + 1),
         eval_data=build_feature_evaluation_data(
             benchmark,
             feature_space,

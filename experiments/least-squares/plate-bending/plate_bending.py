@@ -123,8 +123,8 @@ class LeastSquaresConfig:
     h: float = 1.0
     gamma_m: float = 3.0
     gamma_u: float = 3.0
-    M_m: int = 300
-    M_u: int = 300
+    N_m: int = 300
+    N_u: int = 300
     Q_train: int = (2 ** 8) ** 2
     Q_test: int = (2 ** 7) ** 2
     sampling_method: str = "sobol"
@@ -216,8 +216,8 @@ def validate_config(cfg: LeastSquaresConfig) -> None:
         raise ValueError("Config.h must be positive.")
     if cfg.gamma_m <= 0.0 or cfg.gamma_u <= 0.0:
         raise ValueError("Config.gamma_m and Config.gamma_u must be positive.")
-    if cfg.M_m <= 0 or cfg.M_u <= 0:
-        raise ValueError("Config.M_m and Config.M_u must be positive.")
+    if cfg.N_m <= 0 or cfg.N_u <= 0:
+        raise ValueError("Config.N_m and Config.N_u must be positive.")
     if cfg.Q_train <= 0:
         raise ValueError("Config.Q_train must be positive.")
     if cfg.Q_test <= 0:
@@ -425,16 +425,16 @@ def build_quadrature_rule(
     return points, weights
 
 
-def generate_features(M: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
+def generate_features(N: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Generate random feature normals and offsets."""
 
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
 
-    raw = torch.randn(M, 2, generator=generator, dtype=DTYPE)
+    raw = torch.randn(N, 2, generator=generator, dtype=DTYPE)
     norms = raw.norm(dim=1, keepdim=True).clamp_min(1.0e-12)
     a = (raw / norms).to(DEVICE)
-    r = torch.rand(M, generator=generator, dtype=DTYPE).to(DEVICE)
+    r = torch.rand(N, generator=generator, dtype=DTYPE).to(DEVICE)
     return a, r
 
 
@@ -578,8 +578,8 @@ def build_shared_benchmark(
 
 
 def build_shared_feature_space(
-    M_m: int,
-    M_u: int,
+    N_m: int,
+    N_u: int,
     gamma_m: float,
     gamma_u: float,
     moment_feature_seed: int = MOMENT_SEED,
@@ -587,8 +587,8 @@ def build_shared_feature_space(
 ) -> SharedFeatureSpace:
     """Build the shared random feature spaces used by coefficient-based methods."""
 
-    a_m, r_m = generate_features(M_m, seed=moment_feature_seed)
-    a_u, r_u = generate_features(M_u, seed=deflection_feature_seed)
+    a_m, r_m = generate_features(N_m, seed=moment_feature_seed)
+    a_u, r_u = generate_features(N_u, seed=deflection_feature_seed)
     return SharedFeatureSpace(
         a_m=a_m,
         r_m=r_m,
@@ -1178,7 +1178,7 @@ def run_experiment(
     print(f"Device: {DEVICE}")
     print(f"Output: {OUTPUT_DIR}")
     print(
-        f"Config: h={cfg.h}, M_m={cfg.M_m}, M_u={cfg.M_u}, "
+        f"Config: h={cfg.h}, N_m={cfg.N_m}, N_u={cfg.N_u}, "
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
         f"gamma_m={cfg.gamma_m}, gamma_u={cfg.gamma_u}, "
         f"tsvd_tau_rel={cfg.tsvd_tau_rel:.2e}, "
@@ -1206,8 +1206,8 @@ def run_experiment(
     if feature_space is None:
         print("Generating random feature spaces...")
         feature_space = build_shared_feature_space(
-            M_m=cfg.M_m,
-            M_u=cfg.M_u,
+            N_m=cfg.N_m,
+            N_u=cfg.N_u,
             gamma_m=cfg.gamma_m,
             gamma_u=cfg.gamma_u,
         )
@@ -1216,7 +1216,7 @@ def run_experiment(
 
     if feature_space.gamma_m != cfg.gamma_m or feature_space.gamma_u != cfg.gamma_u:
         raise ValueError("SharedFeatureSpace gamma does not match LeastSquaresConfig.")
-    if feature_space.a_m.shape[0] != cfg.M_m or feature_space.a_u.shape[0] != cfg.M_u:
+    if feature_space.a_m.shape[0] != cfg.N_m or feature_space.a_u.shape[0] != cfg.N_u:
         raise ValueError("SharedFeatureSpace feature counts do not match LeastSquaresConfig.")
 
     print("Assembling conforming least-squares system...")
@@ -1238,7 +1238,7 @@ def run_experiment(
     experiment_data = LeastSquaresExperimentData(
         G=G,
         F=F,
-        dim_m=3 * (cfg.M_m + 1),
+        dim_m=3 * (cfg.N_m + 1),
         eval_data=build_feature_evaluation_data(
             benchmark,
             feature_space,
