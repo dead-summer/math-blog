@@ -22,17 +22,18 @@ DTYPE = torch.float64
 VALID_SAMPLING_METHODS = ("mc", "sobol", "gauss_legendre")
 VALID_ALGORITHMS = ("lstsq", "tsvd", "ridge")
 VALID_MANUFACTURED_SOLUTIONS = ("hu_zhang", "div_free", "near_incompressible")
-FEATURE_DIM = 3
+FEATURE_DIM = 2
 FEATURE_CENTER = 0.5
 FEATURE_INV_RADIUS = 2.0 / math.sqrt(FEATURE_DIM)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "least-squares" / "linear-elasticity-3d"
+OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "least-squares" / "linear-elasticity-2d"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 ALGO_STYLE = {
     "LS (Lstsq)": {"color": "#264653", "marker": "s", "linestyle": "--"},
     "LS (TSVD)": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
     "LS (Ridge)": {"color": "#E76F51", "marker": "D", "linestyle": "-."},
 }
+
 
 def detect_device() -> torch.device:
     """Prefer CUDA when available and stay quiet otherwise."""
@@ -46,16 +47,8 @@ def detect_device() -> torch.device:
 
 DEVICE = detect_device()
 
-VOIGT_WEIGHT = torch.tensor(
-    [1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
-    dtype=DTYPE,
-    device=DEVICE,
-)
-TRACE_VOIGT = torch.tensor(
-    [1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
-    dtype=DTYPE,
-    device=DEVICE,
-)
+VOIGT_WEIGHT = torch.tensor([1.0, 1.0, 2.0], dtype=DTYPE, device=DEVICE)
+TRACE_VOIGT = torch.tensor([1.0, 1.0, 0.0], dtype=DTYPE, device=DEVICE)
 
 torch.manual_seed(BASE_SEED)
 if torch.cuda.is_available():
@@ -65,58 +58,37 @@ torch.backends.cudnn.benchmark = False
 
 
 def build_strain_gradient_bases() -> torch.Tensor:
-    """Return the three fixed gradient-to-strain coupling blocks."""
+    """Return the two fixed gradient-to-strain coupling blocks."""
 
     base_1 = torch.tensor(
         [
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
+            [1.0, 0.0],
+            [0.0, 0.0],
+            [0.0, 1.0],
         ],
         dtype=DTYPE,
         device=DEVICE,
     )
     base_2 = torch.tensor(
         [
-            [0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0],
+            [0.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
         ],
         dtype=DTYPE,
         device=DEVICE,
     )
-    base_3 = torch.tensor(
-        [
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 0.0, 0.0],
-        ],
-        dtype=DTYPE,
-        device=DEVICE,
-    )
-    return torch.stack([base_1, base_2, base_3], dim=0)
+    return torch.stack([base_1, base_2], dim=0)
 
 
 def build_deviatoric_stress_bases() -> torch.Tensor:
-    """Return a fixed 6x5 basis spanning trace-free stresses in Voigt form."""
+    """Return a fixed 3x2 basis spanning trace-free stresses in Voigt form."""
 
     return torch.tensor(
         [
-            [1.0 / math.sqrt(2.0), 1.0 / math.sqrt(6.0), 0.0, 0.0, 0.0],
-            [-1.0 / math.sqrt(2.0), 1.0 / math.sqrt(6.0), 0.0, 0.0, 0.0],
-            [0.0, -2.0 / math.sqrt(6.0), 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
+            [1.0 / math.sqrt(2.0), 0.0],
+            [-1.0 / math.sqrt(2.0), 0.0],
+            [0.0, 1.0],
         ],
         dtype=DTYPE,
         device=DEVICE,
@@ -125,7 +97,7 @@ def build_deviatoric_stress_bases() -> torch.Tensor:
 
 STRAIN_GRAD_BASES = build_strain_gradient_bases()
 DEVIATORIC_STRESS_BASES = build_deviatoric_stress_bases()
-HYDROSTATIC_STRESS_BASIS = TRACE_VOIGT / math.sqrt(3.0)
+HYDROSTATIC_STRESS_BASIS = TRACE_VOIGT / math.sqrt(2.0)
 
 
 @dataclass(frozen=True)
@@ -184,10 +156,10 @@ class LeastSquaresConfig:
     gamma_u: float = 2.0
     N_s: int = 1000
     N_u: int = 1000
-    Q_train: int = (2 ** 5) ** 3
-    Q_test: int = (2 ** 4) ** 3
+    Q_train: int = (2**8) ** 2
+    Q_test: int = (2**7) ** 2
     sampling_method: str = "sobol"
-    manufactured_solution: str = "div_free"
+    manufactured_solution: str = "hu_zhang"
     tsvd_tau_rel: float = 1.0e-15
     ridge_alpha_rel: float = 1.0e-15
     body_force_batch_size: int = 5_000
@@ -352,46 +324,42 @@ def compute_lame_constants(E: float, nu: float) -> tuple[float, float]:
 
 
 def build_compliance_matrix(mu: float, lam: float) -> torch.Tensor:
-    """Build the 3D isotropic compliance matrix in engineering Voigt form."""
+    """Build the 2D isotropic compliance matrix in engineering Voigt form."""
 
-    compliance = torch.zeros(6, 6, dtype=DTYPE, device=DEVICE)
-    compliance[:3, :3] = torch.eye(3, dtype=DTYPE, device=DEVICE) / (2.0 * mu)
-    compliance[:3, :3] -= (
-        lam / (2.0 * mu * (2.0 * mu + 3.0 * lam))
-    ) * torch.ones(3, 3, dtype=DTYPE, device=DEVICE)
-    compliance[3, 3] = 1.0 / mu
-    compliance[4, 4] = 1.0 / mu
-    compliance[5, 5] = 1.0 / mu
-    return compliance
+    stiffness = torch.tensor(
+        [
+            [2.0 * mu + lam, lam, 0.0],
+            [lam, 2.0 * mu + lam, 0.0],
+            [0.0, 0.0, mu],
+        ],
+        dtype=DTYPE,
+        device=DEVICE,
+    )
+    return torch.linalg.inv(stiffness)
 
 
 def eval_hu_zhang_displacement(x: torch.Tensor) -> torch.Tensor:
-    """Evaluate the Hu-Zhang 3D manufactured displacement field."""
+    """Evaluate the Hu-Zhang 2D manufactured displacement field."""
 
-    x1, x2, x3 = x[:, 0], x[:, 1], x[:, 2]
-    vanishing_factor = x1 * (1.0 - x1) * x2 * (1.0 - x2) * x3 * (1.0 - x3)
-    u1 = 16.0 * vanishing_factor
-    u2 = 32.0 * vanishing_factor
-    u3 = 64.0 * vanishing_factor
-    return torch.stack([u1, u2, u3], dim=1)
+    x1, x2 = x[:, 0], x[:, 1]
+    u1 = torch.exp(x1 - x2) * x1 * (1.0 - x1) * x2 * (1.0 - x2)
+    u2 = torch.sin(math.pi * x1) * torch.sin(math.pi * x2)
+    return torch.stack([u1, u2], dim=1)
 
 
 def eval_div_free_displacement(x: torch.Tensor) -> torch.Tensor:
     """Evaluate a divergence-free manufactured displacement with zero boundary trace."""
 
-    x1, x2, x3 = x[:, 0], x[:, 1], x[:, 2]
+    x1, x2 = x[:, 0], x[:, 1]
     pi = math.pi
     h1 = torch.sin(2.0 * pi * x1)
     h2 = torch.sin(2.0 * pi * x2)
-    h3 = torch.sin(2.0 * pi * x3)
     g1 = (1.0 - torch.cos(2.0 * pi * x1)) / (2.0 * pi)
     g2 = (1.0 - torch.cos(2.0 * pi * x2)) / (2.0 * pi)
-    g3 = (1.0 - torch.cos(2.0 * pi * x3)) / (2.0 * pi)
 
-    u1 = -2.0 * g1 * h2 * h3
-    u2 = g2 * h1 * h3
-    u3 = g3 * h1 * h2
-    return torch.stack([u1, u2, u3], dim=1)
+    u1 = -g1 * h2
+    u2 = h1 * g2
+    return torch.stack([u1, u2], dim=1)
 
 
 def eval_near_incompressible_displacement(x: torch.Tensor, lam: float) -> torch.Tensor:
@@ -400,14 +368,13 @@ def eval_near_incompressible_displacement(x: torch.Tensor, lam: float) -> torch.
     if not math.isfinite(lam) or lam == 0.0:
         raise ValueError("lam must be finite and nonzero for near_incompressible.")
 
-    x1, x2, x3 = x[:, 0], x[:, 1], x[:, 2]
+    x1, x2 = x[:, 0], x[:, 1]
     pi = math.pi
     div_free = eval_div_free_displacement(x)
     perturbation = torch.stack(
         [
-            torch.sin(2.0 * pi * x1) * x2 * (1.0 - x2) * x3 * (1.0 - x3),
-            torch.sin(2.0 * pi * x2) * x1 * (1.0 - x1) * x3 * (1.0 - x3),
-            torch.sin(2.0 * pi * x3) * x1 * (1.0 - x1) * x2 * (1.0 - x2),
+            torch.sin(2.0 * pi * x1) * x2 * (1.0 - x2),
+            torch.sin(2.0 * pi * x2) * x1 * (1.0 - x1),
         ],
         dim=1,
     )
@@ -433,13 +400,39 @@ def eval_exact_displacement(
     raise AssertionError(f"Unhandled manufactured_solution='{manufactured_solution}'.")
 
 
+def compute_engineering_strain(grad_u: torch.Tensor) -> torch.Tensor:
+    """Convert displacement gradients to 2D engineering Voigt strain."""
+
+    return torch.stack(
+        [
+            grad_u[:, 0, 0],
+            grad_u[:, 1, 1],
+            grad_u[:, 0, 1] + grad_u[:, 1, 0],
+        ],
+        dim=1,
+    )
+
+
+def apply_isotropic_stiffness(
+    strain_voigt: torch.Tensor,
+    mu: float,
+    lam: float,
+) -> torch.Tensor:
+    """Apply the 2D isotropic stiffness operator to engineering strain."""
+
+    sigma11 = (2.0 * mu + lam) * strain_voigt[:, 0] + lam * strain_voigt[:, 1]
+    sigma22 = lam * strain_voigt[:, 0] + (2.0 * mu + lam) * strain_voigt[:, 1]
+    sigma12 = mu * strain_voigt[:, 2]
+    return torch.stack([sigma11, sigma22, sigma12], dim=1)
+
+
 def compute_stress_voigt(
     x: torch.Tensor,
     mu: float,
     lam: float,
     manufactured_solution: str,
 ) -> torch.Tensor:
-    """Evaluate the exact stress in Voigt order (11, 22, 33, 12, 23, 13)."""
+    """Evaluate the exact stress in Voigt order (11, 22, 12)."""
 
     x_ad = x.detach().requires_grad_(True)
     u = eval_exact_displacement(
@@ -449,33 +442,17 @@ def compute_stress_voigt(
     )
 
     n_points = x.shape[0]
-    grad_u = torch.zeros(n_points, 3, 3, dtype=DTYPE, device=DEVICE)
-    for comp in range(3):
+    grad_u = torch.zeros(n_points, 2, 2, dtype=DTYPE, device=DEVICE)
+    for comp in range(2):
         grad_u[:, comp, :] = torch.autograd.grad(
             u[:, comp].sum(),
             x_ad,
             create_graph=False,
-            retain_graph=(comp < 2),
+            retain_graph=(comp < 1),
         )[0]
 
-    eps = 0.5 * (grad_u + grad_u.transpose(1, 2))
-    tr_eps = eps[:, 0, 0] + eps[:, 1, 1] + eps[:, 2, 2]
-
-    sigma = 2.0 * mu * eps
-    for comp in range(3):
-        sigma[:, comp, comp] += lam * tr_eps
-
-    return torch.stack(
-        [
-            sigma[:, 0, 0],
-            sigma[:, 1, 1],
-            sigma[:, 2, 2],
-            sigma[:, 0, 1],
-            sigma[:, 1, 2],
-            sigma[:, 0, 2],
-        ],
-        dim=1,
-    ).detach()
+    strain_voigt = compute_engineering_strain(grad_u)
+    return apply_isotropic_stiffness(strain_voigt, mu, lam).detach()
 
 
 def compute_body_force(
@@ -488,7 +465,7 @@ def compute_body_force(
     """Compute f = -div(sigma(u_exact)) with batched autodiff."""
 
     n_points = x.shape[0]
-    f_all = torch.zeros(n_points, 3, dtype=DTYPE, device=DEVICE)
+    f_all = torch.zeros(n_points, 2, dtype=DTYPE, device=DEVICE)
 
     for start in range(0, n_points, batch_size):
         end = min(start + batch_size, n_points)
@@ -507,29 +484,34 @@ def compute_body_force(
                     create_graph=True,
                     retain_graph=True,
                 )[0]
-                for comp in range(3)
+                for comp in range(2)
             ],
             dim=1,
         )
+        strain_voigt = compute_engineering_strain(grad_u)
+        sigma = apply_isotropic_stiffness(strain_voigt, mu, lam)
 
-        eps = 0.5 * (grad_u + grad_u.transpose(1, 2))
-        tr_eps = eps[:, 0, 0] + eps[:, 1, 1] + eps[:, 2, 2]
+        grad_sigma11 = torch.autograd.grad(
+            sigma[:, 0].sum(),
+            xb,
+            create_graph=False,
+            retain_graph=True,
+        )[0]
+        grad_sigma22 = torch.autograd.grad(
+            sigma[:, 1].sum(),
+            xb,
+            create_graph=False,
+            retain_graph=True,
+        )[0]
+        grad_sigma12 = torch.autograd.grad(
+            sigma[:, 2].sum(),
+            xb,
+            create_graph=False,
+            retain_graph=False,
+        )[0]
 
-        sigma = 2.0 * mu * eps
-        for comp in range(3):
-            sigma[:, comp, comp] += lam * tr_eps
-
-        for comp in range(3):
-            div_sigma = torch.zeros(end - start, dtype=DTYPE, device=DEVICE)
-            for dim in range(3):
-                grad_sigma = torch.autograd.grad(
-                    sigma[:, comp, dim].sum(),
-                    xb,
-                    create_graph=False,
-                    retain_graph=not (comp == 2 and dim == 2),
-                )[0]
-                div_sigma += grad_sigma[:, dim]
-            f_all[start:end, comp] = -div_sigma.detach()
+        f_all[start:end, 0] = -(grad_sigma11[:, 0] + grad_sigma12[:, 1]).detach()
+        f_all[start:end, 1] = -(grad_sigma12[:, 0] + grad_sigma22[:, 1]).detach()
 
     return f_all
 
@@ -537,24 +519,16 @@ def compute_body_force(
 def eval_displacement_adapter_weight(x: torch.Tensor) -> torch.Tensor:
     """Evaluate the scalar weight used by the displacement basis adapter."""
 
-    return (
-        x[:, 0]
-        * (1.0 - x[:, 0])
-        * x[:, 1]
-        * (1.0 - x[:, 1])
-        * x[:, 2]
-        * (1.0 - x[:, 2])
-    )
+    return x[:, 0] * (1.0 - x[:, 0]) * x[:, 1] * (1.0 - x[:, 1])
 
 
 def eval_displacement_adapter_weight_grad(x: torch.Tensor) -> torch.Tensor:
     """Evaluate the gradient of the displacement basis-adapter weight."""
 
-    x1, x2, x3 = x[:, 0], x[:, 1], x[:, 2]
-    grad_x = (1.0 - 2.0 * x1) * x2 * (1.0 - x2) * x3 * (1.0 - x3)
-    grad_y = x1 * (1.0 - x1) * (1.0 - 2.0 * x2) * x3 * (1.0 - x3)
-    grad_z = x1 * (1.0 - x1) * x2 * (1.0 - x2) * (1.0 - 2.0 * x3)
-    return torch.stack([grad_x, grad_y, grad_z], dim=1)
+    x1, x2 = x[:, 0], x[:, 1]
+    grad_x = (1.0 - 2.0 * x1) * x2 * (1.0 - x2)
+    grad_y = x1 * (1.0 - x1) * (1.0 - 2.0 * x2)
+    return torch.stack([grad_x, grad_y], dim=1)
 
 
 def infer_tensor_product_order(n_points: int, dim: int) -> int:
@@ -571,7 +545,7 @@ def infer_tensor_product_order(n_points: int, dim: int) -> int:
 def build_quadrature_rule(
     n_points: int,
     method: str,
-    dim: int = 3,
+    dim: int = 2,
     seed: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build quadrature points and weights on the unit box."""
@@ -628,7 +602,7 @@ def generate_features(N: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
 
-    raw = torch.randn(N, 3, generator=generator, dtype=DTYPE)
+    raw = torch.randn(N, FEATURE_DIM, generator=generator, dtype=DTYPE)
     norms = raw.norm(dim=1, keepdim=True).clamp_min(1.0e-12)
     a = (raw / norms).to(DEVICE)
     r = torch.rand(N, generator=generator, dtype=DTYPE).to(DEVICE)
@@ -668,7 +642,7 @@ def eval_raw_scalar_basis_grads(
     pre = x_hat @ a.T + r.unsqueeze(0)
     dtanh = 1.0 - torch.tanh(gamma * pre).square()
     grad_xi = gamma * FEATURE_INV_RADIUS * dtanh.unsqueeze(2) * a.unsqueeze(0)
-    zeros = torch.zeros(x.shape[0], 1, 3, dtype=DTYPE, device=DEVICE)
+    zeros = torch.zeros(x.shape[0], 1, FEATURE_DIM, dtype=DTYPE, device=DEVICE)
     return torch.cat([zeros, grad_xi], dim=1)
 
 
@@ -866,24 +840,24 @@ def accumulate_interior_moments(
     gram_raw_sigma = torch.zeros(np1_s, np1_s, dtype=DTYPE, device=DEVICE)
     mean_raw_sigma = torch.zeros(np1_s, dtype=DTYPE, device=DEVICE)
     cross_raw_sigma_grad_active_u = [
-        torch.zeros(np1_s, np1_u, dtype=DTYPE, device=DEVICE) for _ in range(3)
+        torch.zeros(np1_s, np1_u, dtype=DTYPE, device=DEVICE) for _ in range(2)
     ]
     grad_gram_active_u = [
         [
             torch.zeros(np1_u, np1_u, dtype=DTYPE, device=DEVICE)
-            for _ in range(3)
+            for _ in range(2)
         ]
-        for _ in range(3)
+        for _ in range(2)
     ]
     grad_gram_raw_sigma = [
         [
             torch.zeros(np1_s, np1_s, dtype=DTYPE, device=DEVICE)
-            for _ in range(3)
+            for _ in range(2)
         ]
-        for _ in range(3)
+        for _ in range(2)
     ]
     grad_force_raw_sigma = [
-        torch.zeros(np1_s, 3, dtype=DTYPE, device=DEVICE) for _ in range(3)
+        torch.zeros(np1_s, 2, dtype=DTYPE, device=DEVICE) for _ in range(2)
     ]
 
     with torch.no_grad():
@@ -910,20 +884,20 @@ def accumulate_interior_moments(
             weighted_raw_sigma = wb.unsqueeze(1) * raw_sigma_basis_batch
             weighted_grad_active_u = [
                 wb.unsqueeze(1) * active_u_basis_grad_batch[:, :, dim_i]
-                for dim_i in range(3)
+                for dim_i in range(2)
             ]
             weighted_grad_raw_sigma = [
                 wb.unsqueeze(1) * raw_sigma_basis_grad_batch[:, :, dim_i]
-                for dim_i in range(3)
+                for dim_i in range(2)
             ]
             gram_raw_sigma += raw_sigma_basis_batch.T @ weighted_raw_sigma
             mean_raw_sigma += weighted_raw_sigma.sum(dim=0)
-            for dim_i in range(3):
+            for dim_i in range(2):
                 cross_raw_sigma_grad_active_u[dim_i] += (
                     raw_sigma_basis_batch.T @ weighted_grad_active_u[dim_i]
                 )
                 grad_force_raw_sigma[dim_i] += weighted_grad_raw_sigma[dim_i].T @ fb
-                for dim_j in range(3):
+                for dim_j in range(2):
                     grad_gram_active_u[dim_i][dim_j] += (
                         active_u_basis_grad_batch[:, :, dim_i].T
                         @ weighted_grad_active_u[dim_j]
@@ -987,7 +961,7 @@ def build_stress_basis_adapter(
     np1_s = mean_raw_sigma.numel()
     hydro_transform = build_zero_mean_hydrostatic_transform(mean_raw_sigma)
     identity_features = torch.eye(np1_s, dtype=DTYPE, device=DEVICE)
-    raw_dim = 6 * np1_s
+    raw_dim = 3 * np1_s
 
     transform_deviatoric = torch.kron(identity_features, DEVIATORIC_STRESS_BASES)
     transform_hydrostatic = torch.kron(
@@ -1019,13 +993,13 @@ def assemble_weighted_raw_stress_blocks(
     grad_gram_active_u: list[list[torch.Tensor]],
     grad_gram_raw_sigma: list[list[torch.Tensor]],
     grad_force_raw_sigma: list[torch.Tensor],
-    np1_s: int,
-    np1_u: int,
 ) -> RawStressLinearBlocks:
-    """Assemble the paper's two-term least-squares system in the raw stress basis."""
+    """Assemble the two-term least-squares system in the raw stress basis."""
 
-    dim_s = 6 * np1_s
-    dim_u = 3 * np1_u
+    np1_s = gram_raw_sigma.shape[0]
+    np1_u = grad_gram_active_u[0][0].shape[0]
+    dim_s = 3 * np1_s
+    dim_u = 2 * np1_u
 
     G_ss = torch.zeros(dim_s, dim_s, dtype=DTYPE, device=DEVICE)
     G_su = torch.zeros(dim_s, dim_u, dtype=DTYPE, device=DEVICE)
@@ -1038,43 +1012,43 @@ def assemble_weighted_raw_stress_blocks(
         G_ss,
         gram_raw_sigma,
         compliance_sq,
-        row_stride=6,
-        col_stride=6,
+        row_stride=3,
+        col_stride=3,
     )
 
-    for dim_i in range(3):
+    for dim_i in range(2):
         constitutive_cross = compliance_voigt @ STRAIN_GRAD_BASES[dim_i]
         add_block_scaled(
             G_su,
             cross_raw_sigma_grad_active_u[dim_i],
             -constitutive_cross,
-            row_stride=6,
-            col_stride=3,
+            row_stride=3,
+            col_stride=2,
         )
         add_rhs_feature_blocks(
             F_s,
             grad_force_raw_sigma[dim_i],
             STRAIN_GRAD_BASES[dim_i],
-            block_size=6,
+            block_size=3,
             scale=-1.0,
         )
 
-        for dim_j in range(3):
+        for dim_j in range(2):
             constitutive_uu = STRAIN_GRAD_BASES[dim_i].T @ STRAIN_GRAD_BASES[dim_j]
             equilibrium_ss = STRAIN_GRAD_BASES[dim_i] @ STRAIN_GRAD_BASES[dim_j].T
             add_block_scaled(
                 G_uu,
                 grad_gram_active_u[dim_i][dim_j],
                 constitutive_uu,
-                row_stride=3,
-                col_stride=3,
+                row_stride=2,
+                col_stride=2,
             )
             add_block_scaled(
                 G_ss,
                 grad_gram_raw_sigma[dim_i][dim_j],
                 equilibrium_ss,
-                row_stride=6,
-                col_stride=6,
+                row_stride=3,
+                col_stride=3,
             )
 
     return RawStressLinearBlocks(
@@ -1125,7 +1099,7 @@ def assemble_linear_system(
     a_u: torch.Tensor,
     r_u: torch.Tensor,
 ) -> AssembledLinearSystem:
-    """Assemble the paper's least-squares system in the active basis."""
+    """Assemble the least-squares system in the active basis."""
 
     (
         gram_raw_sigma,
@@ -1147,10 +1121,7 @@ def assemble_linear_system(
         cfg.assembly_batch_size,
     )
 
-    np1_s = a_s.shape[0] + 1
-    np1_u = a_u.shape[0] + 1
     stress_adapter = build_stress_basis_adapter(mean_raw_sigma)
-
     mu, lam = compute_lame_constants(cfg.E, cfg.nu)
     raw_blocks = assemble_weighted_raw_stress_blocks(
         mu,
@@ -1160,8 +1131,6 @@ def assemble_linear_system(
         grad_gram_active_u,
         grad_gram_raw_sigma,
         grad_force_raw_sigma,
-        np1_s,
-        np1_u,
     )
     return apply_stress_basis_adapter(raw_blocks, stress_adapter)
 
@@ -1230,7 +1199,6 @@ def solve_ridge(G: torch.Tensor, F: torch.Tensor, alpha_Ridge: float) -> tuple[t
             raise RuntimeError("invalid ridge strength")
 
         ridge_matrix = G + alpha * torch.eye(G.shape[0], dtype=DTYPE, device=DEVICE)
-        # sol = torch.linalg.solve(ridge_matrix, F)
         sol = torch.linalg.lstsq(ridge_matrix, F.unsqueeze(1)).solution.squeeze(1)
         if not torch.isfinite(sol).all():
             raise RuntimeError("non-finite solution")
@@ -1272,8 +1240,8 @@ def compute_absolute_errors(
 ) -> tuple[float, float]:
     """Compute the absolute L2 errors for displacement and stress."""
 
-    displacement_blocks = displacement_coeffs.reshape(-1, 3)
-    stress_blocks = sigma_coeffs.reshape(-1, 6)
+    displacement_blocks = displacement_coeffs.reshape(-1, 2)
+    stress_blocks = sigma_coeffs.reshape(-1, 3)
 
     u_h = active_u_basis_test @ displacement_blocks
     sigma_h = raw_sigma_basis_test @ stress_blocks
