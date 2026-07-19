@@ -12,6 +12,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 import matplotlib.pyplot as plt
 import numpy as np
+import scipy.linalg
 import torch
 
 
@@ -20,7 +21,7 @@ STRESS_SEED = BASE_SEED
 DISP_SEED = BASE_SEED + 1_000
 DTYPE = torch.float64
 VALID_SAMPLING_METHODS = ("mc", "sobol", "gauss_legendre")
-VALID_ALGORITHMS = ("lstsq", "tsvd", "ridge")
+VALID_ALGORITHMS = ("direct",)
 FEATURE_DIM = 2
 FEATURE_CENTER = 0.5
 FEATURE_INV_RADIUS = 2.0 / math.sqrt(FEATURE_DIM)
@@ -28,9 +29,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "least-squares" / "plane-stress"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 ALGO_STYLE = {
-    "LS (Lstsq)": {"color": "#264653", "marker": "s", "linestyle": "--"},
-    "LS (TSVD)": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
-    "LS (Ridge)": {"color": "#E76F51", "marker": "D", "linestyle": "-."},
+    "Direct LS (GELSD)": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
 }
 VOIGT_WEIGHT = torch.tensor([1.0, 1.0, 2.0], dtype=DTYPE)
 
@@ -45,7 +44,7 @@ def detect_device() -> torch.device:
     return torch.device("cpu")
 
 
-DEVICE = detect_device()
+DEVICE = torch.device("cpu")
 
 torch.manual_seed(BASE_SEED)
 if torch.cuda.is_available():
@@ -89,6 +88,9 @@ class AlgorithmResult:
     u_l2_error: float
     sigma_l2_error: float
     wall_time: float
+    rank: int = 0
+    columns: int = 0
+    condition_estimate: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -136,21 +138,16 @@ class LeastSquaresConfig:
     nu: float = 0.5
     gamma_s: float = 3.0
     gamma_u: float = 3.0
-    N_s: int = 300
-    N_u: int = 300
-    Q_train: int = (2 ** 8) ** 2
+    N_s: int = 1000
+    N_u: int = 1000
+    Q_train: int = 64**2
     Q_test: int = (2 ** 7) ** 2
-    sampling_method: str = "sobol"
-    tsvd_tau_rel: float = 1.0e-15
-    ridge_alpha_rel: float = 1.0e-15
+    sampling_method: str = "gauss_legendre"
+    direct_rcond: float = 1.0e-14
     body_force_batch_size: int = 5_000
     assembly_batch_size: int = 5_000
     algorithms_to_run: list[str] = field(
-        default_factory=lambda: [
-            "lstsq",
-            "tsvd",
-            "ridge",
-        ]
+        default_factory=lambda: ["direct"]
     )
 
 
@@ -158,10 +155,19 @@ class LeastSquaresConfig:
 class LeastSquaresExperimentData:
     """All tensors needed to run and evaluate one least-squares solver."""
 
-    G: torch.Tensor
-    F: torch.Tensor
+    matrix: torch.Tensor
+    rhs: torch.Tensor
     dim_s: int
     eval_data: FeatureEvaluationData
+
+
+@dataclass(frozen=True)
+class DirectResidualDesign:
+    """Weighted residual matrix and coefficient split metadata."""
+
+    matrix: torch.Tensor
+    rhs: torch.Tensor
+    dim_s: int
 
 
 def clear_cuda_cache() -> None:
@@ -234,10 +240,8 @@ def validate_config(cfg: LeastSquaresConfig) -> None:
         raise ValueError("Config.Q_train must be positive.")
     if cfg.Q_test <= 0:
         raise ValueError("Config.Q_test must be positive.")
-    if not math.isfinite(cfg.tsvd_tau_rel) or cfg.tsvd_tau_rel < 0.0:
-        raise ValueError("Config.tsvd_tau_rel must be finite and non-negative.")
-    if not math.isfinite(cfg.ridge_alpha_rel) or cfg.ridge_alpha_rel <= 0.0:
-        raise ValueError("Config.ridge_alpha_rel must be finite and positive.")
+    if not math.isfinite(cfg.direct_rcond) or cfg.direct_rcond <= 0.0:
+        raise ValueError("Config.direct_rcond must be finite and positive.")
     if cfg.body_force_batch_size <= 0:
         raise ValueError("Config.body_force_batch_size must be positive.")
     if cfg.assembly_batch_size <= 0:
@@ -841,80 +845,100 @@ def assemble_linear_system(
     return G, F
 
 
-def solve_lstsq(G: torch.Tensor, F: torch.Tensor) -> tuple[torch.Tensor, float]:
-    """Solve the linear system with torch.linalg.lstsq."""
+def assemble_direct_residual_design(
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+) -> DirectResidualDesign:
+    """Assemble the weighted constitutive and equilibrium residuals directly."""
 
-    synchronize_device()
-    t0 = time.perf_counter()
-    try:
-        sol = torch.linalg.lstsq(G, F.unsqueeze(1)).solution.squeeze(1)
-        if not torch.isfinite(sol).all():
-            raise RuntimeError("non-finite solution")
-    except (RuntimeError, torch.linalg.LinAlgError) as exc:
-        sol = torch.full((G.shape[0],), float("nan"), dtype=DTYPE, device=DEVICE)
-        print(f"    Warning: torch.linalg.lstsq failed with {type(exc).__name__}")
+    x = benchmark.x_int
+    sqrt_weights = torch.sqrt(benchmark.w_int)
+    sigma_values = eval_features(
+        x,
+        feature_space.a_s,
+        feature_space.r_s,
+        feature_space.gamma_s,
+    )
+    sigma_gradients = eval_feature_grads(
+        x,
+        feature_space.a_s,
+        feature_space.r_s,
+        feature_space.gamma_s,
+    )
+    _, displacement_gradients = eval_active_displacement_feature_data(
+        x,
+        feature_space.a_u,
+        feature_space.r_u,
+        feature_space.gamma_u,
+    )
+    q_count = x.shape[0]
+    dim_s = 3 * sigma_values.shape[1]
+    dim_u = 2 * displacement_gradients.shape[1]
+    matrix = torch.zeros(5 * q_count, dim_s + dim_u, dtype=DTYPE, device=DEVICE)
+    rhs = torch.zeros(5 * q_count, dtype=DTYPE, device=DEVICE)
+    weighted_sigma = sqrt_weights.unsqueeze(1) * sigma_values
 
-    synchronize_device()
-    return sol, time.perf_counter() - t0
+    for residual_component in range(3):
+        rows = slice(residual_component * q_count, (residual_component + 1) * q_count)
+        for sigma_component in range(3):
+            matrix[rows, sigma_component:dim_s:3] = (
+                benchmark.compliance_voigt[residual_component, sigma_component]
+                * weighted_sigma
+            )
+        for spatial_dimension in range(2):
+            coupling = STRAIN_GRAD_BASES[spatial_dimension]
+            for displacement_component in range(2):
+                matrix[rows, dim_s + displacement_component :: 2] -= (
+                    coupling[residual_component, displacement_component]
+                    * sqrt_weights.unsqueeze(1)
+                    * displacement_gradients[:, :, spatial_dimension]
+                )
 
-
-def solve_tsvd(G: torch.Tensor, F: torch.Tensor, tau_rel: float) -> tuple[torch.Tensor, float]:
-    """Solve the linear system with relative TSVD threshold tau_TSVD."""
-
-    synchronize_device()
-    t0 = time.perf_counter()
-    try:
-        eigvals, eigvecs = torch.linalg.eigh(G)
-        threshold = tau_rel * eigvals.abs().max()
-        keep = eigvals > threshold
-        if not keep.any():
-            raise RuntimeError("all eigenvalues were truncated")
-
-        coeffs = eigvecs[:, keep].T @ F
-        coeffs = coeffs / eigvals[keep]
-        sol = eigvecs[:, keep] @ coeffs
-        if not torch.isfinite(sol).all():
-            raise RuntimeError("non-finite solution")
-        print(
-            f"    tsvd truncation: kept {int(keep.sum().item())}/{eigvals.numel()} "
-            f"eigenvalues, tau_TSVD={tau_rel:.2e}, threshold={threshold.item():.2e}"
+    for equilibrium_component in range(2):
+        rows = slice(
+            (3 + equilibrium_component) * q_count,
+            (4 + equilibrium_component) * q_count,
         )
-    except (RuntimeError, torch.linalg.LinAlgError) as exc:
-        sol = torch.full((G.shape[0],), float("nan"), dtype=DTYPE, device=DEVICE)
-        print(f"    Warning: torch.linalg.eigh failed with {type(exc).__name__}")
+        for spatial_dimension in range(2):
+            coupling = STRAIN_GRAD_BASES[spatial_dimension]
+            for sigma_component in range(3):
+                matrix[rows, sigma_component:dim_s:3] += (
+                    coupling[sigma_component, equilibrium_component]
+                    * sqrt_weights.unsqueeze(1)
+                    * sigma_gradients[:, :, spatial_dimension]
+                )
+        rhs[rows] = -sqrt_weights * benchmark.f_int[:, equilibrium_component]
+    return DirectResidualDesign(matrix, rhs, dim_s)
 
-    synchronize_device()
-    return sol, time.perf_counter() - t0
 
+def solve_direct_residual(
+    matrix: torch.Tensor,
+    rhs: torch.Tensor,
+    rcond: float,
+) -> tuple[torch.Tensor, float, int, float]:
+    """Column-scale and solve the residual least-squares problem with GELSD."""
 
-def solve_ridge(G: torch.Tensor, F: torch.Tensor, alpha_Ridge: float) -> tuple[torch.Tensor, float]:
-    """Solve the standard Tikhonov/ridge system with alpha_Ridge."""
-
-    synchronize_device()
+    column_norms = torch.linalg.vector_norm(matrix, dim=0)
+    floor = torch.finfo(matrix.dtype).eps * column_norms.max()
+    safe_norms = column_norms.clamp_min(floor)
+    matrix.div_(safe_norms.unsqueeze(0))
     t0 = time.perf_counter()
-    try:
-        spectral_scale = torch.linalg.eigvalsh(G).abs().max()
-        alpha = alpha_Ridge * spectral_scale
-        if not torch.isfinite(spectral_scale) or spectral_scale <= 0.0:
-            raise RuntimeError("invalid spectral scale")
-        if not torch.isfinite(alpha) or alpha <= 0.0:
-            raise RuntimeError("invalid ridge strength")
-
-        ridge_matrix = G + alpha * torch.eye(G.shape[0], dtype=DTYPE, device=DEVICE)
-        # sol = torch.linalg.solve(ridge_matrix, F)
-        sol = torch.linalg.lstsq(ridge_matrix, F.unsqueeze(1)).solution.squeeze(1)
-        if not torch.isfinite(sol).all():
-            raise RuntimeError("non-finite solution")
-        print(
-            f"    ridge shift: alpha_Ridge={alpha_Ridge:.2e}, "
-            f"alpha={alpha.item():.2e}, scale={spectral_scale.item():.2e}"
-        )
-    except (RuntimeError, torch.linalg.LinAlgError) as exc:
-        sol = torch.full((G.shape[0],), float("nan"), dtype=DTYPE, device=DEVICE)
-        print(f"    Warning: torch.linalg.solve failed with {type(exc).__name__}")
-
-    synchronize_device()
-    return sol, time.perf_counter() - t0
+    scaled_solution, _, rank, singular_values = scipy.linalg.lstsq(
+        matrix.numpy(),
+        rhs.numpy(),
+        cond=rcond,
+        overwrite_a=True,
+        overwrite_b=False,
+        check_finite=False,
+        lapack_driver="gelsd",
+    )
+    wall_time = time.perf_counter() - t0
+    solution = torch.from_numpy(scaled_solution).to(dtype=DTYPE) / safe_norms
+    positive = singular_values[singular_values > 0.0]
+    condition_estimate = (
+        float(positive.max() / positive.min()) if len(positive) else float("inf")
+    )
+    return solution, wall_time, int(rank), condition_estimate
 
 
 def split_solution(z: torch.Tensor, dim_s: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -985,7 +1009,9 @@ def print_result_summary(result: AlgorithmResult) -> None:
     print(
         f"    Done in {result.wall_time:.2f}s, "
         f"‖Φ^u-u‖={result.u_l2_error:.2e}, "
-        f"‖Φ^σ-σ‖={result.sigma_l2_error:.2e}"
+        f"‖Φ^σ-σ‖={result.sigma_l2_error:.2e}, "
+        f"rank={result.rank}/{result.columns}, "
+        f"cond≈{result.condition_estimate:.2e}"
     )
 
 
@@ -1142,39 +1168,31 @@ def run_algorithm(
 ) -> AlgorithmResult:
     """Run one configured least-squares algorithm and evaluate it."""
 
-    if algorithm_id == "tsvd":
-        print("Running LS (TSVD)...")
-        z, wall_time = solve_tsvd(data.G, data.F, cfg.tsvd_tau_rel)
-        sigma_coeffs, displacement_coeffs = split_solution(z, data.dim_s)
-        result = evaluate_feature_result(
-            "LS (TSVD)",
-            wall_time,
-            sigma_coeffs,
-            displacement_coeffs,
-            data.eval_data,
-        )
-    elif algorithm_id == "ridge":
-        print("Running LS (Ridge)...")
-        z, wall_time = solve_ridge(data.G, data.F, cfg.ridge_alpha_rel)
-        sigma_coeffs, displacement_coeffs = split_solution(z, data.dim_s)
-        result = evaluate_feature_result(
-            "LS (Ridge)",
-            wall_time,
-            sigma_coeffs,
-            displacement_coeffs,
-            data.eval_data,
-        )
-    else:
-        print("Running LS (Lstsq)...")
-        z, wall_time = solve_lstsq(data.G, data.F)
-        sigma_coeffs, displacement_coeffs = split_solution(z, data.dim_s)
-        result = evaluate_feature_result(
-            "LS (Lstsq)",
-            wall_time,
-            sigma_coeffs,
-            displacement_coeffs,
-            data.eval_data,
-        )
+    if algorithm_id != "direct":
+        raise ValueError(f"Unsupported algorithm: {algorithm_id}")
+    print("Running Direct LS (GELSD)...")
+    z, wall_time, rank, condition_estimate = solve_direct_residual(
+        data.matrix,
+        data.rhs,
+        cfg.direct_rcond,
+    )
+    sigma_coeffs, displacement_coeffs = split_solution(z, data.dim_s)
+    evaluated = evaluate_feature_result(
+        "Direct LS (GELSD)",
+        wall_time,
+        sigma_coeffs,
+        displacement_coeffs,
+        data.eval_data,
+    )
+    result = AlgorithmResult(
+        name=evaluated.name,
+        u_l2_error=evaluated.u_l2_error,
+        sigma_l2_error=evaluated.sigma_l2_error,
+        wall_time=evaluated.wall_time,
+        rank=rank,
+        columns=data.matrix.shape[1],
+        condition_estimate=condition_estimate,
+    )
 
     print_result_summary(result)
     return result
@@ -1187,7 +1205,7 @@ def run_experiment(
     benchmark: SharedBenchmarkData | None = None,
     feature_space: SharedFeatureSpace | None = None,
 ) -> list[AlgorithmResult]:
-    """Run the selected least-squares methods and return their metrics."""
+    """Run direct residual least squares and return its metrics."""
 
     cfg = LeastSquaresConfig() if cfg is None else cfg
     validate_config(cfg)
@@ -1202,8 +1220,7 @@ def run_experiment(
         f"Config: N_s={cfg.N_s}, N_u={cfg.N_u}, "
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
         f"gamma_s={cfg.gamma_s}, gamma_u={cfg.gamma_u}, "
-        f"tsvd_tau_rel={cfg.tsvd_tau_rel:.2e}, "
-        f"ridge_alpha_rel={cfg.ridge_alpha_rel:.2e}, "
+        f"direct_rcond={cfg.direct_rcond:.2e}, "
         f"sampling={cfg.sampling_method}"
     )
     print(f"Algorithms: {selected_algorithm_ids}")
@@ -1243,26 +1260,21 @@ def run_experiment(
     if feature_space.a_s.shape[0] != cfg.N_s or feature_space.a_u.shape[0] != cfg.N_u:
         raise ValueError("SharedFeatureSpace feature counts do not match LeastSquaresConfig.")
 
-    print("Assembling conforming least-squares system...")
-    G, F = assemble_linear_system(
-        cfg,
-        benchmark.compliance_voigt,
-        benchmark.x_int,
-        benchmark.w_int,
-        benchmark.f_int,
-        feature_space.a_s,
-        feature_space.r_s,
-        feature_space.a_u,
-        feature_space.r_u,
-    )
+    print("Assembling direct weighted residual matrix...")
+    t0 = time.perf_counter()
+    direct_design = assemble_direct_residual_design(benchmark, feature_space)
+    assembly_time = time.perf_counter() - t0
     clear_cuda_cache()
 
-    print(f"System shapes: G={tuple(G.shape)}, F={tuple(F.shape)}")
+    print(
+        f"Residual shapes: A={tuple(direct_design.matrix.shape)}, "
+        f"b={tuple(direct_design.rhs.shape)}, assembly={assembly_time:.2f}s"
+    )
 
     experiment_data = LeastSquaresExperimentData(
-        G=G,
-        F=F,
-        dim_s=3 * (cfg.N_s + 1),
+        matrix=direct_design.matrix,
+        rhs=direct_design.rhs,
+        dim_s=direct_design.dim_s,
         eval_data=build_feature_evaluation_data(
             benchmark,
             feature_space,
