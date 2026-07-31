@@ -21,6 +21,9 @@ DEFLECTION_SEED = BASE_SEED + 1_000
 DTYPE = torch.float64
 VALID_SAMPLING_METHODS = ("mc", "sobol", "gauss_legendre")
 VALID_ALGORITHMS = ("lstsq", "tsvd", "ridge")
+FEATURE_DIM = 2
+FEATURE_CENTER = 0.5
+FEATURE_INV_RADIUS = 2.0 / math.sqrt(FEATURE_DIM)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "least-squares" / "plate-bending"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -61,8 +64,8 @@ class AlgorithmResult:
     name: str
     r_c: float
     r_e: float
-    rel_u: float
-    rel_M: float
+    abs_u: float
+    abs_M: float
     wall_time: float
 
 
@@ -118,7 +121,7 @@ class FeatureEvaluationData:
 class LeastSquaresConfig:
     """Configuration for the conforming least-squares experiment."""
 
-    E: float = 1.0
+    E: float = 12.0
     nu: float = 0.3
     h: float = 1.0
     gamma_m: float = 3.0
@@ -431,11 +434,17 @@ def generate_features(N: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
 
-    raw = torch.randn(N, 2, generator=generator, dtype=DTYPE)
+    raw = torch.randn(N, FEATURE_DIM, generator=generator, dtype=DTYPE)
     norms = raw.norm(dim=1, keepdim=True).clamp_min(1.0e-12)
     a = (raw / norms).to(DEVICE)
     r = torch.rand(N, generator=generator, dtype=DTYPE).to(DEVICE)
     return a, r
+
+
+def normalize_feature_coordinates(x: torch.Tensor) -> torch.Tensor:
+    """Map unit-box coordinates into the centered unit ball for features."""
+
+    return (x - FEATURE_CENTER) * FEATURE_INV_RADIUS
 
 
 def eval_features(
@@ -444,9 +453,10 @@ def eval_features(
     r: torch.Tensor,
     gamma: float,
 ) -> torch.Tensor:
-    """Evaluate xi_0 = 1 and xi_m = tanh(gamma (a_m^T x + r_m))."""
+    """Evaluate xi_0 = 1 and xi_m = tanh(gamma (a_m^T x_hat + r_m))."""
 
-    pre = x @ a.T + r.unsqueeze(0)
+    x_hat = normalize_feature_coordinates(x)
+    pre = x_hat @ a.T + r.unsqueeze(0)
     xi = torch.tanh(gamma * pre)
     ones = torch.ones(x.shape[0], 1, dtype=DTYPE, device=DEVICE)
     return torch.cat([ones, xi], dim=1)
@@ -460,11 +470,13 @@ def eval_feature_grads(
 ) -> torch.Tensor:
     """Evaluate gradients of all random features."""
 
-    pre = x @ a.T + r.unsqueeze(0)
+    x_hat = normalize_feature_coordinates(x)
+    pre = x_hat @ a.T + r.unsqueeze(0)
     xi = torch.tanh(gamma * pre)
     dphi = gamma * (1.0 - xi.square())
-    grad_xi = dphi.unsqueeze(2) * a.unsqueeze(0)
-    zeros = torch.zeros(x.shape[0], 1, 2, dtype=DTYPE, device=DEVICE)
+    scaled_a = FEATURE_INV_RADIUS * a
+    grad_xi = dphi.unsqueeze(2) * scaled_a.unsqueeze(0)
+    zeros = torch.zeros(x.shape[0], 1, FEATURE_DIM, dtype=DTYPE, device=DEVICE)
     return torch.cat([zeros, grad_xi], dim=1)
 
 
@@ -476,13 +488,17 @@ def eval_feature_hessians(
 ) -> torch.Tensor:
     """Evaluate Hessian components (11, 22, 12) of all random features."""
 
-    pre = x @ a.T + r.unsqueeze(0)
+    x_hat = normalize_feature_coordinates(x)
+    pre = x_hat @ a.T + r.unsqueeze(0)
     xi = torch.tanh(gamma * pre)
     d2phi = -2.0 * gamma * gamma * xi * (1.0 - xi.square())
+    scaled_a = FEATURE_INV_RADIUS * a
 
-    h11 = d2phi.unsqueeze(2) * a[:, 0].square().unsqueeze(0).unsqueeze(2)
-    h22 = d2phi.unsqueeze(2) * a[:, 1].square().unsqueeze(0).unsqueeze(2)
-    h12 = d2phi.unsqueeze(2) * (a[:, 0] * a[:, 1]).unsqueeze(0).unsqueeze(2)
+    h11 = d2phi.unsqueeze(2) * scaled_a[:, 0].square().unsqueeze(0).unsqueeze(2)
+    h22 = d2phi.unsqueeze(2) * scaled_a[:, 1].square().unsqueeze(0).unsqueeze(2)
+    h12 = d2phi.unsqueeze(2) * (
+        scaled_a[:, 0] * scaled_a[:, 1]
+    ).unsqueeze(0).unsqueeze(2)
     hess = torch.cat([h11, h22, h12], dim=2)
     zeros = torch.zeros(x.shape[0], 1, 3, dtype=DTYPE, device=DEVICE)
     return torch.cat([zeros, hess], dim=1)
@@ -906,7 +922,7 @@ def split_solution(z: torch.Tensor, dim_m: int) -> tuple[torch.Tensor, torch.Ten
     return z[:dim_m], z[dim_m:]
 
 
-def compute_l2_errors(
+def compute_absolute_errors(
     psi_u_test: torch.Tensor,
     xi_m_test: torch.Tensor,
     moment_coeffs: torch.Tensor,
@@ -915,23 +931,17 @@ def compute_l2_errors(
     u_exact: torch.Tensor,
     M_exact: torch.Tensor,
 ) -> tuple[float, float]:
-    """Compute relative L2 errors for deflection and moments."""
+    """Compute absolute L2 errors for deflection and moments."""
 
     M_h = xi_m_test @ moment_coeffs.reshape(-1, 3)
     u_h = psi_u_test @ deflection_coeffs
 
     u_err = torch.sqrt((w_test * (u_h - u_exact).square()).sum())
-    u_ref = torch.sqrt((w_test * u_exact.square()).sum())
-    rel_u = (u_err / u_ref).item() if u_ref > 0 else float("inf")
 
     M_err = torch.sqrt(
         (w_test * (FROBENIUS_WEIGHT * (M_h - M_exact).square()).sum(dim=1)).sum()
     )
-    M_ref = torch.sqrt(
-        (w_test * (FROBENIUS_WEIGHT * M_exact.square()).sum(dim=1)).sum()
-    )
-    rel_M = (M_err / M_ref).item() if M_ref > 0 else float("inf")
-    return rel_u, rel_M
+    return u_err.item(), M_err.item()
 
 
 def compute_coefficient_residual_norms(
@@ -996,7 +1006,7 @@ def evaluate_feature_result(
         moment_coeffs,
         deflection_coeffs,
     )
-    rel_u, rel_M = compute_l2_errors(
+    abs_u, abs_M = compute_absolute_errors(
         data.psi_u_test,
         data.xi_m_test,
         moment_coeffs,
@@ -1009,8 +1019,8 @@ def evaluate_feature_result(
         name=name,
         r_c=r_c,
         r_e=r_e,
-        rel_u=rel_u,
-        rel_M=rel_M,
+        abs_u=abs_u,
+        abs_M=abs_M,
         wall_time=wall_time,
     )
 
@@ -1020,11 +1030,62 @@ def print_result_summary(result: AlgorithmResult) -> None:
 
     print(
         f"    Done in {result.wall_time:.2f}s, "
-        f"||r_c||={result.r_c:.2e}, "
-        f"||r_e||={result.r_e:.2e}, "
-        f"rel_u={result.rel_u:.2e}, "
-        f"rel_M={result.rel_M:.2e}"
+        f"‖Φ^u-u‖={result.abs_u:.2e}, "
+        f"‖Φ^M-M‖={result.abs_M:.2e}"
     )
+
+
+def print_aligned_markdown_table(
+    title: str,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    alignments: Sequence[str],
+) -> None:
+    """Print a compact markdown-style table with content-aware widths."""
+
+    if not rows:
+        return
+    if len(headers) != len(alignments):
+        raise ValueError("headers and alignments must have the same length.")
+    if any(len(row) != len(headers) for row in rows):
+        raise ValueError("Each row must have the same number of columns as headers.")
+
+    widths = [
+        max(len(header), max(len(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    ]
+
+    def format_row(row: Sequence[str]) -> str:
+        cells: list[str] = []
+        for index, cell in enumerate(row):
+            if alignments[index] == "left":
+                cells.append(f"{cell:<{widths[index]}}")
+            elif alignments[index] == "center":
+                cells.append(f"{cell:^{widths[index]}}")
+            elif alignments[index] == "right":
+                cells.append(f"{cell:>{widths[index]}}")
+            else:
+                raise ValueError(f"Unsupported alignment: {alignments[index]}")
+        return f"| {' | '.join(cells)} |"
+
+    def format_separator() -> str:
+        cells: list[str] = []
+        for index, alignment in enumerate(alignments):
+            if alignment == "left":
+                cells.append(f":{'-' * (widths[index] + 1)}")
+            elif alignment == "center":
+                cells.append(f":{'-' * widths[index]}:")
+            elif alignment == "right":
+                cells.append(f"{'-' * (widths[index] + 1)}:")
+            else:
+                raise ValueError(f"Unsupported alignment: {alignment}")
+        return f"|{'|'.join(cells)}|"
+
+    print(f"\n=== {title} ===\n")
+    print(format_row(headers))
+    print(format_separator())
+    for row in rows:
+        print(format_row(row))
 
 
 def print_summary_table(
@@ -1036,21 +1097,27 @@ def print_summary_table(
     if not results:
         return
 
-    method_width = max(18, max(len(result.name) for result in results))
-    print(f"\n=== {title} ===\n")
-    print(
-        f"| {'Method':<{method_width}} | {'rel_u':>10} | "
-        f"{'rel_M':>10} | {'Time(s)':>8} |"
+    headers = (
+        "Method",
+        "‖Φ^u-u‖",
+        "‖Φ^M-M‖",
+        "Time(s)",
     )
-    print(
-        f"|:{'-' * (method_width + 1)}|{'-' * 11}:|"
-        f"{'-' * 11}:|{'-' * 9}:|"
-    )
-    for result in results:
-        print(
-            f"| {result.name:<{method_width}} | {result.rel_u:>10.2e} | "
-            f"{result.rel_M:>10.2e} | {result.wall_time:>8.2f} |"
+    rows = [
+        (
+            result.name,
+            f"{result.abs_u:.2e}",
+            f"{result.abs_M:.2e}",
+            f"{result.wall_time:.2f}",
         )
+        for result in results
+    ]
+    print_aligned_markdown_table(
+        title=title,
+        headers=headers,
+        rows=rows,
+        alignments=("left", "center", "center", "center"),
+    )
 
 
 def configure_plotting() -> None:
@@ -1064,7 +1131,7 @@ def plot_l2_summary(
     results: Sequence[AlgorithmResult],
     save_path: str,
 ) -> None:
-    """Plot final relative L2 errors as bar charts."""
+    """Plot final absolute L2 errors as bar charts."""
 
     if not results:
         print(f"  Skipped: {save_path} (no results to plot)")
@@ -1073,10 +1140,10 @@ def plot_l2_summary(
     configure_plotting()
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
     titles = [
-        r"Deflection $\|\Phi^u - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
-        r"Moment $\|\Phi^M - M_{ex}\|_{L^2} / \|M_{ex}\|_{L^2}$",
+        r"Deflection $\|\Phi^u - u_{ex}\|_{L^2}$",
+        r"Moment $\|\Phi^M - M_{ex}\|_{L^2}$",
     ]
-    keys = ["rel_u", "rel_M"]
+    keys = ["abs_u", "abs_M"]
     labels = [result.name for result in results]
     x_positions = np.arange(len(results), dtype=float)
     colors = [
@@ -1101,7 +1168,7 @@ def plot_l2_summary(
             print(f"  Skipped {labels[index]} {key}={values[index]!r} in {save_path}")
 
         ax.set_yscale("log")
-        ax.set_ylabel("Relative $L^2$ error")
+        ax.set_ylabel("Absolute $L^2$ error")
         ax.set_title(title)
         ax.set_xticks(x_positions)
         ax.set_xticklabels(labels, rotation=20, ha="right")

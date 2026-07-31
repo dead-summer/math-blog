@@ -22,6 +22,7 @@ from plate_bending import (
     build_shared_feature_space,
     clear_cuda_cache,
     configure_plotting,
+    print_aligned_markdown_table,
     run_experiment,
     validate_algorithm_selection,
 )
@@ -118,27 +119,29 @@ def print_ablation_summary_table(
     if not ordered_records:
         return
 
-    method_width = max(
-        18,
-        max(len(record.algorithm_name) for record in ordered_records),
+    headers = (
+        "Method",
+        "N",
+        "‖Φ^u-u‖",
+        "‖Φ^M-M‖",
+        "Time(s)",
     )
-
-    print("\n=== N Ablation Summary ===\n")
-    print(
-        f"| {'Method':<{method_width}} | {'N':>6} | "
-        f"{'rel_u':>10} | {'rel_M':>10} | {'Time(s)':>8} |"
-    )
-    print(
-        f"|:{'-' * (method_width + 1)}|{'-' * 7}:|"
-        f"{'-' * 11}:|{'-' * 11}:|{'-' * 9}:|"
-    )
-    for record in ordered_records:
-        result = record.result
-        print(
-            f"| {record.algorithm_name:<{method_width}} | {record.N:>6} | "
-            f"{result.rel_u:>10.2e} | {result.rel_M:>10.2e} | "
-            f"{result.wall_time:>8.2f} |"
+    rows = [
+        (
+            record.algorithm_name,
+            str(record.N),
+            f"{record.result.abs_u:.2e}",
+            f"{record.result.abs_M:.2e}",
+            f"{record.result.wall_time:.2f}",
         )
+        for record in ordered_records
+    ]
+    print_aligned_markdown_table(
+        title="N Ablation Summary",
+        headers=headers,
+        rows=rows,
+        alignments=("left", "center", "center", "center", "center"),
+    )
 
 
 def plot_ablation_N(
@@ -146,7 +149,7 @@ def plot_ablation_N(
     algorithm_ids: list[str],
     save_path: str,
 ) -> None:
-    """Plot relative L2 error versus N for each configured solver."""
+    """Plot absolute L2 error versus N for each configured solver."""
 
     if not results:
         print(f"  Skipped: {save_path} (no results to plot)")
@@ -160,14 +163,14 @@ def plot_ablation_N(
     fig, axes = plt.subplots(1, 2, figsize=(fig_width, 4.8))
     metric_specs = [
         (
-            "rel_u",
-            r"Deflection $\|\Phi^u - u_{ex}\|_{L^2} / \|u_{ex}\|_{L^2}$",
-            "Relative $L^2$ error",
+            "abs_u",
+            r"Deflection $\|\Phi^u - u_{ex}\|_{L^2}$",
+            "Absolute $L^2$ error",
         ),
         (
-            "rel_M",
-            r"Moment $\|\Phi^M - M_{ex}\|_{L^2} / \|M_{ex}\|_{L^2}$",
-            "Relative $L^2$ error",
+            "abs_M",
+            r"Moment $\|\Phi^M - M_{ex}\|_{L^2}$",
+            "Absolute $L^2$ error",
         ),
     ]
 
