@@ -6,12 +6,13 @@ import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import Iterator, Sequence
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.linalg import get_lapack_funcs
 import torch
 
 
@@ -20,7 +21,8 @@ STRESS_SEED = BASE_SEED
 DISP_SEED = BASE_SEED + 1_000
 DTYPE = torch.float64
 VALID_SAMPLING_METHODS = ("mc", "sobol", "gauss_legendre")
-VALID_ALGORITHMS = ("lstsq", "tsvd", "ridge")
+VALID_ALGORITHMS = ("direct",)
+VALID_DIRECT_SOLVERS = ("dense", "streaming_tsqr")
 VALID_MANUFACTURED_SOLUTIONS = ("hu_zhang", "div_free", "near_incompressible")
 FEATURE_DIM = 3
 FEATURE_CENTER = 0.5
@@ -29,9 +31,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "least-squares" / "linear-elasticity-3d"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 ALGO_STYLE = {
-    "LS (Lstsq)": {"color": "#264653", "marker": "s", "linestyle": "--"},
-    "LS (TSVD)": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
-    "LS (Ridge)": {"color": "#E76F51", "marker": "D", "linestyle": "-."},
+    "LS": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
 }
 
 def detect_device() -> torch.device:
@@ -44,7 +44,7 @@ def detect_device() -> torch.device:
     return torch.device("cpu")
 
 
-DEVICE = detect_device()
+DEVICE = torch.device("cpu")
 
 VOIGT_WEIGHT = torch.tensor(
     [1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
@@ -136,6 +136,9 @@ class AlgorithmResult:
     u_l2_error: float
     sigma_l2_error: float
     wall_time: float
+    rank: int = 0
+    columns: int = 0
+    condition_estimate: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -184,20 +187,17 @@ class LeastSquaresConfig:
     gamma_u: float = 2.0
     N_s: int = 1000
     N_u: int = 1000
-    Q_train: int = (2 ** 5) ** 3
-    Q_test: int = (2 ** 4) ** 3
-    sampling_method: str = "sobol"
+    Q_train: int = 16**3
+    Q_test: int = 16**3
+    sampling_method: str = "gauss_legendre"
     manufactured_solution: str = "div_free"
-    tsvd_tau_rel: float = 1.0e-15
-    ridge_alpha_rel: float = 1.0e-15
+    direct_rcond: float = 1.0e-14
+    direct_solver: str = "streaming_tsqr"
+    direct_batch_size: int = 1_024
+    direct_qr_block_size: int = 64
     body_force_batch_size: int = 5_000
-    assembly_batch_size: int = 5_000
     algorithms_to_run: list[str] = field(
-        default_factory=lambda: [
-            "lstsq",
-            "tsvd",
-            "ridge",
-        ]
+        default_factory=lambda: ["direct"]
     )
 
 
@@ -205,41 +205,82 @@ class LeastSquaresConfig:
 class LeastSquaresExperimentData:
     """All tensors needed to run and evaluate one least-squares solver."""
 
-    G: torch.Tensor
-    F: torch.Tensor
+    matrix: torch.Tensor
+    rhs: torch.Tensor
     solved_dim_s: int
     stress_adapter: "StressBasisAdapter"
     eval_data: FeatureEvaluationData
+    source_rows: int
+    preparation_time: float
+    direct_solver: str
 
 
 @dataclass(frozen=True)
 class StressBasisAdapter:
     """Linear map between active stress coefficients and the raw stress basis."""
 
-    transform: torch.Tensor
+    transform: torch.Tensor | None
     constraint: torch.Tensor
+    mean_raw_sigma: torch.Tensor
     raw_dim: int
     active_dim: int
 
 
 @dataclass(frozen=True)
-class RawStressLinearBlocks:
-    """Raw stress-space blocks before the active-stress projection is applied."""
+class DirectResidualDesign:
+    """Weighted residual matrix plus coefficient-space metadata."""
 
-    G_ss_raw: torch.Tensor
-    G_su_raw: torch.Tensor
-    G_uu: torch.Tensor
-    F_s_raw: torch.Tensor
+    matrix: torch.Tensor
+    rhs: torch.Tensor
+    solved_dim_s: int
+    stress_adapter: StressBasisAdapter
 
 
 @dataclass(frozen=True)
-class AssembledLinearSystem:
-    """Linear system plus metadata needed to interpret its stress block."""
+class DirectResidualContext:
+    """Dimensions and fixed coupling blocks shared by all residual batches."""
 
-    G: torch.Tensor
-    F: torch.Tensor
-    solved_dim_s: int
     stress_adapter: StressBasisAdapter
+    np1_s: int
+    np1_u: int
+    deviatoric_dim_s: int
+    active_dim_s: int
+    dim_u: int
+    columns: int
+    compliance_deviatoric: torch.Tensor
+    compliance_hydrostatic: torch.Tensor
+    equilibrium_deviatoric: torch.Tensor
+    equilibrium_hydrostatic: torch.Tensor
+
+
+@dataclass(frozen=True)
+class DirectResidualBatch:
+    """One Fortran-contiguous augmented residual block ``[A_i, b_i]``."""
+
+    start: int
+    stop: int
+    augmented: np.ndarray
+
+    @property
+    def matrix(self) -> np.ndarray:
+        return self.augmented[:, :-1]
+
+    @property
+    def rhs(self) -> np.ndarray:
+        return self.augmented[:, -1]
+
+
+@dataclass(frozen=True)
+class StreamingTSQRStats:
+    """Timing and shape diagnostics for the streaming compression pass."""
+
+    source_rows: int
+    columns: int
+    batch_count: int
+    mean_pass_time: float
+    assembly_time: float
+    qr_time: float
+    total_time: float
 
 
 def clear_cuda_cache() -> None:
@@ -247,13 +288,6 @@ def clear_cuda_cache() -> None:
 
     if DEVICE.type == "cuda":
         torch.cuda.empty_cache()
-
-
-def synchronize_device() -> None:
-    """Synchronize queued device work before reading wall-clock timings."""
-
-    if DEVICE.type == "cuda":
-        torch.cuda.synchronize()
 
 
 def validate_sampling_method(method: str) -> None:
@@ -322,14 +356,19 @@ def validate_config(cfg: LeastSquaresConfig) -> None:
         raise ValueError("Config.Q_train must be positive.")
     if cfg.Q_test <= 0:
         raise ValueError("Config.Q_test must be positive.")
-    if not math.isfinite(cfg.tsvd_tau_rel) or cfg.tsvd_tau_rel < 0.0:
-        raise ValueError("Config.tsvd_tau_rel must be finite and non-negative.")
-    if not math.isfinite(cfg.ridge_alpha_rel) or cfg.ridge_alpha_rel <= 0.0:
-        raise ValueError("Config.ridge_alpha_rel must be finite and positive.")
+    if not math.isfinite(cfg.direct_rcond) or cfg.direct_rcond <= 0.0:
+        raise ValueError("Config.direct_rcond must be finite and positive.")
+    if cfg.direct_solver not in VALID_DIRECT_SOLVERS:
+        raise ValueError(
+            f"Unknown direct_solver='{cfg.direct_solver}'. "
+            f"Valid values: {list(VALID_DIRECT_SOLVERS)}"
+        )
+    if cfg.direct_batch_size <= 0:
+        raise ValueError("Config.direct_batch_size must be positive.")
+    if cfg.direct_qr_block_size <= 0:
+        raise ValueError("Config.direct_qr_block_size must be positive.")
     if cfg.body_force_batch_size <= 0:
         raise ValueError("Config.body_force_batch_size must be positive.")
-    if cfg.assembly_batch_size <= 0:
-        raise ValueError("Config.assembly_batch_size must be positive.")
     validate_sampling_method(cfg.sampling_method)
     validate_manufactured_solution(cfg.manufactured_solution)
     validate_algorithm_selection(cfg.algorithms_to_run, VALID_ALGORITHMS)
@@ -672,6 +711,26 @@ def eval_raw_scalar_basis_grads(
     return torch.cat([zeros, grad_xi], dim=1)
 
 
+def eval_raw_scalar_basis_data(
+    x: torch.Tensor,
+    a: torch.Tensor,
+    r: torch.Tensor,
+    gamma: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Evaluate scalar basis values and gradients with one feature projection."""
+
+    x_hat = normalize_feature_coordinates(x)
+    pre = x_hat @ a.T + r.unsqueeze(0)
+    raw_features = torch.tanh(gamma * pre)
+    ones = torch.ones(x.shape[0], 1, dtype=DTYPE, device=DEVICE)
+    raw_basis = torch.cat([ones, raw_features], dim=1)
+    dtanh = 1.0 - raw_features.square()
+    grad_xi = gamma * FEATURE_INV_RADIUS * dtanh.unsqueeze(2) * a.unsqueeze(0)
+    zeros = torch.zeros(x.shape[0], 1, 3, dtype=DTYPE, device=DEVICE)
+    raw_basis_grad = torch.cat([zeros, grad_xi], dim=1)
+    return raw_basis, raw_basis_grad
+
+
 def eval_active_displacement_basis(
     x: torch.Tensor,
     a: torch.Tensor,
@@ -693,16 +752,30 @@ def eval_active_displacement_basis_data(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Evaluate the active displacement basis and its gradients."""
 
-    raw_basis = eval_raw_scalar_basis(x, a, r, gamma)
-    raw_basis_grad = eval_raw_scalar_basis_grads(x, a, r, gamma)
+    raw_basis, raw_basis_grad = eval_raw_scalar_basis_data(x, a, r, gamma)
     adapter_weight = eval_displacement_adapter_weight(x)
     adapter_weight_grad = eval_displacement_adapter_weight_grad(x)
     active_basis = adapter_weight.unsqueeze(1) * raw_basis
-    active_basis_grad = (
-        raw_basis.unsqueeze(2) * adapter_weight_grad.unsqueeze(1)
-        + adapter_weight.view(-1, 1, 1) * raw_basis_grad
-    )
+    raw_basis_grad.mul_(adapter_weight.view(-1, 1, 1))
+    raw_basis_grad.add_(raw_basis.unsqueeze(2) * adapter_weight_grad.unsqueeze(1))
+    active_basis_grad = raw_basis_grad
     return active_basis, active_basis_grad
+
+
+def eval_active_displacement_basis_grads(
+    x: torch.Tensor,
+    a: torch.Tensor,
+    r: torch.Tensor,
+    gamma: float,
+) -> torch.Tensor:
+    """Evaluate only active displacement gradients for residual assembly."""
+
+    raw_basis, raw_basis_grad = eval_raw_scalar_basis_data(x, a, r, gamma)
+    adapter_weight = eval_displacement_adapter_weight(x)
+    adapter_weight_grad = eval_displacement_adapter_weight_grad(x)
+    raw_basis_grad.mul_(adapter_weight.view(-1, 1, 1))
+    raw_basis_grad.add_(raw_basis.unsqueeze(2) * adapter_weight_grad.unsqueeze(1))
+    return raw_basis_grad
 
 
 def build_shared_benchmark(
@@ -808,141 +881,6 @@ def build_feature_evaluation_data(
     )
 
 
-def add_block_scaled(
-    target: torch.Tensor,
-    feature_matrix: torch.Tensor,
-    block: torch.Tensor,
-    row_stride: int,
-    col_stride: int,
-) -> None:
-    """Add feature_matrix kron block into a strided matrix."""
-
-    for row in range(block.shape[0]):
-        for col in range(block.shape[1]):
-            coeff = block[row, col].item()
-            if coeff == 0.0:
-                continue
-            target[row::row_stride, col::col_stride] += coeff * feature_matrix
-
-
-def add_rhs_feature_blocks(
-    target: torch.Tensor,
-    feature_by_vec: torch.Tensor,
-    block: torch.Tensor,
-    block_size: int,
-    scale: float = 1.0,
-) -> None:
-    """Accumulate feature moments into a strided rhs vector."""
-
-    contribution = scale * (feature_by_vec @ block.T)
-    for row in range(block.shape[0]):
-        target[row::block_size] += contribution[:, row]
-
-
-def accumulate_interior_moments(
-    x_int: torch.Tensor,
-    w_int: torch.Tensor,
-    f_int: torch.Tensor,
-    a_s: torch.Tensor,
-    r_s: torch.Tensor,
-    gamma_s: float,
-    a_u: torch.Tensor,
-    r_u: torch.Tensor,
-    gamma_u: float,
-    batch_size: int,
-) -> tuple[
-    torch.Tensor,
-    torch.Tensor,
-    list[torch.Tensor],
-    list[list[torch.Tensor]],
-    list[list[torch.Tensor]],
-    list[torch.Tensor],
-]:
-    """Accumulate raw/active basis moments for the least-squares linear system."""
-
-    np1_s = a_s.shape[0] + 1
-    np1_u = a_u.shape[0] + 1
-
-    gram_raw_sigma = torch.zeros(np1_s, np1_s, dtype=DTYPE, device=DEVICE)
-    mean_raw_sigma = torch.zeros(np1_s, dtype=DTYPE, device=DEVICE)
-    cross_raw_sigma_grad_active_u = [
-        torch.zeros(np1_s, np1_u, dtype=DTYPE, device=DEVICE) for _ in range(3)
-    ]
-    grad_gram_active_u = [
-        [
-            torch.zeros(np1_u, np1_u, dtype=DTYPE, device=DEVICE)
-            for _ in range(3)
-        ]
-        for _ in range(3)
-    ]
-    grad_gram_raw_sigma = [
-        [
-            torch.zeros(np1_s, np1_s, dtype=DTYPE, device=DEVICE)
-            for _ in range(3)
-        ]
-        for _ in range(3)
-    ]
-    grad_force_raw_sigma = [
-        torch.zeros(np1_s, 3, dtype=DTYPE, device=DEVICE) for _ in range(3)
-    ]
-
-    with torch.no_grad():
-        for start in range(0, x_int.shape[0], batch_size):
-            end = min(start + batch_size, x_int.shape[0])
-            xb = x_int[start:end]
-            wb = w_int[start:end]
-            fb = f_int[start:end]
-
-            raw_sigma_basis_batch = eval_raw_scalar_basis(xb, a_s, r_s, gamma_s)
-            raw_sigma_basis_grad_batch = eval_raw_scalar_basis_grads(
-                xb,
-                a_s,
-                r_s,
-                gamma_s,
-            )
-            _, active_u_basis_grad_batch = eval_active_displacement_basis_data(
-                xb,
-                a_u,
-                r_u,
-                gamma_u,
-            )
-
-            weighted_raw_sigma = wb.unsqueeze(1) * raw_sigma_basis_batch
-            weighted_grad_active_u = [
-                wb.unsqueeze(1) * active_u_basis_grad_batch[:, :, dim_i]
-                for dim_i in range(3)
-            ]
-            weighted_grad_raw_sigma = [
-                wb.unsqueeze(1) * raw_sigma_basis_grad_batch[:, :, dim_i]
-                for dim_i in range(3)
-            ]
-            gram_raw_sigma += raw_sigma_basis_batch.T @ weighted_raw_sigma
-            mean_raw_sigma += weighted_raw_sigma.sum(dim=0)
-            for dim_i in range(3):
-                cross_raw_sigma_grad_active_u[dim_i] += (
-                    raw_sigma_basis_batch.T @ weighted_grad_active_u[dim_i]
-                )
-                grad_force_raw_sigma[dim_i] += weighted_grad_raw_sigma[dim_i].T @ fb
-                for dim_j in range(3):
-                    grad_gram_active_u[dim_i][dim_j] += (
-                        active_u_basis_grad_batch[:, :, dim_i].T
-                        @ weighted_grad_active_u[dim_j]
-                    )
-                    grad_gram_raw_sigma[dim_i][dim_j] += (
-                        raw_sigma_basis_grad_batch[:, :, dim_i].T
-                        @ weighted_grad_raw_sigma[dim_j]
-                    )
-
-    return (
-        gram_raw_sigma,
-        mean_raw_sigma,
-        cross_raw_sigma_grad_active_u,
-        grad_gram_active_u,
-        grad_gram_raw_sigma,
-        grad_force_raw_sigma,
-    )
-
-
 def build_stress_trace_constraint(mean_raw_sigma: torch.Tensor) -> torch.Tensor:
     """Return c such that c^T sigma_coeffs = ∫ tr(sigma_h) dx."""
 
@@ -981,269 +919,547 @@ def build_zero_mean_hydrostatic_transform(
 def build_stress_basis_adapter(
     mean_raw_sigma: torch.Tensor,
     tol: float = 1.0e-10,
+    materialize_transform: bool = True,
 ) -> StressBasisAdapter:
     """Build the active stress basis using deviatoric and zero-mean hydrostatic modes."""
 
     np1_s = mean_raw_sigma.numel()
-    hydro_transform = build_zero_mean_hydrostatic_transform(mean_raw_sigma)
-    identity_features = torch.eye(np1_s, dtype=DTYPE, device=DEVICE)
     raw_dim = 6 * np1_s
-
-    transform_deviatoric = torch.kron(identity_features, DEVIATORIC_STRESS_BASES)
-    transform_hydrostatic = torch.kron(
-        hydro_transform,
-        HYDROSTATIC_STRESS_BASIS.unsqueeze(1),
-    )
-    transform = torch.cat([transform_deviatoric, transform_hydrostatic], dim=1)
+    active_dim = raw_dim - 1
     constraint = build_stress_trace_constraint(mean_raw_sigma)
-    constraint_residual = torch.abs(constraint @ transform).max()
-    if constraint_residual > tol:
-        raise ValueError(
-            "Stress active basis violates the trace-mean constraint: "
-            f"{constraint_residual.item():.2e}"
+    transform = None
+
+    if torch.abs(mean_raw_sigma[0]) <= 1.0e-12:
+        raise ValueError("Raw stress basis has degenerate mean; cannot build zero-mean basis.")
+
+    if materialize_transform:
+        hydro_transform = build_zero_mean_hydrostatic_transform(mean_raw_sigma)
+        identity_features = torch.eye(np1_s, dtype=DTYPE, device=DEVICE)
+        transform_deviatoric = torch.kron(identity_features, DEVIATORIC_STRESS_BASES)
+        transform_hydrostatic = torch.kron(
+            hydro_transform,
+            HYDROSTATIC_STRESS_BASIS.unsqueeze(1),
         )
+        transform = torch.cat([transform_deviatoric, transform_hydrostatic], dim=1)
+        constraint_residual = torch.abs(constraint @ transform).max()
+        if constraint_residual > tol:
+            raise ValueError(
+                "Stress active basis violates the trace-mean constraint: "
+                f"{constraint_residual.item():.2e}"
+            )
 
     return StressBasisAdapter(
         transform=transform,
         constraint=constraint,
+        mean_raw_sigma=mean_raw_sigma,
         raw_dim=raw_dim,
-        active_dim=transform.shape[1],
+        active_dim=active_dim,
     )
 
 
-def assemble_weighted_raw_stress_blocks(
-    mu: float,
-    lam: float,
-    gram_raw_sigma: torch.Tensor,
-    cross_raw_sigma_grad_active_u: list[torch.Tensor],
-    grad_gram_active_u: list[list[torch.Tensor]],
-    grad_gram_raw_sigma: list[list[torch.Tensor]],
-    grad_force_raw_sigma: list[torch.Tensor],
-    np1_s: int,
-    np1_u: int,
-) -> RawStressLinearBlocks:
-    """Assemble the paper's two-term least-squares system in the raw stress basis."""
+def iter_point_batches(point_count: int, batch_size: int) -> Iterator[tuple[int, int]]:
+    """Yield exact half-open point batches, including a possibly short tail."""
 
-    dim_s = 6 * np1_s
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive.")
+    for start in range(0, point_count, batch_size):
+        yield start, min(start + batch_size, point_count)
+
+
+def accumulate_raw_sigma_mean(
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+    batch_size: int,
+) -> torch.Tensor:
+    """Accumulate the global stress-basis mean without materializing all values."""
+
+    mean_raw_sigma = torch.zeros(
+        feature_space.a_s.shape[0] + 1,
+        dtype=DTYPE,
+        device=DEVICE,
+    )
+    with torch.no_grad():
+        for start, stop in iter_point_batches(
+            benchmark.x_int.shape[0],
+            batch_size,
+        ):
+            raw_sigma = eval_raw_scalar_basis(
+                benchmark.x_int[start:stop],
+                feature_space.a_s,
+                feature_space.r_s,
+                feature_space.gamma_s,
+            )
+            mean_raw_sigma.add_(
+                (
+                    benchmark.w_int[start:stop].unsqueeze(1)
+                    * raw_sigma
+                ).sum(dim=0)
+            )
+    return mean_raw_sigma
+
+
+def build_direct_residual_context(
+    cfg: LeastSquaresConfig,
+    feature_space: SharedFeatureSpace,
+    mean_raw_sigma: torch.Tensor,
+) -> DirectResidualContext:
+    """Prepare dimensions and small material couplings for batch assembly."""
+
+    np1_s = feature_space.a_s.shape[0] + 1
+    np1_u = feature_space.a_u.shape[0] + 1
+    if np1_s != cfg.N_s + 1 or np1_u != cfg.N_u + 1:
+        raise ValueError("SharedFeatureSpace dimensions do not match LeastSquaresConfig.")
+    if mean_raw_sigma.numel() != np1_s:
+        raise ValueError("Stress-basis mean has the wrong dimension.")
+
+    stress_adapter = build_stress_basis_adapter(
+        mean_raw_sigma,
+        materialize_transform=False,
+    )
+    deviatoric_dim_s = 5 * np1_s
+    active_dim_s = stress_adapter.active_dim
     dim_u = 3 * np1_u
 
-    G_ss = torch.zeros(dim_s, dim_s, dtype=DTYPE, device=DEVICE)
-    G_su = torch.zeros(dim_s, dim_u, dtype=DTYPE, device=DEVICE)
-    G_uu = torch.zeros(dim_u, dim_u, dtype=DTYPE, device=DEVICE)
-    F_s = torch.zeros(dim_s, dtype=DTYPE, device=DEVICE)
-
-    compliance_voigt = build_compliance_matrix(mu, lam)
-    compliance_sq = compliance_voigt.T @ compliance_voigt
-    add_block_scaled(
-        G_ss,
-        gram_raw_sigma,
-        compliance_sq,
-        row_stride=6,
-        col_stride=6,
+    mu, lam = compute_lame_constants(cfg.E, cfg.nu)
+    compliance = build_compliance_matrix(mu, lam)
+    compliance_deviatoric = compliance @ DEVIATORIC_STRESS_BASES
+    compliance_hydrostatic = compliance @ HYDROSTATIC_STRESS_BASIS
+    equilibrium_deviatoric = torch.empty(
+        3,
+        3,
+        5,
+        dtype=DTYPE,
+        device=DEVICE,
     )
-
-    for dim_i in range(3):
-        constitutive_cross = compliance_voigt @ STRAIN_GRAD_BASES[dim_i]
-        add_block_scaled(
-            G_su,
-            cross_raw_sigma_grad_active_u[dim_i],
-            -constitutive_cross,
-            row_stride=6,
-            col_stride=3,
-        )
-        add_rhs_feature_blocks(
-            F_s,
-            grad_force_raw_sigma[dim_i],
-            STRAIN_GRAD_BASES[dim_i],
-            block_size=6,
-            scale=-1.0,
-        )
-
-        for dim_j in range(3):
-            constitutive_uu = STRAIN_GRAD_BASES[dim_i].T @ STRAIN_GRAD_BASES[dim_j]
-            equilibrium_ss = STRAIN_GRAD_BASES[dim_i] @ STRAIN_GRAD_BASES[dim_j].T
-            add_block_scaled(
-                G_uu,
-                grad_gram_active_u[dim_i][dim_j],
-                constitutive_uu,
-                row_stride=3,
-                col_stride=3,
+    equilibrium_hydrostatic = torch.empty(3, 3, dtype=DTYPE, device=DEVICE)
+    for equilibrium_component in range(3):
+        for spatial_dimension in range(3):
+            coupling = STRAIN_GRAD_BASES[spatial_dimension][
+                :, equilibrium_component
+            ]
+            equilibrium_deviatoric[equilibrium_component, spatial_dimension] = (
+                coupling @ DEVIATORIC_STRESS_BASES
             )
-            add_block_scaled(
-                G_ss,
-                grad_gram_raw_sigma[dim_i][dim_j],
-                equilibrium_ss,
-                row_stride=6,
-                col_stride=6,
+            equilibrium_hydrostatic[equilibrium_component, spatial_dimension] = (
+                torch.dot(coupling, HYDROSTATIC_STRESS_BASIS)
             )
 
-    return RawStressLinearBlocks(
-        G_ss_raw=G_ss,
-        G_su_raw=G_su,
-        G_uu=G_uu,
-        F_s_raw=F_s,
-    )
-
-
-def apply_stress_basis_adapter(
-    raw_blocks: RawStressLinearBlocks,
-    stress_adapter: StressBasisAdapter,
-) -> AssembledLinearSystem:
-    """Project raw stress blocks onto the active stress basis."""
-
-    transform = stress_adapter.transform
-    active_dim_s = stress_adapter.active_dim
-    dim_u = raw_blocks.G_uu.shape[0]
-    G_ss = transform.T @ raw_blocks.G_ss_raw @ transform
-    G_su = transform.T @ raw_blocks.G_su_raw
-    F_s = transform.T @ raw_blocks.F_s_raw
-
-    G = torch.zeros(active_dim_s + dim_u, active_dim_s + dim_u, dtype=DTYPE, device=DEVICE)
-    G[:active_dim_s, :active_dim_s] = G_ss
-    G[:active_dim_s, active_dim_s:] = G_su
-    G[active_dim_s:, :active_dim_s] = G_su.T
-    G[active_dim_s:, active_dim_s:] = raw_blocks.G_uu
-    G = 0.5 * (G + G.T)
-
-    F = torch.zeros(active_dim_s + dim_u, dtype=DTYPE, device=DEVICE)
-    F[:active_dim_s] = F_s
-    return AssembledLinearSystem(
-        G=G,
-        F=F,
-        solved_dim_s=active_dim_s,
+    return DirectResidualContext(
         stress_adapter=stress_adapter,
+        np1_s=np1_s,
+        np1_u=np1_u,
+        deviatoric_dim_s=deviatoric_dim_s,
+        active_dim_s=active_dim_s,
+        dim_u=dim_u,
+        columns=active_dim_s + dim_u,
+        compliance_deviatoric=compliance_deviatoric,
+        compliance_hydrostatic=compliance_hydrostatic,
+        equilibrium_deviatoric=equilibrium_deviatoric,
+        equilibrium_hydrostatic=equilibrium_hydrostatic,
     )
 
 
-def assemble_linear_system(
+def assemble_direct_residual_batch(
+    start: int,
+    stop: int,
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+    context: DirectResidualContext,
+) -> DirectResidualBatch:
+    """Assemble one augmented residual block in a single Fortran allocation."""
+
+    point_count = benchmark.x_int.shape[0]
+    if not (0 <= start < stop <= point_count):
+        raise ValueError(
+            f"Invalid residual batch [{start}, {stop}) for {point_count} points."
+        )
+    batch_points = stop - start
+    augmented = np.zeros(
+        (9 * batch_points, context.columns + 1),
+        dtype=np.float64,
+        order="F",
+    )
+    augmented_torch = torch.from_numpy(augmented)
+    matrix = augmented_torch[:, : context.columns]
+    rhs = augmented_torch[:, context.columns]
+
+    x = benchmark.x_int[start:stop]
+    weights = benchmark.w_int[start:stop]
+    body_force = benchmark.f_int[start:stop]
+    with torch.no_grad():
+        raw_sigma, grad_sigma = eval_raw_scalar_basis_data(
+            x,
+            feature_space.a_s,
+            feature_space.r_s,
+            feature_space.gamma_s,
+        )
+        grad_u = eval_active_displacement_basis_grads(
+            x,
+            feature_space.a_u,
+            feature_space.r_u,
+            feature_space.gamma_u,
+        )
+        sqrt_weights = torch.sqrt(weights)
+        mean_raw_sigma = context.stress_adapter.mean_raw_sigma
+        hydrostatic_basis = raw_sigma[:, 1:] - raw_sigma[:, :1] * (
+            mean_raw_sigma[1:] / mean_raw_sigma[0]
+        ).unsqueeze(0)
+
+        raw_sigma.mul_(sqrt_weights.unsqueeze(1))
+        hydrostatic_basis.mul_(sqrt_weights.unsqueeze(1))
+        grad_sigma.mul_(sqrt_weights.view(-1, 1, 1))
+        grad_u.mul_(sqrt_weights.view(-1, 1, 1))
+
+        for residual_component in range(6):
+            rows = slice(
+                residual_component * batch_points,
+                (residual_component + 1) * batch_points,
+            )
+            for deviatoric_component in range(5):
+                matrix[
+                    rows,
+                    deviatoric_component : context.deviatoric_dim_s : 5,
+                ] = (
+                    context.compliance_deviatoric[
+                        residual_component,
+                        deviatoric_component,
+                    ]
+                    * raw_sigma
+                )
+            matrix[
+                rows,
+                context.deviatoric_dim_s : context.active_dim_s,
+            ] = (
+                context.compliance_hydrostatic[residual_component]
+                * hydrostatic_basis
+            )
+            for spatial_dimension in range(3):
+                coupling = STRAIN_GRAD_BASES[spatial_dimension]
+                for displacement_component in range(3):
+                    matrix[
+                        rows,
+                        context.active_dim_s
+                        + displacement_component : context.columns : 3,
+                    ] -= (
+                        coupling[residual_component, displacement_component]
+                        * grad_u[:, :, spatial_dimension]
+                    )
+
+        for equilibrium_component in range(3):
+            rows = slice(
+                (6 + equilibrium_component) * batch_points,
+                (7 + equilibrium_component) * batch_points,
+            )
+            for spatial_dimension in range(3):
+                for deviatoric_component in range(5):
+                    matrix[
+                        rows,
+                        deviatoric_component : context.deviatoric_dim_s : 5,
+                    ] += (
+                        context.equilibrium_deviatoric[
+                            equilibrium_component,
+                            spatial_dimension,
+                            deviatoric_component,
+                        ]
+                        * grad_sigma[:, :, spatial_dimension]
+                    )
+                matrix[
+                    rows,
+                    context.deviatoric_dim_s : context.active_dim_s,
+                ] += (
+                    context.equilibrium_hydrostatic[
+                        equilibrium_component,
+                        spatial_dimension,
+                    ]
+                    * grad_sigma[:, 1:, spatial_dimension]
+                )
+            rhs[rows] = -sqrt_weights * body_force[:, equilibrium_component]
+
+    if not augmented.flags.f_contiguous:
+        raise RuntimeError("Augmented residual batch must be Fortran contiguous.")
+    return DirectResidualBatch(start=start, stop=stop, augmented=augmented)
+
+
+def iter_direct_residual_batches(
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+    context: DirectResidualContext,
+    batch_size: int,
+) -> Iterator[DirectResidualBatch]:
+    """Stream augmented residual blocks without retaining earlier batches."""
+
+    for start, stop in iter_point_batches(benchmark.x_int.shape[0], batch_size):
+        yield assemble_direct_residual_batch(
+            start,
+            stop,
+            benchmark,
+            feature_space,
+            context,
+        )
+
+
+def assemble_streaming_tsqr_design(
     cfg: LeastSquaresConfig,
-    x_int: torch.Tensor,
-    w_int: torch.Tensor,
-    f_int: torch.Tensor,
-    a_s: torch.Tensor,
-    r_s: torch.Tensor,
-    a_u: torch.Tensor,
-    r_u: torch.Tensor,
-) -> AssembledLinearSystem:
-    """Assemble the paper's least-squares system in the active basis."""
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+    show_progress: bool = True,
+) -> tuple[DirectResidualDesign, StreamingTSQRStats]:
+    """Compress ``[A, b]`` with streaming Householder TSQR, never storing ``A``."""
 
-    (
-        gram_raw_sigma,
+    total_started = time.perf_counter()
+    mean_started = time.perf_counter()
+    mean_raw_sigma = accumulate_raw_sigma_mean(
+        benchmark,
+        feature_space,
+        cfg.direct_batch_size,
+    )
+    mean_pass_time = time.perf_counter() - mean_started
+    context = build_direct_residual_context(cfg, feature_space, mean_raw_sigma)
+
+    augmented_columns = context.columns + 1
+    reduced = np.zeros(
+        (augmented_columns, augmented_columns),
+        dtype=np.float64,
+        order="F",
+    )
+    batch_count = math.ceil(benchmark.x_int.shape[0] / cfg.direct_batch_size)
+    progress_stride = max(1, batch_count // 8)
+    assembly_time = 0.0
+    qr_time = 0.0
+    tpqrt = None
+
+    for batch_index, (start, stop) in enumerate(
+        iter_point_batches(benchmark.x_int.shape[0], cfg.direct_batch_size),
+        start=1,
+    ):
+        assembly_started = time.perf_counter()
+        batch = assemble_direct_residual_batch(
+            start,
+            stop,
+            benchmark,
+            feature_space,
+            context,
+        )
+        assembly_time += time.perf_counter() - assembly_started
+        augmented = batch.augmented
+        if tpqrt is None:
+            tpqrt = get_lapack_funcs("tpqrt", (reduced, augmented))
+
+        qr_started = time.perf_counter()
+        updated_reduced, overwritten_batch, block_reflectors, info = tpqrt(
+            0,
+            min(cfg.direct_qr_block_size, augmented_columns),
+            reduced,
+            augmented,
+            overwrite_a=True,
+            overwrite_b=True,
+        )
+        qr_time += time.perf_counter() - qr_started
+        if info != 0:
+            raise RuntimeError(f"DTPQRT failed on batch {batch_index} with info={info}.")
+        if not np.shares_memory(updated_reduced, reduced):
+            raise RuntimeError("DTPQRT copied the reduced factor instead of updating in-place.")
+        if not np.shares_memory(overwritten_batch, augmented):
+            raise RuntimeError("DTPQRT copied a residual batch instead of updating in-place.")
+        reduced = updated_reduced
+        del batch, augmented, overwritten_batch, block_reflectors
+
+        if show_progress and (
+            batch_index == 1
+            or batch_index == batch_count
+            or batch_index % progress_stride == 0
+        ):
+            elapsed = time.perf_counter() - total_started
+            eta = elapsed * (batch_count - batch_index) / batch_index
+            print(
+                f"  TSQR batch {batch_index}/{batch_count}: "
+                f"points [{start}, {stop}), "
+                f"elapsed={elapsed:.1f}s, eta={eta:.1f}s"
+            )
+
+    reduced_matrix_numpy = reduced[:, : context.columns]
+    if not reduced_matrix_numpy.flags.f_contiguous:
+        raise RuntimeError("Reduced direct residual matrix must be Fortran contiguous.")
+    reduced_rhs_numpy = np.array(reduced[:, context.columns], copy=True)
+    design = DirectResidualDesign(
+        matrix=torch.from_numpy(reduced_matrix_numpy),
+        rhs=torch.from_numpy(reduced_rhs_numpy),
+        solved_dim_s=context.active_dim_s,
+        stress_adapter=context.stress_adapter,
+    )
+    stats = StreamingTSQRStats(
+        source_rows=9 * benchmark.x_int.shape[0],
+        columns=context.columns,
+        batch_count=batch_count,
+        mean_pass_time=mean_pass_time,
+        assembly_time=assembly_time,
+        qr_time=qr_time,
+        total_time=time.perf_counter() - total_started,
+    )
+    return design, stats
+
+
+def assemble_direct_residual_design(
+    cfg: LeastSquaresConfig,
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+) -> DirectResidualDesign:
+    """Assemble the active residual matrix without dense raw-space intermediates."""
+
+    x = benchmark.x_int
+    sqrt_weights = torch.sqrt(benchmark.w_int)
+    raw_sigma = eval_raw_scalar_basis(
+        x,
+        feature_space.a_s,
+        feature_space.r_s,
+        feature_space.gamma_s,
+    )
+    grad_sigma = eval_raw_scalar_basis_grads(
+        x,
+        feature_space.a_s,
+        feature_space.r_s,
+        feature_space.gamma_s,
+    )
+    _, grad_u = eval_active_displacement_basis_data(
+        x,
+        feature_space.a_u,
+        feature_space.r_u,
+        feature_space.gamma_u,
+    )
+    mean_raw_sigma = (benchmark.w_int.unsqueeze(1) * raw_sigma).sum(dim=0)
+    stress_adapter = build_stress_basis_adapter(
         mean_raw_sigma,
-        cross_raw_sigma_grad_active_u,
-        grad_gram_active_u,
-        grad_gram_raw_sigma,
-        grad_force_raw_sigma,
-    ) = accumulate_interior_moments(
-        x_int,
-        w_int,
-        f_int,
-        a_s,
-        r_s,
-        cfg.gamma_s,
-        a_u,
-        r_u,
-        cfg.gamma_u,
-        cfg.assembly_batch_size,
+        materialize_transform=False,
     )
 
-    np1_s = a_s.shape[0] + 1
-    np1_u = a_u.shape[0] + 1
-    stress_adapter = build_stress_basis_adapter(mean_raw_sigma)
+    q_count = x.shape[0]
+    np1_s = raw_sigma.shape[1]
+    np1_u = grad_u.shape[1]
+    deviatoric_dim_s = 5 * np1_s
+    active_dim_s = stress_adapter.active_dim
+    dim_u = 3 * np1_u
+    # Allocate transposed storage so the NumPy view is Fortran contiguous.
+    # DGELSD can then overwrite this single copy in-place.
+    matrix = torch.zeros(
+        active_dim_s + dim_u,
+        9 * q_count,
+        dtype=DTYPE,
+        device=DEVICE,
+    ).T
+    rhs = torch.zeros(9 * q_count, dtype=DTYPE, device=DEVICE)
 
     mu, lam = compute_lame_constants(cfg.E, cfg.nu)
-    raw_blocks = assemble_weighted_raw_stress_blocks(
-        mu,
-        lam,
-        gram_raw_sigma,
-        cross_raw_sigma_grad_active_u,
-        grad_gram_active_u,
-        grad_gram_raw_sigma,
-        grad_force_raw_sigma,
-        np1_s,
-        np1_u,
+    compliance = build_compliance_matrix(mu, lam)
+    weighted_sigma = sqrt_weights.unsqueeze(1) * raw_sigma
+    hydrostatic_basis = raw_sigma[:, 1:] - raw_sigma[:, :1] * (
+        mean_raw_sigma[1:] / mean_raw_sigma[0]
+    ).unsqueeze(0)
+    weighted_hydrostatic = sqrt_weights.unsqueeze(1) * hydrostatic_basis
+    for residual_component in range(6):
+        rows = slice(residual_component * q_count, (residual_component + 1) * q_count)
+        deviatoric_coefficients = (
+            compliance[residual_component] @ DEVIATORIC_STRESS_BASES
+        )
+        for deviatoric_component in range(5):
+            matrix[rows, deviatoric_component:deviatoric_dim_s:5] = (
+                deviatoric_coefficients[deviatoric_component] * weighted_sigma
+            )
+        matrix[rows, deviatoric_dim_s:active_dim_s] = (
+            torch.dot(compliance[residual_component], HYDROSTATIC_STRESS_BASIS)
+            * weighted_hydrostatic
+        )
+        for spatial_dimension in range(3):
+            coupling = STRAIN_GRAD_BASES[spatial_dimension]
+            for displacement_component in range(3):
+                matrix[
+                    rows,
+                    active_dim_s + displacement_component : active_dim_s + dim_u : 3,
+                ] -= (
+                    coupling[residual_component, displacement_component]
+                    * sqrt_weights.unsqueeze(1)
+                    * grad_u[:, :, spatial_dimension]
+                )
+
+    for equilibrium_component in range(3):
+        rows = slice(
+            (6 + equilibrium_component) * q_count,
+            (7 + equilibrium_component) * q_count,
+        )
+        for spatial_dimension in range(3):
+            coupling = STRAIN_GRAD_BASES[spatial_dimension][
+                :, equilibrium_component
+            ]
+            deviatoric_coefficients = coupling @ DEVIATORIC_STRESS_BASES
+            weighted_grad_sigma = (
+                sqrt_weights.unsqueeze(1) * grad_sigma[:, :, spatial_dimension]
+            )
+            for deviatoric_component in range(5):
+                matrix[rows, deviatoric_component:deviatoric_dim_s:5] += (
+                    deviatoric_coefficients[deviatoric_component]
+                    * weighted_grad_sigma
+                )
+            # The zero-mean correction only changes the strictly constant
+            # feature in column zero, whose gradient is exactly zero.
+            matrix[rows, deviatoric_dim_s:active_dim_s] += (
+                torch.dot(coupling, HYDROSTATIC_STRESS_BASIS)
+                * sqrt_weights.unsqueeze(1)
+                * grad_sigma[:, 1:, spatial_dimension]
+            )
+        rhs[rows] = -sqrt_weights * benchmark.f_int[:, equilibrium_component]
+
+    return DirectResidualDesign(matrix, rhs, active_dim_s, stress_adapter)
+
+
+def solve_direct_residual(
+    matrix: torch.Tensor,
+    rhs: torch.Tensor,
+    rcond: float,
+) -> tuple[torch.Tensor, float, int, float]:
+    """Column-scale and solve in-place with DGELSD, destroying ``matrix``."""
+
+    column_norms = torch.linalg.vector_norm(matrix, dim=0)
+    floor = torch.finfo(matrix.dtype).eps * column_norms.max()
+    safe_norms = column_norms.clamp_min(floor)
+    matrix.div_(safe_norms.unsqueeze(0))
+
+    matrix_numpy = matrix.numpy()
+    if not matrix_numpy.flags.f_contiguous:
+        raise ValueError("Direct residual matrix must be Fortran contiguous.")
+    m, n = matrix_numpy.shape
+    rhs_numpy = np.zeros((max(m, n), 1), dtype=matrix_numpy.dtype, order="F")
+    rhs_numpy[:m, 0] = rhs.numpy()
+    gelsd, gelsd_lwork = get_lapack_funcs(
+        ("gelsd", "gelsd_lwork"),
+        (matrix_numpy, rhs_numpy),
     )
-    return apply_stress_basis_adapter(raw_blocks, stress_adapter)
+    work_size, iwork_size, info = gelsd_lwork(m, n, 1, rcond)
+    if info != 0:
+        raise RuntimeError(f"DGELSD workspace query failed with info={info}.")
 
-
-def solve_lstsq(G: torch.Tensor, F: torch.Tensor) -> tuple[torch.Tensor, float]:
-    """Solve the linear system with torch.linalg.lstsq."""
-
-    synchronize_device()
     t0 = time.perf_counter()
-    try:
-        sol = torch.linalg.lstsq(G, F.unsqueeze(1)).solution.squeeze(1)
-        if not torch.isfinite(sol).all():
-            raise RuntimeError("non-finite solution")
-    except (RuntimeError, torch.linalg.LinAlgError) as exc:
-        sol = torch.full((G.shape[0],), float("nan"), dtype=DTYPE, device=DEVICE)
-        print(f"    Warning: torch.linalg.lstsq failed with {type(exc).__name__}")
+    solution_buffer, singular_values, rank, info = gelsd(
+        matrix_numpy,
+        rhs_numpy,
+        int(work_size),
+        int(iwork_size),
+        rcond,
+        overwrite_a=True,
+        overwrite_b=True,
+    )
+    wall_time = time.perf_counter() - t0
+    if info > 0:
+        raise RuntimeError("DGELSD did not converge.")
+    if info < 0:
+        raise ValueError(f"DGELSD received an invalid argument at position {-info}.")
 
-    synchronize_device()
-    return sol, time.perf_counter() - t0
-
-
-def solve_tsvd(
-    G: torch.Tensor,
-    F: torch.Tensor,
-    tau_rel: float,
-) -> tuple[torch.Tensor, float]:
-    """Solve the linear system with relative TSVD threshold tau_TSVD."""
-
-    synchronize_device()
-    t0 = time.perf_counter()
-    try:
-        eigvals, eigvecs = torch.linalg.eigh(G)
-        threshold = tau_rel * eigvals.abs().max()
-        keep = eigvals > threshold
-        if not keep.any():
-            raise RuntimeError("all eigenvalues were truncated")
-
-        coeffs = eigvecs[:, keep].T @ F
-        coeffs = coeffs / eigvals[keep]
-        sol = eigvecs[:, keep] @ coeffs
-        if not torch.isfinite(sol).all():
-            raise RuntimeError("non-finite solution")
-        print(
-            f"    tsvd truncation: kept {int(keep.sum().item())}/{eigvals.numel()} "
-            f"eigenvalues, tau_TSVD={tau_rel:.2e}, threshold={threshold.item():.2e}"
-        )
-    except (RuntimeError, torch.linalg.LinAlgError) as exc:
-        sol = torch.full((G.shape[0],), float("nan"), dtype=DTYPE, device=DEVICE)
-        print(f"    Warning: torch.linalg.eigh failed with {type(exc).__name__}")
-
-    synchronize_device()
-    return sol, time.perf_counter() - t0
-
-
-def solve_ridge(G: torch.Tensor, F: torch.Tensor, alpha_Ridge: float) -> tuple[torch.Tensor, float]:
-    """Solve the standard Tikhonov/ridge system with alpha_Ridge."""
-
-    synchronize_device()
-    t0 = time.perf_counter()
-    try:
-        spectral_scale = torch.linalg.eigvalsh(G).abs().max()
-        alpha = alpha_Ridge * spectral_scale
-        if not torch.isfinite(spectral_scale) or spectral_scale <= 0.0:
-            raise RuntimeError("invalid spectral scale")
-        if not torch.isfinite(alpha) or alpha <= 0.0:
-            raise RuntimeError("invalid ridge strength")
-
-        ridge_matrix = G + alpha * torch.eye(G.shape[0], dtype=DTYPE, device=DEVICE)
-        # sol = torch.linalg.solve(ridge_matrix, F)
-        sol = torch.linalg.lstsq(ridge_matrix, F.unsqueeze(1)).solution.squeeze(1)
-        if not torch.isfinite(sol).all():
-            raise RuntimeError("non-finite solution")
-        print(
-            f"    ridge shift: alpha_Ridge={alpha_Ridge:.2e}, "
-            f"alpha={alpha.item():.2e}, scale={spectral_scale.item():.2e}"
-        )
-    except (RuntimeError, torch.linalg.LinAlgError) as exc:
-        sol = torch.full((G.shape[0],), float("nan"), dtype=DTYPE, device=DEVICE)
-        print(f"    Warning: torch.linalg.solve failed with {type(exc).__name__}")
-
-    synchronize_device()
-    return sol, time.perf_counter() - t0
+    scaled_solution = np.array(solution_buffer[:n, 0], copy=True)
+    solution = torch.from_numpy(scaled_solution).to(dtype=DTYPE) / safe_norms
+    condition_estimate = (
+        float(singular_values[0] / singular_values[rank - 1])
+        if rank > 0
+        else float("inf")
+    )
+    return solution, wall_time, int(rank), condition_estimate
 
 
 def split_solution(z: torch.Tensor, solved_dim_s: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -1258,7 +1474,36 @@ def lift_active_stress_coefficients(
 ) -> torch.Tensor:
     """Lift active stress coefficients back to the raw stress basis."""
 
-    return stress_adapter.transform @ active_sigma_coeffs
+    if stress_adapter.transform is not None:
+        return stress_adapter.transform @ active_sigma_coeffs
+
+    np1_s = stress_adapter.mean_raw_sigma.numel()
+    deviatoric_dim_s = 5 * np1_s
+    if active_sigma_coeffs.numel() != stress_adapter.active_dim:
+        raise ValueError("Active stress coefficient dimension does not match its adapter.")
+
+    deviatoric_coefficients = active_sigma_coeffs[:deviatoric_dim_s].reshape(
+        np1_s,
+        5,
+    )
+    raw_coefficients = deviatoric_coefficients @ DEVIATORIC_STRESS_BASES.T
+
+    active_hydrostatic = active_sigma_coeffs[deviatoric_dim_s:]
+    hydrostatic_coefficients = torch.empty(
+        np1_s,
+        dtype=active_sigma_coeffs.dtype,
+        device=active_sigma_coeffs.device,
+    )
+    hydrostatic_coefficients[0] = -torch.dot(
+        stress_adapter.mean_raw_sigma[1:] / stress_adapter.mean_raw_sigma[0],
+        active_hydrostatic,
+    )
+    hydrostatic_coefficients[1:] = active_hydrostatic
+    raw_coefficients += (
+        hydrostatic_coefficients.unsqueeze(1)
+        * HYDROSTATIC_STRESS_BASIS.unsqueeze(0)
+    )
+    return raw_coefficients.reshape(-1)
 
 
 def compute_absolute_errors(
@@ -1321,7 +1566,9 @@ def print_result_summary(result: AlgorithmResult) -> None:
     print(
         f"    Done in {result.wall_time:.2f}s, "
         f"‖Φ^u-u‖={result.u_l2_error:.2e}, "
-        f"‖Φ^σ-σ‖={result.sigma_l2_error:.2e}"
+        f"‖Φ^σ-σ‖={result.sigma_l2_error:.2e}, "
+        f"rank={result.rank}/{result.columns}, "
+        f"cond≈{result.condition_estimate:.2e}"
     )
 
 
@@ -1477,7 +1724,13 @@ def run_algorithm(
 ) -> AlgorithmResult:
     """Run one configured least-squares algorithm and evaluate it."""
 
-    def build_result(name: str, z: torch.Tensor, wall_time: float) -> AlgorithmResult:
+    def build_result(
+        name: str,
+        z: torch.Tensor,
+        wall_time: float,
+        rank: int,
+        condition_estimate: float,
+    ) -> AlgorithmResult:
         active_sigma_coeffs, displacement_coeffs = split_solution(z, data.solved_dim_s)
         sigma_coeffs = lift_active_stress_coefficients(
             active_sigma_coeffs,
@@ -1491,26 +1744,49 @@ def run_algorithm(
             "    trace constraint residual: "
             f"{constraint_residual.item():.2e}"
         )
-        return evaluate_feature_result(
+        evaluated = evaluate_feature_result(
             name,
             wall_time,
             sigma_coeffs,
             displacement_coeffs,
             data.eval_data,
         )
+        return AlgorithmResult(
+            name=evaluated.name,
+            u_l2_error=evaluated.u_l2_error,
+            sigma_l2_error=evaluated.sigma_l2_error,
+            wall_time=evaluated.wall_time,
+            rank=rank,
+            columns=data.matrix.shape[1],
+            condition_estimate=condition_estimate,
+        )
 
-    if algorithm_id == "tsvd":
-        print("Running LS (TSVD)...")
-        z, wall_time = solve_tsvd(data.G, data.F, cfg.tsvd_tau_rel)
-        result = build_result("LS (TSVD)", z, wall_time)
-    elif algorithm_id == "ridge":
-        print("Running LS (Ridge)...")
-        z, wall_time = solve_ridge(data.G, data.F, cfg.ridge_alpha_rel)
-        result = build_result("LS (Ridge)", z, wall_time)
-    else:
-        print("Running LS (Lstsq)...")
-        z, wall_time = solve_lstsq(data.G, data.F)
-        result = build_result("LS (Lstsq)", z, wall_time)
+    if algorithm_id != "direct":
+        raise ValueError(f"Unsupported algorithm: {algorithm_id}")
+    print(
+        f"Running LS ({data.direct_solver} + GELSD) on source system "
+        f"({data.source_rows}, {data.matrix.shape[1]})..."
+    )
+    solve_started = time.perf_counter()
+    z, gelsd_time, rank, condition_estimate = solve_direct_residual(
+        data.matrix,
+        data.rhs,
+        cfg.direct_rcond,
+    )
+    reduced_solve_time = time.perf_counter() - solve_started
+    wall_time = data.preparation_time + reduced_solve_time
+    print(
+        f"    timings: preparation={data.preparation_time:.2f}s, "
+        f"reduced solve={reduced_solve_time:.2f}s, "
+        f"DGELSD={gelsd_time:.2f}s, total={wall_time:.2f}s"
+    )
+    result = build_result(
+        "LS",
+        z,
+        wall_time,
+        rank,
+        condition_estimate,
+    )
 
     print_result_summary(result)
     return result
@@ -1523,7 +1799,7 @@ def run_experiment(
     benchmark: SharedBenchmarkData | None = None,
     feature_space: SharedFeatureSpace | None = None,
 ) -> list[AlgorithmResult]:
-    """Run the selected least-squares methods and return their metrics."""
+    """Run direct residual least squares and return its metrics."""
 
     cfg = LeastSquaresConfig() if cfg is None else cfg
     validate_config(cfg)
@@ -1539,8 +1815,10 @@ def run_experiment(
         f"Config: N_s={cfg.N_s}, N_u={cfg.N_u}, "
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
         f"gamma_s={cfg.gamma_s}, gamma_u={cfg.gamma_u}, "
-        f"tsvd_tau_rel={cfg.tsvd_tau_rel:.2e}, "
-        f"ridge_alpha_rel={cfg.ridge_alpha_rel:.2e}, "
+        f"direct_rcond={cfg.direct_rcond:.2e}, "
+        f"direct_solver={cfg.direct_solver}, "
+        f"direct_batch_size={cfg.direct_batch_size}, "
+        f"direct_qr_block_size={cfg.direct_qr_block_size}, "
         f"sampling={cfg.sampling_method}, "
         f"manufactured_solution={cfg.manufactured_solution}"
     )
@@ -1576,39 +1854,81 @@ def run_experiment(
 
     if feature_space.gamma_s != cfg.gamma_s or feature_space.gamma_u != cfg.gamma_u:
         raise ValueError("SharedFeatureSpace gamma does not match LeastSquaresConfig.")
+    if feature_space.a_s.shape[0] != cfg.N_s or feature_space.a_u.shape[0] != cfg.N_u:
+        raise ValueError("SharedFeatureSpace dimensions do not match LeastSquaresConfig.")
 
-    print("Assembling active-basis least-squares system...")
-    assembled_system = assemble_linear_system(
-        cfg,
-        benchmark.x_int,
-        benchmark.w_int,
-        benchmark.f_int,
-        feature_space.a_s,
-        feature_space.r_s,
-        feature_space.a_u,
-        feature_space.r_u,
+    source_rows = 9 * benchmark.x_int.shape[0]
+    expected_columns = 6 * cfg.N_s + 3 * cfg.N_u + 8
+    dense_matrix_gib = (
+        source_rows
+        * expected_columns
+        * torch.tensor([], dtype=DTYPE).element_size()
+        / 2**30
     )
-    clear_cuda_cache()
-
     print(
-        f"System shapes: G={tuple(assembled_system.G.shape)}, "
-        f"F={tuple(assembled_system.F.shape)}"
+        f"Direct system estimate: ({source_rows}, {expected_columns}), "
+        f"rows/columns={source_rows / expected_columns:.2f}, "
+        f"dense A={dense_matrix_gib:.2f} GiB"
     )
+    if cfg.direct_solver == "dense" and dense_matrix_gib > 4.0:
+        warnings.warn(
+            "The selected dense direct backend may exceed workstation memory; "
+            "use direct_solver='streaming_tsqr' for this configuration.",
+            RuntimeWarning,
+        )
+    if cfg.direct_solver == "dense":
+        print("Assembling dense direct weighted residual matrix...")
+        t0 = time.perf_counter()
+        direct_design = assemble_direct_residual_design(
+            cfg,
+            benchmark,
+            feature_space,
+        )
+        preparation_time = time.perf_counter() - t0
+        print(
+            f"Residual shapes: A={tuple(direct_design.matrix.shape)}, "
+            f"b={tuple(direct_design.rhs.shape)}, "
+            f"assembly={preparation_time:.2f}s"
+        )
+    else:
+        print("Compressing direct residuals with streaming TSQR...")
+        direct_design, streaming_stats = assemble_streaming_tsqr_design(
+            cfg,
+            benchmark,
+            feature_space,
+        )
+        preparation_time = streaming_stats.total_time
+        print(
+            f"Residual shapes: source A=({streaming_stats.source_rows}, "
+            f"{streaming_stats.columns}), "
+            f"reduced A={tuple(direct_design.matrix.shape)}, "
+            f"b={tuple(direct_design.rhs.shape)}"
+        )
+        print(
+            f"TSQR timings: mean pass={streaming_stats.mean_pass_time:.2f}s, "
+            f"batch assembly={streaming_stats.assembly_time:.2f}s, "
+            f"QR updates={streaming_stats.qr_time:.2f}s, "
+            f"compression total={streaming_stats.total_time:.2f}s"
+        )
+    clear_cuda_cache()
     print(
         "trace constraint applied: "
-        f"stress dof {assembled_system.stress_adapter.raw_dim} "
-        f"-> {assembled_system.stress_adapter.active_dim}"
+        f"stress dof {direct_design.stress_adapter.raw_dim} "
+        f"-> {direct_design.stress_adapter.active_dim}"
     )
 
     experiment_data = LeastSquaresExperimentData(
-        G=assembled_system.G,
-        F=assembled_system.F,
-        solved_dim_s=assembled_system.solved_dim_s,
-        stress_adapter=assembled_system.stress_adapter,
+        matrix=direct_design.matrix,
+        rhs=direct_design.rhs,
+        solved_dim_s=direct_design.solved_dim_s,
+        stress_adapter=direct_design.stress_adapter,
         eval_data=build_feature_evaluation_data(
             benchmark,
             feature_space,
         ),
+        source_rows=source_rows,
+        preparation_time=preparation_time,
+        direct_solver=cfg.direct_solver,
     )
 
     results = [

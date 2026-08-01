@@ -33,15 +33,13 @@ ABLATION_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_ABLATION_N_LIST = [200, 400, 600, 800, 1000]
 ALGORITHM_LABELS = {
-    "lstsq": "LS (Lstsq)",
-    "tsvd": "LS (TSVD)",
-    "ridge": "LS (Ridge)",
+    "direct": "LS",
 }
 
 
 @dataclass(frozen=True)
 class AblationRecord:
-    """One completed solver-capacity comparison record."""
+    """One completed direct-solver capacity record."""
 
     algorithm_id: str
     algorithm_name: str

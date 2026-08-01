@@ -29,9 +29,7 @@ from linear_elasticity_3d import (
 
 DEFAULT_ABLATION_NU_LIST = [0.49, 0.499, 0.4999, 0.49999, 0.499999]
 ALGORITHM_LABELS = {
-    "lstsq": "LS (Lstsq)",
-    "tsvd": "LS (TSVD)",
-    "ridge": "LS (Ridge)",
+    "direct": "LS",
 }
 
 
