@@ -6,13 +6,14 @@ import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import Iterator, Sequence
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.linalg
+from scipy.linalg import get_lapack_funcs
 import torch
 
 
@@ -22,6 +23,7 @@ DISP_SEED = BASE_SEED + 1_000
 DTYPE = torch.float64
 VALID_SAMPLING_METHODS = ("mc", "sobol", "gauss_legendre")
 VALID_ALGORITHMS = ("direct",)
+VALID_DIRECT_SOLVERS = ("dense", "streaming_tsqr")
 VALID_MANUFACTURED_SOLUTIONS = ("hu_zhang", "div_free", "near_incompressible")
 FEATURE_DIM = 2
 FEATURE_CENTER = 0.5
@@ -30,7 +32,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "least-squares" / "linear-elasticity-2d"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 ALGO_STYLE = {
-    "Direct LS (GELSD)": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
+    "LS": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
 }
 
 
@@ -158,13 +160,15 @@ class LeastSquaresConfig:
     gamma_u: float = 3.0
     N_s: int = 1000
     N_u: int = 1000
-    Q_train: int = 64**2
-    Q_test: int = (2**7) ** 2
+    Q_train: int = 42**2
+    Q_test: int = 64**2
     sampling_method: str = "gauss_legendre"
     manufactured_solution: str = "hu_zhang"
     direct_rcond: float = 1.0e-14
+    direct_solver: str = "dense"
+    direct_batch_size: int = 1_024
+    direct_qr_block_size: int = 64
     body_force_batch_size: int = 5_000
-    assembly_batch_size: int = 5_000
     algorithms_to_run: list[str] = field(
         default_factory=lambda: ["direct"]
     )
@@ -179,6 +183,9 @@ class LeastSquaresExperimentData:
     solved_dim_s: int
     stress_adapter: "StressBasisAdapter"
     eval_data: FeatureEvaluationData
+    source_rows: int
+    preparation_time: float
+    direct_solver: str
 
 
 @dataclass(frozen=True)
@@ -192,26 +199,6 @@ class StressBasisAdapter:
 
 
 @dataclass(frozen=True)
-class RawStressLinearBlocks:
-    """Raw stress-space blocks before the active-stress projection is applied."""
-
-    G_ss_raw: torch.Tensor
-    G_su_raw: torch.Tensor
-    G_uu: torch.Tensor
-    F_s_raw: torch.Tensor
-
-
-@dataclass(frozen=True)
-class AssembledLinearSystem:
-    """Linear system plus metadata needed to interpret its stress block."""
-
-    G: torch.Tensor
-    F: torch.Tensor
-    solved_dim_s: int
-    stress_adapter: StressBasisAdapter
-
-
-@dataclass(frozen=True)
 class DirectResidualDesign:
     """Weighted residual matrix plus coefficient-space metadata."""
 
@@ -221,18 +208,51 @@ class DirectResidualDesign:
     stress_adapter: StressBasisAdapter
 
 
+@dataclass(frozen=True)
+class DirectResidualContext:
+    """Dimensions and fixed coupling blocks shared by residual batches."""
+
+    stress_adapter: StressBasisAdapter
+    mean_raw_sigma: torch.Tensor
+    np1_s: int
+    np1_u: int
+    deviatoric_dim_s: int
+    active_dim_s: int
+    dim_u: int
+    columns: int
+    compliance_deviatoric: torch.Tensor
+    compliance_hydrostatic: torch.Tensor
+    equilibrium_deviatoric: torch.Tensor
+    equilibrium_hydrostatic: torch.Tensor
+
+
+@dataclass(frozen=True)
+class DirectResidualBatch:
+    """One Fortran-contiguous augmented residual block ``[A_i, b_i]``."""
+
+    start: int
+    stop: int
+    augmented: np.ndarray
+
+
+@dataclass(frozen=True)
+class StreamingTSQRStats:
+    """Timing and shape diagnostics for streaming TSQR compression."""
+
+    source_rows: int
+    columns: int
+    batch_count: int
+    mean_pass_time: float
+    assembly_time: float
+    qr_time: float
+    total_time: float
+
+
 def clear_cuda_cache() -> None:
     """Release cached CUDA buffers after large tensors are freed."""
 
     if DEVICE.type == "cuda":
         torch.cuda.empty_cache()
-
-
-def synchronize_device() -> None:
-    """Synchronize queued device work before reading wall-clock timings."""
-
-    if DEVICE.type == "cuda":
-        torch.cuda.synchronize()
 
 
 def validate_sampling_method(method: str) -> None:
@@ -303,10 +323,17 @@ def validate_config(cfg: LeastSquaresConfig) -> None:
         raise ValueError("Config.Q_test must be positive.")
     if not math.isfinite(cfg.direct_rcond) or cfg.direct_rcond <= 0.0:
         raise ValueError("Config.direct_rcond must be finite and positive.")
+    if cfg.direct_solver not in VALID_DIRECT_SOLVERS:
+        raise ValueError(
+            f"Unknown direct_solver='{cfg.direct_solver}'. "
+            f"Valid values: {list(VALID_DIRECT_SOLVERS)}"
+        )
+    if cfg.direct_batch_size <= 0:
+        raise ValueError("Config.direct_batch_size must be positive.")
+    if cfg.direct_qr_block_size <= 0:
+        raise ValueError("Config.direct_qr_block_size must be positive.")
     if cfg.body_force_batch_size <= 0:
         raise ValueError("Config.body_force_batch_size must be positive.")
-    if cfg.assembly_batch_size <= 0:
-        raise ValueError("Config.assembly_batch_size must be positive.")
     validate_sampling_method(cfg.sampling_method)
     validate_manufactured_solution(cfg.manufactured_solution)
     validate_algorithm_selection(cfg.algorithms_to_run, VALID_ALGORITHMS)
@@ -651,6 +678,26 @@ def eval_raw_scalar_basis_grads(
     return torch.cat([zeros, grad_xi], dim=1)
 
 
+def eval_raw_scalar_basis_data(
+    x: torch.Tensor,
+    a: torch.Tensor,
+    r: torch.Tensor,
+    gamma: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Evaluate scalar basis values and gradients with one projection."""
+
+    x_hat = normalize_feature_coordinates(x)
+    pre = x_hat @ a.T + r.unsqueeze(0)
+    raw_features = torch.tanh(gamma * pre)
+    ones = torch.ones(x.shape[0], 1, dtype=DTYPE, device=DEVICE)
+    raw_basis = torch.cat([ones, raw_features], dim=1)
+    dtanh = 1.0 - raw_features.square()
+    grad_xi = gamma * FEATURE_INV_RADIUS * dtanh.unsqueeze(2) * a.unsqueeze(0)
+    zeros = torch.zeros(x.shape[0], 1, FEATURE_DIM, dtype=DTYPE, device=DEVICE)
+    raw_basis_grad = torch.cat([zeros, grad_xi], dim=1)
+    return raw_basis, raw_basis_grad
+
+
 def eval_active_displacement_basis(
     x: torch.Tensor,
     a: torch.Tensor,
@@ -682,6 +729,22 @@ def eval_active_displacement_basis_data(
         + adapter_weight.view(-1, 1, 1) * raw_basis_grad
     )
     return active_basis, active_basis_grad
+
+
+def eval_active_displacement_basis_grads(
+    x: torch.Tensor,
+    a: torch.Tensor,
+    r: torch.Tensor,
+    gamma: float,
+) -> torch.Tensor:
+    """Evaluate only active displacement gradients for residual assembly."""
+
+    raw_basis, raw_basis_grad = eval_raw_scalar_basis_data(x, a, r, gamma)
+    adapter_weight = eval_displacement_adapter_weight(x)
+    adapter_weight_grad = eval_displacement_adapter_weight_grad(x)
+    raw_basis_grad.mul_(adapter_weight.view(-1, 1, 1))
+    raw_basis_grad.add_(raw_basis.unsqueeze(2) * adapter_weight_grad.unsqueeze(1))
+    return raw_basis_grad
 
 
 def build_shared_benchmark(
@@ -787,141 +850,6 @@ def build_feature_evaluation_data(
     )
 
 
-def add_block_scaled(
-    target: torch.Tensor,
-    feature_matrix: torch.Tensor,
-    block: torch.Tensor,
-    row_stride: int,
-    col_stride: int,
-) -> None:
-    """Add feature_matrix kron block into a strided matrix."""
-
-    for row in range(block.shape[0]):
-        for col in range(block.shape[1]):
-            coeff = block[row, col].item()
-            if coeff == 0.0:
-                continue
-            target[row::row_stride, col::col_stride] += coeff * feature_matrix
-
-
-def add_rhs_feature_blocks(
-    target: torch.Tensor,
-    feature_by_vec: torch.Tensor,
-    block: torch.Tensor,
-    block_size: int,
-    scale: float = 1.0,
-) -> None:
-    """Accumulate feature moments into a strided rhs vector."""
-
-    contribution = scale * (feature_by_vec @ block.T)
-    for row in range(block.shape[0]):
-        target[row::block_size] += contribution[:, row]
-
-
-def accumulate_interior_moments(
-    x_int: torch.Tensor,
-    w_int: torch.Tensor,
-    f_int: torch.Tensor,
-    a_s: torch.Tensor,
-    r_s: torch.Tensor,
-    gamma_s: float,
-    a_u: torch.Tensor,
-    r_u: torch.Tensor,
-    gamma_u: float,
-    batch_size: int,
-) -> tuple[
-    torch.Tensor,
-    torch.Tensor,
-    list[torch.Tensor],
-    list[list[torch.Tensor]],
-    list[list[torch.Tensor]],
-    list[torch.Tensor],
-]:
-    """Accumulate raw/active basis moments for the least-squares linear system."""
-
-    np1_s = a_s.shape[0] + 1
-    np1_u = a_u.shape[0] + 1
-
-    gram_raw_sigma = torch.zeros(np1_s, np1_s, dtype=DTYPE, device=DEVICE)
-    mean_raw_sigma = torch.zeros(np1_s, dtype=DTYPE, device=DEVICE)
-    cross_raw_sigma_grad_active_u = [
-        torch.zeros(np1_s, np1_u, dtype=DTYPE, device=DEVICE) for _ in range(2)
-    ]
-    grad_gram_active_u = [
-        [
-            torch.zeros(np1_u, np1_u, dtype=DTYPE, device=DEVICE)
-            for _ in range(2)
-        ]
-        for _ in range(2)
-    ]
-    grad_gram_raw_sigma = [
-        [
-            torch.zeros(np1_s, np1_s, dtype=DTYPE, device=DEVICE)
-            for _ in range(2)
-        ]
-        for _ in range(2)
-    ]
-    grad_force_raw_sigma = [
-        torch.zeros(np1_s, 2, dtype=DTYPE, device=DEVICE) for _ in range(2)
-    ]
-
-    with torch.no_grad():
-        for start in range(0, x_int.shape[0], batch_size):
-            end = min(start + batch_size, x_int.shape[0])
-            xb = x_int[start:end]
-            wb = w_int[start:end]
-            fb = f_int[start:end]
-
-            raw_sigma_basis_batch = eval_raw_scalar_basis(xb, a_s, r_s, gamma_s)
-            raw_sigma_basis_grad_batch = eval_raw_scalar_basis_grads(
-                xb,
-                a_s,
-                r_s,
-                gamma_s,
-            )
-            _, active_u_basis_grad_batch = eval_active_displacement_basis_data(
-                xb,
-                a_u,
-                r_u,
-                gamma_u,
-            )
-
-            weighted_raw_sigma = wb.unsqueeze(1) * raw_sigma_basis_batch
-            weighted_grad_active_u = [
-                wb.unsqueeze(1) * active_u_basis_grad_batch[:, :, dim_i]
-                for dim_i in range(2)
-            ]
-            weighted_grad_raw_sigma = [
-                wb.unsqueeze(1) * raw_sigma_basis_grad_batch[:, :, dim_i]
-                for dim_i in range(2)
-            ]
-            gram_raw_sigma += raw_sigma_basis_batch.T @ weighted_raw_sigma
-            mean_raw_sigma += weighted_raw_sigma.sum(dim=0)
-            for dim_i in range(2):
-                cross_raw_sigma_grad_active_u[dim_i] += (
-                    raw_sigma_basis_batch.T @ weighted_grad_active_u[dim_i]
-                )
-                grad_force_raw_sigma[dim_i] += weighted_grad_raw_sigma[dim_i].T @ fb
-                for dim_j in range(2):
-                    grad_gram_active_u[dim_i][dim_j] += (
-                        active_u_basis_grad_batch[:, :, dim_i].T
-                        @ weighted_grad_active_u[dim_j]
-                    )
-                    grad_gram_raw_sigma[dim_i][dim_j] += (
-                        raw_sigma_basis_grad_batch[:, :, dim_i].T
-                        @ weighted_grad_raw_sigma[dim_j]
-                    )
-
-    return (
-        gram_raw_sigma,
-        mean_raw_sigma,
-        cross_raw_sigma_grad_active_u,
-        grad_gram_active_u,
-        grad_gram_raw_sigma,
-        grad_force_raw_sigma,
-    )
-
-
 def build_stress_trace_constraint(mean_raw_sigma: torch.Tensor) -> torch.Tensor:
     """Return c such that c^T sigma_coeffs = ∫ tr(sigma_h) dx."""
 
@@ -990,154 +918,304 @@ def build_stress_basis_adapter(
     )
 
 
-def assemble_weighted_raw_stress_blocks(
-    mu: float,
-    lam: float,
-    gram_raw_sigma: torch.Tensor,
-    cross_raw_sigma_grad_active_u: list[torch.Tensor],
-    grad_gram_active_u: list[list[torch.Tensor]],
-    grad_gram_raw_sigma: list[list[torch.Tensor]],
-    grad_force_raw_sigma: list[torch.Tensor],
-) -> RawStressLinearBlocks:
-    """Assemble the two-term least-squares system in the raw stress basis."""
+def iter_point_batches(point_count: int, batch_size: int) -> Iterator[tuple[int, int]]:
+    """Yield half-open point ranges with a possibly shorter final batch."""
 
-    np1_s = gram_raw_sigma.shape[0]
-    np1_u = grad_gram_active_u[0][0].shape[0]
-    dim_s = 3 * np1_s
+    for start in range(0, point_count, batch_size):
+        yield start, min(start + batch_size, point_count)
+
+
+def accumulate_raw_sigma_mean(
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+    batch_size: int,
+) -> torch.Tensor:
+    """Compute the weighted raw stress-basis mean without full feature storage."""
+
+    mean_raw_sigma = torch.zeros(
+        feature_space.a_s.shape[0] + 1,
+        dtype=DTYPE,
+        device=DEVICE,
+    )
+    with torch.no_grad():
+        for start, stop in iter_point_batches(benchmark.x_int.shape[0], batch_size):
+            raw_sigma = eval_raw_scalar_basis(
+                benchmark.x_int[start:stop],
+                feature_space.a_s,
+                feature_space.r_s,
+                feature_space.gamma_s,
+            )
+            mean_raw_sigma.add_(
+                (benchmark.w_int[start:stop].unsqueeze(1) * raw_sigma).sum(dim=0)
+            )
+    return mean_raw_sigma
+
+
+def build_direct_residual_context(
+    cfg: LeastSquaresConfig,
+    feature_space: SharedFeatureSpace,
+    mean_raw_sigma: torch.Tensor,
+) -> DirectResidualContext:
+    """Build dimensions and fixed coupling data for streamed residual blocks."""
+
+    np1_s = feature_space.a_s.shape[0] + 1
+    np1_u = feature_space.a_u.shape[0] + 1
+    if mean_raw_sigma.numel() != np1_s:
+        raise ValueError("Raw stress mean dimension does not match the feature space.")
+    stress_adapter = build_stress_basis_adapter(mean_raw_sigma)
+    deviatoric_dim_s = 2 * np1_s
+    active_dim_s = stress_adapter.active_dim
     dim_u = 2 * np1_u
 
-    G_ss = torch.zeros(dim_s, dim_s, dtype=DTYPE, device=DEVICE)
-    G_su = torch.zeros(dim_s, dim_u, dtype=DTYPE, device=DEVICE)
-    G_uu = torch.zeros(dim_u, dim_u, dtype=DTYPE, device=DEVICE)
-    F_s = torch.zeros(dim_s, dtype=DTYPE, device=DEVICE)
-
-    compliance_voigt = build_compliance_matrix(mu, lam)
-    compliance_sq = compliance_voigt.T @ compliance_voigt
-    add_block_scaled(
-        G_ss,
-        gram_raw_sigma,
-        compliance_sq,
-        row_stride=3,
-        col_stride=3,
-    )
-
-    for dim_i in range(2):
-        constitutive_cross = compliance_voigt @ STRAIN_GRAD_BASES[dim_i]
-        add_block_scaled(
-            G_su,
-            cross_raw_sigma_grad_active_u[dim_i],
-            -constitutive_cross,
-            row_stride=3,
-            col_stride=2,
-        )
-        add_rhs_feature_blocks(
-            F_s,
-            grad_force_raw_sigma[dim_i],
-            STRAIN_GRAD_BASES[dim_i],
-            block_size=3,
-            scale=-1.0,
-        )
-
-        for dim_j in range(2):
-            constitutive_uu = STRAIN_GRAD_BASES[dim_i].T @ STRAIN_GRAD_BASES[dim_j]
-            equilibrium_ss = STRAIN_GRAD_BASES[dim_i] @ STRAIN_GRAD_BASES[dim_j].T
-            add_block_scaled(
-                G_uu,
-                grad_gram_active_u[dim_i][dim_j],
-                constitutive_uu,
-                row_stride=2,
-                col_stride=2,
-            )
-            add_block_scaled(
-                G_ss,
-                grad_gram_raw_sigma[dim_i][dim_j],
-                equilibrium_ss,
-                row_stride=3,
-                col_stride=3,
-            )
-
-    return RawStressLinearBlocks(
-        G_ss_raw=G_ss,
-        G_su_raw=G_su,
-        G_uu=G_uu,
-        F_s_raw=F_s,
-    )
-
-
-def apply_stress_basis_adapter(
-    raw_blocks: RawStressLinearBlocks,
-    stress_adapter: StressBasisAdapter,
-) -> AssembledLinearSystem:
-    """Project raw stress blocks onto the active stress basis."""
-
-    transform = stress_adapter.transform
-    active_dim_s = stress_adapter.active_dim
-    dim_u = raw_blocks.G_uu.shape[0]
-    G_ss = transform.T @ raw_blocks.G_ss_raw @ transform
-    G_su = transform.T @ raw_blocks.G_su_raw
-    F_s = transform.T @ raw_blocks.F_s_raw
-
-    G = torch.zeros(active_dim_s + dim_u, active_dim_s + dim_u, dtype=DTYPE, device=DEVICE)
-    G[:active_dim_s, :active_dim_s] = G_ss
-    G[:active_dim_s, active_dim_s:] = G_su
-    G[active_dim_s:, :active_dim_s] = G_su.T
-    G[active_dim_s:, active_dim_s:] = raw_blocks.G_uu
-    G = 0.5 * (G + G.T)
-
-    F = torch.zeros(active_dim_s + dim_u, dtype=DTYPE, device=DEVICE)
-    F[:active_dim_s] = F_s
-    return AssembledLinearSystem(
-        G=G,
-        F=F,
-        solved_dim_s=active_dim_s,
-        stress_adapter=stress_adapter,
-    )
-
-
-def assemble_linear_system(
-    cfg: LeastSquaresConfig,
-    x_int: torch.Tensor,
-    w_int: torch.Tensor,
-    f_int: torch.Tensor,
-    a_s: torch.Tensor,
-    r_s: torch.Tensor,
-    a_u: torch.Tensor,
-    r_u: torch.Tensor,
-) -> AssembledLinearSystem:
-    """Assemble the least-squares system in the active basis."""
-
-    (
-        gram_raw_sigma,
-        mean_raw_sigma,
-        cross_raw_sigma_grad_active_u,
-        grad_gram_active_u,
-        grad_gram_raw_sigma,
-        grad_force_raw_sigma,
-    ) = accumulate_interior_moments(
-        x_int,
-        w_int,
-        f_int,
-        a_s,
-        r_s,
-        cfg.gamma_s,
-        a_u,
-        r_u,
-        cfg.gamma_u,
-        cfg.assembly_batch_size,
-    )
-
-    stress_adapter = build_stress_basis_adapter(mean_raw_sigma)
     mu, lam = compute_lame_constants(cfg.E, cfg.nu)
-    raw_blocks = assemble_weighted_raw_stress_blocks(
-        mu,
-        lam,
-        gram_raw_sigma,
-        cross_raw_sigma_grad_active_u,
-        grad_gram_active_u,
-        grad_gram_raw_sigma,
-        grad_force_raw_sigma,
+    compliance = build_compliance_matrix(mu, lam)
+    compliance_deviatoric = compliance @ DEVIATORIC_STRESS_BASES
+    compliance_hydrostatic = compliance @ HYDROSTATIC_STRESS_BASIS
+    equilibrium_deviatoric = torch.zeros(2, 2, 2, dtype=DTYPE, device=DEVICE)
+    equilibrium_hydrostatic = torch.zeros(2, 2, dtype=DTYPE, device=DEVICE)
+    for equilibrium_component in range(2):
+        for spatial_dimension in range(2):
+            coupling = STRAIN_GRAD_BASES[spatial_dimension][
+                :, equilibrium_component
+            ]
+            equilibrium_deviatoric[equilibrium_component, spatial_dimension] = (
+                coupling @ DEVIATORIC_STRESS_BASES
+            )
+            equilibrium_hydrostatic[equilibrium_component, spatial_dimension] = (
+                torch.dot(coupling, HYDROSTATIC_STRESS_BASIS)
+            )
+
+    return DirectResidualContext(
+        stress_adapter=stress_adapter,
+        mean_raw_sigma=mean_raw_sigma,
+        np1_s=np1_s,
+        np1_u=np1_u,
+        deviatoric_dim_s=deviatoric_dim_s,
+        active_dim_s=active_dim_s,
+        dim_u=dim_u,
+        columns=active_dim_s + dim_u,
+        compliance_deviatoric=compliance_deviatoric,
+        compliance_hydrostatic=compliance_hydrostatic,
+        equilibrium_deviatoric=equilibrium_deviatoric,
+        equilibrium_hydrostatic=equilibrium_hydrostatic,
     )
-    return apply_stress_basis_adapter(raw_blocks, stress_adapter)
+
+
+def assemble_direct_residual_batch(
+    start: int,
+    stop: int,
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+    context: DirectResidualContext,
+) -> DirectResidualBatch:
+    """Assemble one augmented residual block in one Fortran allocation."""
+
+    point_count = benchmark.x_int.shape[0]
+    if not (0 <= start < stop <= point_count):
+        raise ValueError(
+            f"Invalid residual batch [{start}, {stop}) for {point_count} points."
+        )
+    batch_points = stop - start
+    augmented = np.zeros(
+        (5 * batch_points, context.columns + 1),
+        dtype=np.float64,
+        order="F",
+    )
+    augmented_torch = torch.from_numpy(augmented)
+    matrix = augmented_torch[:, : context.columns]
+    rhs = augmented_torch[:, context.columns]
+
+    x = benchmark.x_int[start:stop]
+    weights = benchmark.w_int[start:stop]
+    body_force = benchmark.f_int[start:stop]
+    with torch.no_grad():
+        raw_sigma, grad_sigma = eval_raw_scalar_basis_data(
+            x,
+            feature_space.a_s,
+            feature_space.r_s,
+            feature_space.gamma_s,
+        )
+        grad_u = eval_active_displacement_basis_grads(
+            x,
+            feature_space.a_u,
+            feature_space.r_u,
+            feature_space.gamma_u,
+        )
+        sqrt_weights = torch.sqrt(weights)
+        hydrostatic_basis = raw_sigma[:, 1:] - raw_sigma[:, :1] * (
+            context.mean_raw_sigma[1:] / context.mean_raw_sigma[0]
+        ).unsqueeze(0)
+
+        raw_sigma.mul_(sqrt_weights.unsqueeze(1))
+        hydrostatic_basis.mul_(sqrt_weights.unsqueeze(1))
+        grad_sigma.mul_(sqrt_weights.view(-1, 1, 1))
+        grad_u.mul_(sqrt_weights.view(-1, 1, 1))
+
+        for residual_component in range(3):
+            rows = slice(
+                residual_component * batch_points,
+                (residual_component + 1) * batch_points,
+            )
+            for deviatoric_component in range(2):
+                matrix[
+                    rows,
+                    deviatoric_component : context.deviatoric_dim_s : 2,
+                ] = (
+                    context.compliance_deviatoric[
+                        residual_component,
+                        deviatoric_component,
+                    ]
+                    * raw_sigma
+                )
+            matrix[rows, context.deviatoric_dim_s : context.active_dim_s] = (
+                context.compliance_hydrostatic[residual_component]
+                * hydrostatic_basis
+            )
+            for spatial_dimension in range(2):
+                coupling = STRAIN_GRAD_BASES[spatial_dimension]
+                for displacement_component in range(2):
+                    matrix[
+                        rows,
+                        context.active_dim_s
+                        + displacement_component : context.columns : 2,
+                    ] -= (
+                        coupling[residual_component, displacement_component]
+                        * grad_u[:, :, spatial_dimension]
+                    )
+
+        for equilibrium_component in range(2):
+            rows = slice(
+                (3 + equilibrium_component) * batch_points,
+                (4 + equilibrium_component) * batch_points,
+            )
+            for spatial_dimension in range(2):
+                for deviatoric_component in range(2):
+                    matrix[
+                        rows,
+                        deviatoric_component : context.deviatoric_dim_s : 2,
+                    ] += (
+                        context.equilibrium_deviatoric[
+                            equilibrium_component,
+                            spatial_dimension,
+                            deviatoric_component,
+                        ]
+                        * grad_sigma[:, :, spatial_dimension]
+                    )
+                matrix[
+                    rows,
+                    context.deviatoric_dim_s : context.active_dim_s,
+                ] += (
+                    context.equilibrium_hydrostatic[
+                        equilibrium_component,
+                        spatial_dimension,
+                    ]
+                    * grad_sigma[:, 1:, spatial_dimension]
+                )
+            rhs[rows] = -sqrt_weights * body_force[:, equilibrium_component]
+
+    if not augmented.flags.f_contiguous:
+        raise RuntimeError("Augmented residual batch must be Fortran contiguous.")
+    return DirectResidualBatch(start=start, stop=stop, augmented=augmented)
+
+
+def assemble_streaming_tsqr_design(
+    cfg: LeastSquaresConfig,
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+    show_progress: bool = True,
+) -> tuple[DirectResidualDesign, StreamingTSQRStats]:
+    """Compress ``[A, b]`` with streaming Householder TSQR."""
+
+    total_started = time.perf_counter()
+    mean_started = time.perf_counter()
+    mean_raw_sigma = accumulate_raw_sigma_mean(
+        benchmark,
+        feature_space,
+        cfg.direct_batch_size,
+    )
+    mean_pass_time = time.perf_counter() - mean_started
+    context = build_direct_residual_context(cfg, feature_space, mean_raw_sigma)
+
+    augmented_columns = context.columns + 1
+    reduced = np.zeros(
+        (augmented_columns, augmented_columns),
+        dtype=np.float64,
+        order="F",
+    )
+    batch_count = math.ceil(benchmark.x_int.shape[0] / cfg.direct_batch_size)
+    progress_stride = max(1, batch_count // 8)
+    assembly_time = 0.0
+    qr_time = 0.0
+    tpqrt = None
+
+    for batch_index, (start, stop) in enumerate(
+        iter_point_batches(benchmark.x_int.shape[0], cfg.direct_batch_size),
+        start=1,
+    ):
+        assembly_started = time.perf_counter()
+        batch = assemble_direct_residual_batch(
+            start,
+            stop,
+            benchmark,
+            feature_space,
+            context,
+        )
+        assembly_time += time.perf_counter() - assembly_started
+        augmented = batch.augmented
+        if tpqrt is None:
+            tpqrt = get_lapack_funcs("tpqrt", (reduced, augmented))
+
+        qr_started = time.perf_counter()
+        updated_reduced, overwritten_batch, block_reflectors, info = tpqrt(
+            0,
+            min(cfg.direct_qr_block_size, augmented_columns),
+            reduced,
+            augmented,
+            overwrite_a=True,
+            overwrite_b=True,
+        )
+        qr_time += time.perf_counter() - qr_started
+        if info != 0:
+            raise RuntimeError(f"DTPQRT failed on batch {batch_index} with info={info}.")
+        if not np.shares_memory(updated_reduced, reduced):
+            raise RuntimeError("DTPQRT copied the reduced factor instead of updating in-place.")
+        if not np.shares_memory(overwritten_batch, augmented):
+            raise RuntimeError("DTPQRT copied a residual batch instead of updating in-place.")
+        reduced = updated_reduced
+        del batch, augmented, overwritten_batch, block_reflectors
+
+        if show_progress and (
+            batch_index == 1
+            or batch_index == batch_count
+            or batch_index % progress_stride == 0
+        ):
+            elapsed = time.perf_counter() - total_started
+            eta = elapsed * (batch_count - batch_index) / batch_index
+            print(
+                f"  TSQR batch {batch_index}/{batch_count}: "
+                f"points [{start}, {stop}), elapsed={elapsed:.1f}s, eta={eta:.1f}s"
+            )
+
+    reduced_matrix_numpy = reduced[:, : context.columns]
+    if not reduced_matrix_numpy.flags.f_contiguous:
+        raise RuntimeError("Reduced direct residual matrix must be Fortran contiguous.")
+    reduced_rhs_numpy = np.array(reduced[:, context.columns], copy=True)
+    design = DirectResidualDesign(
+        matrix=torch.from_numpy(reduced_matrix_numpy),
+        rhs=torch.from_numpy(reduced_rhs_numpy),
+        solved_dim_s=context.active_dim_s,
+        stress_adapter=context.stress_adapter,
+    )
+    stats = StreamingTSQRStats(
+        source_rows=5 * benchmark.x_int.shape[0],
+        columns=context.columns,
+        batch_count=batch_count,
+        mean_pass_time=mean_pass_time,
+        assembly_time=assembly_time,
+        qr_time=qr_time,
+        total_time=time.perf_counter() - total_started,
+    )
+    return design, stats
 
 
 def assemble_direct_residual_design(
@@ -1526,14 +1604,25 @@ def run_algorithm(
 
     if algorithm_id != "direct":
         raise ValueError(f"Unsupported algorithm: {algorithm_id}")
-    print("Running Direct LS (GELSD)...")
-    z, wall_time, rank, condition_estimate = solve_direct_residual(
+    print(
+        f"Running LS ({data.direct_solver} + GELSD) on source system "
+        f"({data.source_rows}, {data.matrix.shape[1]})..."
+    )
+    solve_started = time.perf_counter()
+    z, gelsd_time, rank, condition_estimate = solve_direct_residual(
         data.matrix,
         data.rhs,
         cfg.direct_rcond,
     )
+    reduced_solve_time = time.perf_counter() - solve_started
+    wall_time = data.preparation_time + reduced_solve_time
+    print(
+        f"    timings: preparation={data.preparation_time:.2f}s, "
+        f"reduced solve={reduced_solve_time:.2f}s, "
+        f"GELSD={gelsd_time:.2f}s, total={wall_time:.2f}s"
+    )
     result = build_result(
-        "Direct LS (GELSD)",
+        "LS",
         z,
         wall_time,
         rank,
@@ -1568,6 +1657,9 @@ def run_experiment(
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
         f"gamma_s={cfg.gamma_s}, gamma_u={cfg.gamma_u}, "
         f"direct_rcond={cfg.direct_rcond:.2e}, "
+        f"direct_solver={cfg.direct_solver}, "
+        f"direct_batch_size={cfg.direct_batch_size}, "
+        f"direct_qr_block_size={cfg.direct_qr_block_size}, "
         f"sampling={cfg.sampling_method}, "
         f"manufactured_solution={cfg.manufactured_solution}"
     )
@@ -1603,21 +1695,63 @@ def run_experiment(
 
     if feature_space.gamma_s != cfg.gamma_s or feature_space.gamma_u != cfg.gamma_u:
         raise ValueError("SharedFeatureSpace gamma does not match LeastSquaresConfig.")
+    if feature_space.a_s.shape[0] != cfg.N_s or feature_space.a_u.shape[0] != cfg.N_u:
+        raise ValueError("SharedFeatureSpace dimensions do not match LeastSquaresConfig.")
 
-    print("Assembling direct weighted residual matrix...")
-    t0 = time.perf_counter()
-    direct_design = assemble_direct_residual_design(
-        cfg,
-        benchmark,
-        feature_space,
+    source_rows = 5 * benchmark.x_int.shape[0]
+    expected_columns = 3 * cfg.N_s + 2 * cfg.N_u + 4
+    dense_matrix_gib = (
+        source_rows
+        * expected_columns
+        * torch.tensor([], dtype=DTYPE).element_size()
+        / 2**30
     )
-    assembly_time = time.perf_counter() - t0
-    clear_cuda_cache()
-
     print(
-        f"Residual shapes: A={tuple(direct_design.matrix.shape)}, "
-        f"b={tuple(direct_design.rhs.shape)}, assembly={assembly_time:.2f}s"
+        f"Direct system estimate: ({source_rows}, {expected_columns}), "
+        f"rows/columns={source_rows / expected_columns:.2f}, "
+        f"dense A={dense_matrix_gib:.2f} GiB"
     )
+    if cfg.direct_solver == "dense" and dense_matrix_gib > 4.0:
+        warnings.warn(
+            "The selected dense direct backend may exceed workstation memory; "
+            "use direct_solver='streaming_tsqr' for this configuration.",
+            RuntimeWarning,
+        )
+    if cfg.direct_solver == "dense":
+        print("Assembling dense direct weighted residual matrix...")
+        t0 = time.perf_counter()
+        direct_design = assemble_direct_residual_design(
+            cfg,
+            benchmark,
+            feature_space,
+        )
+        preparation_time = time.perf_counter() - t0
+        print(
+            f"Residual shapes: A={tuple(direct_design.matrix.shape)}, "
+            f"b={tuple(direct_design.rhs.shape)}, "
+            f"assembly={preparation_time:.2f}s"
+        )
+    else:
+        print("Compressing direct residuals with streaming TSQR...")
+        direct_design, streaming_stats = assemble_streaming_tsqr_design(
+            cfg,
+            benchmark,
+            feature_space,
+        )
+        preparation_time = streaming_stats.total_time
+        print(
+            f"Residual shapes: source A=({streaming_stats.source_rows}, "
+            f"{streaming_stats.columns}), "
+            f"reduced A={tuple(direct_design.matrix.shape)}, "
+            f"b={tuple(direct_design.rhs.shape)}"
+        )
+        print(
+            f"TSQR timings: mean pass={streaming_stats.mean_pass_time:.2f}s, "
+            f"batch assembly={streaming_stats.assembly_time:.2f}s, "
+            f"QR updates={streaming_stats.qr_time:.2f}s, "
+            f"compression total={streaming_stats.total_time:.2f}s"
+        )
+    clear_cuda_cache()
     print(
         "trace constraint applied: "
         f"stress dof {direct_design.stress_adapter.raw_dim} "
@@ -1633,6 +1767,9 @@ def run_experiment(
             benchmark,
             feature_space,
         ),
+        source_rows=source_rows,
+        preparation_time=preparation_time,
+        direct_solver=cfg.direct_solver,
     )
 
     results = [

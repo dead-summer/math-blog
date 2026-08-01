@@ -577,13 +577,13 @@ $
 以及 $SS^d$ 的对称基 ${bold(E)_alpha}_(alpha = 1)^(d(d+1)/2)$ 与 $RR^d$ 的标准基 ${bold(e)_i}_(i = 1)^d$。线弹性随机特征空间取为
 $
   bold(Sigma)_N & := {
-    sum_(n=0)^N sum_(alpha=1)^(d(d+1)/2)
-    phi^(bold(sigma))_(n, alpha) xi_n^(bold(sigma)) bold(E)_alpha :
-    integral_Omega tr(
-      sum_(n=0)^N sum_(alpha=1)^(d(d+1)/2)
-      phi^(bold(sigma))_(n, alpha) xi_n^(bold(sigma)) bold(E)_alpha
-    ) dif x = 0
-  }, \
+                    sum_(n=0)^N sum_(alpha=1)^(d(d+1)/2)
+                    phi^(bold(sigma))_(n, alpha) xi_n^(bold(sigma)) bold(E)_alpha :
+                    integral_Omega tr(
+                      sum_(n=0)^N sum_(alpha=1)^(d(d+1)/2)
+                      phi^(bold(sigma))_(n, alpha) xi_n^(bold(sigma)) bold(E)_alpha
+                    ) dif x = 0
+                  }, \
       bold(U)_N & := span { zeta_n^(0, bold(u)) bold(e)_i : 0 <= n <= N, 1 <= i <= d }.
 $
 由于应力基函数逐分量光滑且满足零平均迹约束，同时 $zeta_n^(0, bold(u)) in H_0^1(Omega)$，故 $bold(Sigma)_N subset bold(Sigma)$、$bold(U)_N subset bold(U)$。平面应力只改变 $d = 2$ 时的本构参数与应力分量数，仍属于同一线弹性离散框架。
@@ -614,7 +614,7 @@ $
   = ell (bold(Phi)^(bold(tau)), bold(Phi)^(bold(v))),
   quad forall (bold(Phi)^(bold(tau)), bold(Phi)^(bold(v))) in bold(Sigma)_N times bold(U)_N.
 $
-具体系数展开与约束后的对称代数系统见附录 @app:elasticity。
+具体系数展开与约束后的加权残差最小二乘问题见附录 @app:elasticity。
 
 == 线弹性准最优估计
 
@@ -749,7 +749,7 @@ $
   = ell (bold(Phi)^(bold(tau)), Phi^(v)),
   quad forall (bold(Phi)^(bold(tau)), Phi^(v)) in bold(Sigma)_N times U_N.
 $
-具体系数展开与对称代数系统见附录 @app:plate。
+具体系数展开与加权残差最小二乘问题见附录 @app:plate。
 
 == 板弯曲准最优估计
 
@@ -860,20 +860,19 @@ $
     |---|---|
     | 数据类型 | `torch.float64` |
     | 激活函数 | $tanh$ |
-    | 采样方式 | Sobol 采样 |
-    | 采样种子 | 训练为 $43$，测试为 $45$ |
+    | 求积方式 | Gauss--Legendre 张量积求积 |
     | 特征种子 | 应力/弯矩特征为 $42$，位移/挠度特征为 $1042$ |
   ],
   caption: [数值算例的公共实验设置],
 )
 
-主实验采用 Lstsq、TSVD 和 Ridge，顺序如下：
-- Lstsq 直接调用通用最小二乘求解器。
-- TSVD：对对称线性系统采用特征值分解，并按相对截断阈值 $tau_"TSVD" = 10^(-15)$ 截断近零特征值。
-- Ridge：在 Gram 矩阵上加入相对正则强度为 $alpha_"Ridge" = 10^(-15)$ 的对角正则项，以提升病态情形下的稳定性。
-三种求解器的具体原理见附录 @app:solver。
-
-此外，为区分 Gram 正规方程的数值误差与随机空间本身的逼近误差，本文另设直接残差求解诊断。该版本保持离散空间不变，每个标量空间仍由常数项与 $N$ 个固定随机 $tanh$ 特征组成；数值上直接组装加权残差矩阵 $bold(A)$ 与右端 $bold(b)$，对 $bold(A)$ 的各列作二范数归一化后，使用 LAPACK 的秩揭示 GELSD 求解 $bold(A) bold(z) approx bold(b)$，截断参数取 $10^(-14)$。由于显式残差矩阵的内存开销较高，该诊断采用单独的 Gauss--Legendre 求积设置，其结果不与下文 Sobol/Gram 主表作逐项时间比较。
+本文所有数值结果均记为 LS。对训练求积点上的本构残差与平衡残差分别乘以求积权重的平方根，并按行堆叠为残差矩阵 $bold(R)_N$ 与右端 $bold(b)_N$，随后求解
+$
+  bold(phi)_N
+  := arg min_(bold(psi) in RR^(K_N))
+  norm(bold(R)_N bold(psi) - bold(b)_N)_2.
+$
+求解前对 $bold(R)_N$ 的各列作二范数缩放，再使用 LAPACK GELSD，截断参数取 $10^(-14)$；三维大规模系统先用流式 TSQR 压缩增广残差矩阵，再求解保持同一极小点的约化问题。具体残差块与求解过程见附录 @app:elasticity、@app:plate 和 @app:solver。以下记测试求积点与权重为 ${(bold(x)_p, omega_p^"test")}_(p=1)^(Q_"test")$。
 
 == 三维线弹性
 
@@ -893,7 +892,7 @@ $
     | 形状参数     | $gamma = 2.0$ |
     | 超平面法向量  | $bold(X) tilde.op cal(N)(0, bold(I)_3)$ |
     | 截距        | $U_n tilde.op cal(U)(0, 1)$ |
-    | 训练采样点   | $Q_"train" = (2^5)^3 = 32768$ |
+    | 训练采样点   | $Q_"train" = (2^4)^3 = 4096$ |
     | 测试采样点   | $Q_"test" = (2^4)^3 = 4096$ |
   ],
   caption: [三维线弹性实验设置],
@@ -924,22 +923,12 @@ $
 对三维线弹性，位移误差定义为
 $
   norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(i = 1)^3 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
+  := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(i = 1)^3 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
 $
 而在 Voigt 顺序 $(11, 22, 33, 12, 23, 13)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 1, 2, 2, 2)^T$，并定义
 $
   norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^6 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
-$
-散度误差定义为
-$
-  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^6 w^"V"_alpha [(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_alpha]^2).
-$
-由于精确解满足 $nabla dot bold(sigma)_"ex" + bold(f)_"ex" = 0$，故计算时可等价写为
-$
-  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^6 w^"V"_alpha [(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_alpha]^2).
+  := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(alpha=1)^6 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
 $
 
 === 实验结果
@@ -956,21 +945,11 @@ $
   )[
     | 方法 | $N$ | DOF | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | Time(s) |
     |:-----------|:----:|:----:|:--------:|:--------:|:-------:|
-    | LS (Lstsq) | 200  | 1808 | 4.06e-04 | 2.27e-02 |  0.26   |
-    | LS (Lstsq) | 400  | 3608 | 2.15e-05 | 1.47e-03 |  0.44   |
-    | LS (Lstsq) | 600  | 5408 | 4.25e-06 | 3.46e-04 |  1.33   |
-    | LS (Lstsq) | 800  | 7208 | 8.17e-06 | 4.79e-04 |  2.92   |
-    | LS (Lstsq) | 1000 | 9008 | 7.73e-04 | 4.03e-02 |  5.52   |
-    | LS (TSVD)  | 200  | 1808 | 4.05e-04 | 2.27e-02 |  0.47   |
-    | LS (TSVD)  | 400  | 3608 | 2.26e-05 | 1.50e-03 |  1.45   |
-    | LS (TSVD)  | 600  | 5408 | 7.18e-06 | 4.69e-04 |  4.03   |
-    | LS (TSVD)  | 800  | 7208 | 3.72e-06 | 2.39e-04 |  8.64   |
-    | LS (TSVD)  | 1000 | 9008 | 2.79e-06 | 1.68e-04 |  16.20  |
-    | LS (Ridge) | 200  | 1808 | 4.03e-04 | 2.27e-02 |  0.20   |
-    | LS (Ridge) | 400  | 3608 | 2.05e-05 | 1.48e-03 |  1.30   |
-    | LS (Ridge) | 600  | 5408 | 4.75e-06 | 3.96e-04 |  3.54   |
-    | LS (Ridge) | 800  | 7208 | 2.12e-06 | 1.94e-04 |  7.45   |
-    | LS (Ridge) | 1000 | 9008 | 1.47e-06 | 1.40e-04 |  13.82  |
+    | LS | 200  | 1808 | 4.05e-04 | 2.27e-02 |  2.87   |
+    | LS | 400  | 3608 | 2.16e-05 | 1.47e-03 |  13.41  |
+    | LS | 600  | 5408 | 3.93e-06 | 3.13e-04 |  39.55  |
+    | LS | 800  | 7208 | 7.22e-07 | 6.41e-05 |  89.87  |
+    | LS | 1000 | 9008 | 2.30e-07 | 2.31e-05 | 166.60  |
   ],
   caption: [三维线弹性在不同特征数量下的数值结果],
 )<tb:3d-ablation-n>
@@ -980,7 +959,7 @@ $
   caption: [三维线弹性在不同特征数量下的数值结果],
 )
 
-由 @tb:3d-ablation-n 可见，随着 $N$ 增大，TSVD 与 Ridge 的误差总体下降且表现较稳定；Lstsq 在 $N = 1000$ 时误差明显增大，说明未作谱截断或正则化的通用最小二乘求解对增广特征空间带来的代数病态更敏感。
+由 @tb:3d-ablation-n 可见，随着 $N$ 从 $200$ 增至 $1000$，位移误差由 $4.05 times 10^(-4)$ 降至 $2.30 times 10^(-7)$，应力误差由 $2.27 times 10^(-2)$ 降至 $2.31 times 10^(-5)$。两项误差均随特征数量稳定下降，说明加权残差 LS 在该三维随机空间上保持了清晰的收敛趋势；相应代价是残差矩阵规模增大后求解时间明显上升。
 
 为给出同一制造解下的有限元参照，@hu2015tetrahedral 中 $P_4$ Hu-Zhang 元的结果列于 @tb:3d-hu-zhang。这里 DOF 按文中初始网格及均匀二分细化后的 Kuhn 六四面体剖分推算，统计为 $dim bold(Sigma)_h + dim V_h$。
 
@@ -1016,8 +995,8 @@ $
     | 形状参数     | $gamma = 2.0$ |
     | 超平面法向量  | $bold(X) tilde.op cal(N)(0, bold(I)_2)$ |
     | 截距        | $U_n tilde.op cal(U)(0, 1)$ |
-    | 训练采样点   | $Q_"train" = (2^8)^2 = 65536$ |
-    | 测试采样点   | $Q_"test" = (2^7)^2 = 16384$ |
+    | 训练采样点   | $Q_"train" = (42)^2 = 1764$ |
+    | 测试采样点   | $Q_"test" = (64)^2 = 4096$ |
   ],
   caption: [二维线弹性实验设置],
 )
@@ -1046,22 +1025,12 @@ $
 对二维线弹性，位移误差定义为
 $
   norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(i = 1)^2 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
+  := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(i = 1)^2 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
 $
 而在 Voigt 顺序 $(11, 22, 12)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 2)^T$，并定义
 $
   norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^3 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
-$
-散度误差定义为
-$
-  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^3 w^"V"_alpha [(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_alpha]^2).
-$
-由于精确解满足 $nabla dot bold(sigma)_"ex" + bold(f)_"ex" = 0$，故计算时可等价写为
-$
-  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^3 w^"V"_alpha [(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_alpha]^2).
+  := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(alpha=1)^3 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
 $
 
 === 实验结果
@@ -1078,21 +1047,11 @@ $
   )[
     | 方法 | $N$ | DOF | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | Time(s) |
     |:-----------|:----:|:----:|:--------:|:--------:|:-------:|
-    | LS (Lstsq) | 200  | 1004 | 2.71e-06 | 1.25e-04 |  0.08   |
-    | LS (Lstsq) | 400  | 2004 | 1.64e-06 | 7.02e-05 |  0.10   |
-    | LS (Lstsq) | 600  | 3004 | 4.34e-07 | 1.87e-05 |  0.27   |
-    | LS (Lstsq) | 800  | 4004 | 4.61e-07 | 1.63e-05 |  0.58   |
-    | LS (Lstsq) | 1000 | 5004 | 1.27e-06 | 5.69e-05 |  1.09   |
-    | LS (TSVD)  | 200  | 1004 | 5.81e-07 | 3.84e-05 |  0.18   |
-    | LS (TSVD)  | 400  | 2004 | 2.27e-07 | 1.52e-05 |  0.25   |
-    | LS (TSVD)  | 600  | 3004 | 2.28e-07 | 1.30e-05 |  0.78   |
-    | LS (TSVD)  | 800  | 4004 | 2.16e-07 | 1.19e-05 |  1.89   |
-    | LS (TSVD)  | 1000 | 5004 | 1.64e-07 | 9.32e-06 |  3.24   |
-    | LS (Ridge) | 200  | 1004 | 3.42e-07 | 2.96e-05 |  0.06   |
-    | LS (Ridge) | 400  | 2004 | 1.19e-07 | 1.24e-05 |  0.23   |
-    | LS (Ridge) | 600  | 3004 | 9.93e-08 | 1.04e-05 |  0.73   |
-    | LS (Ridge) | 800  | 4004 | 9.20e-08 | 9.58e-06 |  1.68   |
-    | LS (Ridge) | 1000 | 5004 | 7.84e-08 | 7.88e-06 |  2.86   |
+    | LS | 200  | 1004 | 5.96e-07 | 6.33e-05 |  0.37   |
+    | LS | 400  | 2004 | 1.23e-09 | 2.06e-07 |  0.96   |
+    | LS | 600  | 3004 | 2.02e-11 | 3.99e-09 |  3.34   |
+    | LS | 800  | 4004 | 1.11e-12 | 2.36e-10 |  9.19   |
+    | LS | 1000 | 5004 | 1.99e-13 | 3.43e-11 |  21.03  |
   ],
   caption: [二维线弹性在不同特征数量下的数值结果],
 )<tb:2d-ablation-n>
@@ -1102,7 +1061,7 @@ $
   caption: [二维线弹性在不同特征数量下的数值结果],
 )
 
-二维算例中三类求解器均达到较小误差，但 TSVD 与 Ridge 随 $N$ 增大更平稳，Ridge 在最大特征数量下给出最低误差。
+二维算例的误差随 $N$ 增大快速下降。在 $N = 1000$ 时，位移与应力误差分别达到 $1.99 times 10^(-13)$ 和 $3.43 times 10^(-11)$，表明当前固定随机特征空间与直接残差 LS 可以在该光滑二维问题上达到接近机器精度的位移逼近。
 
 作为有限元参照，@hu2014triangle 中 $P_4$ Hu-Zhang 元的结果列于 @tb:2d-hu-zhang。
 
@@ -1141,8 +1100,8 @@ $
     | 形状参数     | $gamma_s = gamma_u = 2.0$ |
     | 超平面法向量  | $bold(X) tilde.op cal(N)(0, bold(I)_3)$ |
     | 截距        | $U_n tilde.op cal(U)(0, 1)$ |
-    | 训练采样点   | $Q_"train" = (2^5)^3 = 32768$ |
-    | 测试采样点   | $Q_"test" = (2^4)^3 = 4096$ |
+    | 训练采样点   | $Q_"train" = (16)^3 = 4096$ |
+    | 测试采样点   | $Q_"test" = (16)^3 = 4096$ |
   ],
   caption: [近不可压缩三维线弹性实验设置],
 )
@@ -1180,21 +1139,11 @@ $
   )[
     | 方法 | $nu$ | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | Time(s) |
     |:-----------|:---------|:--------:|:--------:|:-------:|
-    | LS (Lstsq) |   0.49   | 1.01e-04 | 4.66e-03 |  5.58   |
-    | LS (Lstsq) |  0.499   | 4.60e-04 | 2.11e-02 |  5.52   |
-    | LS (Lstsq) |  0.4999  | 1.04e-03 | 5.23e-02 |  5.51   |
-    | LS (Lstsq) | 0.49999  | 3.84e-04 | 1.72e-02 |  5.52   |
-    | LS (Lstsq) | 0.499999 | 1.70e-04 | 7.57e-03 |  5.52   |
-    | LS (TSVD)  |   0.49   | 2.24e-05 | 9.51e-04 |  16.29  |
-    | LS (TSVD)  |  0.499   | 2.27e-05 | 9.50e-04 |  16.21  |
-    | LS (TSVD)  |  0.4999  | 2.31e-05 | 9.63e-04 |  16.18  |
-    | LS (TSVD)  | 0.49999  | 2.32e-05 | 9.69e-04 |  16.20  |
-    | LS (TSVD)  | 0.499999 | 2.24e-05 | 9.39e-04 |  16.20  |
-    | LS (Ridge) |   0.49   | 1.45e-05 | 6.47e-04 |  13.81  |
-    | LS (Ridge) |  0.499   | 1.53e-05 | 6.67e-04 |  13.82  |
-    | LS (Ridge) |  0.4999  | 1.54e-05 | 6.69e-04 |  13.82  |
-    | LS (Ridge) | 0.49999  | 1.54e-05 | 6.69e-04 |  13.82  |
-    | LS (Ridge) | 0.499999 | 1.54e-05 | 6.69e-04 |  13.79  |
+    | LS |   0.49   | 2.17e-06 | 1.38e-04 | 169.34  |
+    | LS |  0.499   | 2.26e-06 | 1.40e-04 | 168.62  |
+    | LS |  0.4999  | 2.27e-06 | 1.40e-04 | 167.73  |
+    | LS | 0.49999  | 2.27e-06 | 1.40e-04 | 166.12  |
+    | LS | 0.499999 | 2.27e-06 | 1.40e-04 | 168.29  |
   ],
   caption: [近不可压缩三维线弹性在不同泊松比下的数值结果],
 )<tb:3d-ablation-nu>
@@ -1203,6 +1152,8 @@ $
   image("/public/images/least-squares/linear-elasticity-3d/ablation/nu/ablation-nu.png"),
   caption: [三维线弹性在不同泊松比下的数值结果],
 )
+
+当 $nu$ 从 $0.49$ 增至 $0.499999$ 时，位移误差始终约为 $2.2 times 10^(-6)$，应力误差始终约为 $1.4 times 10^(-4)$，且各次求解耗时接近。这与 @theorem:elasticity-coercive 的 Lamé 参数一致稳定性相符，数值结果未表现出随近不可压缩极限恶化的锁死现象。
 
 == 平面应力
 
@@ -1222,8 +1173,8 @@ $
     | 形状参数     | $gamma = 3.0$ |
     | 超平面法向量  | $bold(X) tilde.op cal(N)(0, bold(I)_2)$ |
     | 截距        | $U_n tilde.op cal(U)(0, 1)$ |
-    | 内部采样点   | $Q_"train" = (2^8)^2 = 65536$ |
-    | 测试采样点   | $Q_"test" = (2^7)^2 = 16384$ |
+    | 内部采样点   | $Q_"train" = (42)^2 = 1764$ |
+    | 测试采样点   | $Q_"test" = (64)^2 = 4096$ |
   ],
   caption: [平面应力实验设置],
 )
@@ -1252,22 +1203,12 @@ $
 对平面应力，位移误差定义为
 $
   norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(i = 1)^2 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
+  := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(i = 1)^2 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
 $
 而在 Voigt 顺序 $(11, 22, 12)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 2)^T$，并定义
 $
   norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^3 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
-$
-散度误差定义为
-$
-  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  := sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^3 w^"V"_alpha [(nabla dot (bold(Phi)^(bold(sigma)) - bold(sigma)_"ex") (bold(x)_p))_alpha]^2).
-$
-由于精确解满足 $nabla dot bold(sigma)_"ex" + bold(f)_"ex" = 0$，故计算时可等价写为
-$
-  norm(div(bold(Phi)^bold(sigma) - bold(sigma)_"ex"))_0
-  = sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha = 1)^3 w^"V"_alpha [(nabla dot bold(Phi)^(bold(sigma)) (bold(x)_p) + bold(f)_"ex" (bold(x)_p))_alpha]^2).
+  := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(alpha=1)^3 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
 $
 
 === 实验结果
@@ -1281,21 +1222,11 @@ $
   )[
     | 方法 | $N$ | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | Time(s) |
     |:-----------|:----:|:--------:|:--------:|:-------:|
-    | LS (Lstsq) | 200  | 6.21e-07 | 6.54e-05 |  0.09   |
-    | LS (Lstsq) | 400  | 9.65e-07 | 7.45e-05 |  0.10   |
-    | LS (Lstsq) | 600  | 3.02e-07 | 2.10e-05 |  0.27   |
-    | LS (Lstsq) | 800  | 1.96e-07 | 1.06e-05 |  0.58   |
-    | LS (Lstsq) | 1000 | 1.69e-07 | 1.05e-05 |  1.09   |
-    | LS (TSVD)  | 200  | 1.13e-06 | 9.81e-05 |  0.16   |
-    | LS (TSVD)  | 400  | 9.33e-08 | 7.28e-06 |  0.26   |
-    | LS (TSVD)  | 600  | 5.73e-08 | 3.75e-06 |  0.79   |
-    | LS (TSVD)  | 800  | 5.87e-08 | 3.41e-06 |  1.89   |
-    | LS (TSVD)  | 1000 | 4.32e-08 | 2.71e-06 |  3.25   |
-    | LS (Ridge) | 200  | 7.36e-07 | 7.54e-05 |  0.06   |
-    | LS (Ridge) | 400  | 4.09e-08 | 5.01e-06 |  0.24   |
-    | LS (Ridge) | 600  | 2.42e-08 | 2.86e-06 |  0.74   |
-    | LS (Ridge) | 800  | 2.13e-08 | 2.45e-06 |  1.69   |
-    | LS (Ridge) | 1000 | 1.87e-08 | 2.16e-06 |  2.87   |
+    | LS | 200  | 5.96e-07 | 6.33e-05 |  0.32   |
+    | LS | 400  | 1.23e-09 | 2.06e-07 |  0.85   |
+    | LS | 600  | 2.03e-11 | 3.99e-09 |  2.88   |
+    | LS | 800  | 1.21e-12 | 2.25e-10 |  9.15   |
+    | LS | 1000 | 1.68e-13 | 2.96e-11 |  19.55  |
   ],
   caption: [平面应力在不同特征数量下的数值结果],
 )<tb:ps-ablation>
@@ -1305,7 +1236,7 @@ $
   caption: [平面应力在不同特征数量下的数值结果],
 )
 
-平面应力算例呈现类似趋势。Lstsq 的误差随 $N$ 增大并不严格单调；TSVD 与 Ridge 在 $N >= 400$ 后保持较低误差，其中 Ridge 在该组实验中整体最优。
+平面应力算例与二维线弹性呈现相同的快速收敛趋势。在 $N = 1000$ 时，位移误差为 $1.68 times 10^(-13)$，应力误差为 $2.96 times 10^(-11)$；从 $N = 200$ 到 $N = 1000$，两项误差均下降了多个数量级。
 
 == 板弯曲
 
@@ -1323,11 +1254,11 @@ $
     | 算例名称     | 板弯曲 |
     | 计算区域     | $[0, 1]^2$ |
     | 板厚度       | $h = 1$    |
-    | 形状参数     | $gamma = 3.0$ |
+    | 形状参数     | $gamma = 2.0$ |
     | 超平面法向量  | $bold(X) tilde.op cal(N)(0, bold(I)_2)$ |
     | 截距        | $U_n tilde.op cal(U)(0, 1)$ |
-    | 内部采样点   | $Q_"train" = (2^8)^2 = 65536$ |
-    | 测试采样点   | $Q_"test" = (2^7)^2 = 16384$ |
+    | 内部采样点   | $Q_"train" = (32)^2 = 1024$ |
+    | 测试采样点   | $Q_"test" = (32)^2 = 1024$ |
   ],
   caption: [板弯曲实验设置],
 )
@@ -1346,21 +1277,13 @@ $
 
 对板弯曲，挠度误差定义为
 $
-  e_u
-  :=
-  frac(
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") abs(bold(Phi)^u (bold(x)_p) - u_"ex" (bold(x)_p))^2),
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") abs(u_"ex" (bold(x)_p))^2)
-  ),
+  norm(Phi^u - u_"ex")_0
+  := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" abs(Phi^u (bold(x)_p) - u_"ex" (bold(x)_p))^2),
 $
-而在 Voigt 顺序 $(11, 22, 12)$ 下，对弯矩采用同样的权重 $bold(w)^"V" = (1, 1, 2)^T$：
+而在 Voigt 顺序 $(11, 22, 12)$ 下，对弯矩采用权重 $bold(w)^"V" = (1, 1, 2)^T$，其绝对误差定义为
 $
-  e_bold(cal(M))
-  :=
-  frac(
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^3 w^"V"_alpha ((bold(Phi)^(bold(cal(M))) (bold(x)_p))_alpha - (bold(cal(M))_"ex" (bold(x)_p))_alpha)^2),
-    sqrt(frac(1, Q_"test") sum_(p=1)^(Q_"test") sum_(alpha=1)^3 w^"V"_alpha ((bold(cal(M))_"ex" (bold(x)_p))_alpha)^2)
-  ).
+  norm(bold(Phi)^(bold(cal(M))) - bold(cal(M))_"ex")_0
+  := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(alpha=1)^3 w^"V"_alpha ((bold(Phi)^(bold(cal(M))) (bold(x)_p))_alpha - (bold(cal(M))_"ex" (bold(x)_p))_alpha)^2).
 $
 
 === 实验结果
@@ -1372,23 +1295,13 @@ $
     columns: 5,
     align: (left, right, right, right, right),
   )[
-    | 方法 | $N$ | $e_u$ | $e_bold(cal(M))$ |  Time(s) |
+    | 方法 | $N$ | $norm(Phi^u - u_"ex")_0$ | $norm(bold(Phi)^(bold(cal(M))) - bold(cal(M))_"ex")_0$ |  Time(s) |
     |:-------------------|-------:|-----------:|-----------:|---------:|
-    | LS (Lstsq)         |    200 |   8.29e-05 |   1.20e-02 |     0.07 |
-    | LS (Lstsq)         |    400 |   2.86e-06 |   3.45e-04 |     0.06 |
-    | LS (Lstsq)         |    600 |   2.10e-06 |   2.19e-04 |     0.15 |
-    | LS (Lstsq)         |    800 |   1.89e-06 |   1.46e-04 |     0.33 |
-    | LS (Lstsq)         |   1000 |   9.83e-06 |   7.12e-04 |     0.58 |
-    | LS (TSVD)          |    200 |   2.57e-05 |   2.00e-03 |     0.09 |
-    | LS (TSVD)          |    400 |   2.41e-06 |   1.85e-04 |     0.15 |
-    | LS (TSVD)          |    600 |   2.08e-06 |   1.80e-04 |     0.41 |
-    | LS (TSVD)          |    800 |   2.15e-06 |   1.71e-04 |     0.99 |
-    | LS (TSVD)          |   1000 |   2.69e-06 |   1.31e-04 |     1.88 |
-    | LS (Ridge)         |    200 |   9.53e-06 |   1.57e-03 |     0.04 |
-    | LS (Ridge)         |    400 |   9.61e-07 |   1.58e-04 |     0.14 |
-    | LS (Ridge)         |    600 |   6.04e-07 |   1.34e-04 |     0.38 |
-    | LS (Ridge)         |    800 |   5.50e-07 |   1.22e-04 |     0.90 |
-    | LS (Ridge)         |   1000 |   4.38e-07 |   1.02e-04 |     1.69 |
+    | LS | 200  | 1.60e-10 | 1.15e-07 |  0.14   |
+    | LS | 400  | 3.12e-13 | 2.12e-10 |  0.39   |
+    | LS | 600  | 3.72e-14 | 2.71e-11 |  1.06   |
+    | LS | 800  | 4.18e-14 | 1.71e-11 |  5.22   |
+    | LS | 1000 | 1.25e-14 | 1.32e-11 |  9.09   |
   ],
   caption: [板弯曲在不同特征数量下的数值结果],
 )<tb:pb-ablation>
@@ -1398,41 +1311,13 @@ $
   caption: [板弯曲在不同特征数量下的数值结果],
 )
 
-板弯曲算例对代数求解更敏感。Lstsq 在 $N = 1000$ 时误差回升，TSVD 的误差下降较慢；Ridge 随 $N$ 增大保持稳定改善，并在该算例中取得最小的挠度与弯矩误差。
-
-== 纯随机 tanh 空间的直接残差求解诊断
-
-本节保持随机特征族不变，不加入多项式、Fourier、学习型或依赖制造解的确定性特征。二维线弹性与平面应力取 $gamma = 3$，板弯曲取 $gamma = 2$，三维线弹性取 $gamma = 2$；训练求积点数统一取 $Q_"train" = 4096$。二维与板问题使用 $Q_"test" = 16384$，三维问题使用 $Q_"test" = 8000$。不同 $N$ 使用固定随机种子重新生成字典，但并非同一个最大字典的严格前缀，故下表反映固定种子下的规模扫描，而不解释为嵌套空间的严格单调收敛。
-
-#figure(
-  three-line-table(
-    columns: 6,
-    align: (left, center, center, center, center, center),
-  )[
-    | 算例 | $N$ | $gamma$ | 位移/挠度误差 | 应力/弯矩误差 | Time(s) |
-    |:---|:---:|:---:|:---:|:---:|:---:|
-    | 二维线弹性 | 600  | 3 | 1.83e-11 | 3.51e-09 | 5.67 |
-    | 二维线弹性 | 800  | 3 | 8.78e-13 | 2.07e-10 | 11.96 |
-    | 二维线弹性 | 1000 | 3 | 2.12e-13 | 3.42e-11 | 20.82 |
-    | 平面应力   | 600  | 3 | 1.81e-11 | 3.50e-09 | 4.29 |
-    | 平面应力   | 800  | 3 | 1.15e-12 | 1.99e-10 | 10.08 |
-    | 平面应力   | 1000 | 3 | 1.63e-13 | 2.98e-11 | 21.04 |
-    | 板弯曲     | 600  | 2 | 6.08e-11 | 1.49e-08 | 3.73 |
-    | 板弯曲     | 800  | 2 | 2.65e-11 | 6.95e-09 | 6.90 |
-    | 板弯曲     | 1000 | 2 | 2.37e-11 | 4.92e-09 | 13.17 |
-    | 三维线弹性 | 200  | 2 | 4.96e-04 | 2.69e-02 | 2.21 |
-    | 三维线弹性 | 400  | 2 | 2.22e-05 | 1.51e-03 | 10.11 |
-  ],
-  caption: [纯随机 $tanh$ 特征下 Direct GELSD 的数值结果。前三类线弹性误差为绝对 $L^2$ 误差，板弯曲为相对 $L^2$ 误差],
-)<tb:direct-random-tanh>
-
-由 @tb:direct-random-tanh 可见，绕开正规方程后，二维线弹性与平面应力在 $N = 1000$ 时均可将位移和应力误差降至 $10^(-10)$ 以下，说明原 Gram 路径确实损失了若干位有效精度。另一方面，板弯曲的挠度误差虽已低于 $10^(-10)$，弯矩误差仍停留在 $4.92 times 10^(-9)$；三维线弹性在 $N = 400$ 时的应力误差仍为 $1.51 times 10^(-3)$。因此，直接分解可以缓解代数病态，但不能统一消除纯随机空间的最佳逼近误差；对高阶弯矩变量和三维应力变量，随机字典的有效逼近秩仍是主要限制。
+板弯曲的绝对误差同样随特征数量总体下降。挠度误差从 $N = 200$ 时的 $1.60 times 10^(-10)$ 降至 $N = 1000$ 时的 $1.25 times 10^(-14)$；弯矩误差则由 $1.15 times 10^(-7)$ 降至 $1.32 times 10^(-11)$。$N = 600$ 之后挠度误差已接近浮点精度平台，因而局部的轻微非单调不影响整体收敛判断。
 
 = 结语
 
-本文提出了一种面向弹性问题的固定随机特征混合最小二乘方法。其基本思路是先根据混合模型中的本构关系与平衡关系构造最小二乘泛函，再由对应的变分形式建立离散系统；在随机特征层面，则通过逐分量随机基、迹消去算子与线性约束获得保形性与齐次边界条件，并得到对称代数系统。对于线弹性问题，虽然泛函直接采用本构残差与平衡残差的两项写法，但借助柔度算子的偏差-体积分解仍可得到关于 Lamé 常数 $lambda$ 一致的连续性与强制性估计，从而可以同时处理可压缩与近不可压缩弹性问题。
+本文提出了一种面向弹性问题的固定随机特征混合最小二乘方法。其基本思路是先根据混合模型中的本构关系与平衡关系构造最小二乘泛函，再将离散残差直接组装为加权矩形矩阵并求解相应的 LS 问题；在随机特征层面，则通过逐分量随机基、迹消去算子与线性约束获得保形性与齐次边界条件。对于线弹性问题，虽然泛函直接采用本构残差与平衡残差的两项写法，但借助柔度算子的偏差-体积分解仍可得到关于 Lamé 常数 $lambda$ 一致的连续性与强制性估计，从而可以同时处理可压缩与近不可压缩弹性问题。
 
-在具体理论上，本文分别建立了该方法在线弹性应力-位移混合形式与 Kirchhoff-Love 板弯曲弯矩-挠度混合形式下的连续与离散分析。理论结果表明，只要离散空间与相应连续问题的函数空间保持一致，连续稳定性、离散稳定性以及准最优误差估计便可为该方法提供一致的分析基础。数值实验进一步在三维线弹性、二维线弹性、近不可压缩三维线弹性、平面应力与 Kirchhoff-Love 板弯曲算例上验证了该方法的可行性。Gram 系统上的 TSVD 与 Ridge 能抑制通用 Lstsq 在大特征数量下的误差反弹；直接残差分解则进一步表明，正规方程确实造成显著精度损失，但纯随机 $tanh$ 空间并未在所有模型中统一达到 $10^(-10)$。二维线弹性与平面应力可以在 $N = 1000$ 时达到该精度，而板弯矩与三维应力仍受到随机空间有效逼近秩的限制。
+在具体理论上，本文分别建立了该方法在线弹性应力-位移混合形式与 Kirchhoff-Love 板弯曲弯矩-挠度混合形式下的连续与离散分析。理论结果表明，只要离散空间与相应连续问题的函数空间保持一致，连续稳定性、离散稳定性以及准最优误差估计便可为该方法提供一致的分析基础。数值实验进一步在三维线弹性、二维线弹性、近不可压缩三维线弹性、平面应力与 Kirchhoff-Love 板弯曲算例上验证了该方法的可行性：各特征数量扫描均呈现稳定的总体收敛趋势，近不可压缩扫描中的误差对 $nu -> 1/2$ 保持稳定，二维线弹性、平面应力与板弯曲还获得了很高的绝对 $L^2$ 精度。
 
 #bibliography("/public/reference/least-squares.bib")
 
@@ -1512,13 +1397,13 @@ $
 于是线弹性的离散空间定义为
 $
   bold(Sigma)_N & := {
-    sum_(n=0)^N sum_(alpha=1)^(d(d+1)/2)
-    phi^(bold(sigma))_(n, alpha) xi_n^(bold(sigma)) bold(E)_alpha :
-    integral_Omega tr(
-      sum_(n=0)^N sum_(alpha=1)^(d(d+1)/2)
-      phi^(bold(sigma))_(n, alpha) xi_n^(bold(sigma)) bold(E)_alpha
-    ) dif x = 0
-  }, \
+                    sum_(n=0)^N sum_(alpha=1)^(d(d+1)/2)
+                    phi^(bold(sigma))_(n, alpha) xi_n^(bold(sigma)) bold(E)_alpha :
+                    integral_Omega tr(
+                      sum_(n=0)^N sum_(alpha=1)^(d(d+1)/2)
+                      phi^(bold(sigma))_(n, alpha) xi_n^(bold(sigma)) bold(E)_alpha
+                    ) dif x = 0
+                  }, \
       bold(U)_N & := span { zeta_n^(0, bold(u)) bold(e)_i : 0 <= n <= N, 1 <= i <= d }.
 $
 将离散未知量展开为
@@ -1553,55 +1438,41 @@ $
   (bold(Phi)^(bold(tau)), bold(Phi)^(bold(v))) in bold(Sigma)_N times bold(U)_N.
 $
 
-为组装该约束问题，先按未施加零平均迹约束的应力基函数与位移基函数形成矩阵块。取测试函数
+为与数值实现一致，取训练求积点与权重 ${(bold(x)_p, omega_p)}_(p=1)^Q$，并令 $s = d(d+1)/2$。各张量残差按代码中的 Voigt 分量顺序逐行排列。先不施加零平均迹约束，将本构残差与平衡残差的加权矩阵块定义为
 $
-  bold(Phi)^(bold(tau)) = xi_m^(bold(sigma)) bold(E)_beta,
+  (bold(R)_"c,sigma")_((p, beta), (n, alpha))
+  & := sqrt(omega_p)
+  (bold(cal(A)) : (xi_n^(bold(sigma))(bold(x)_p) bold(E)_alpha))_beta, \
+  (bold(R)_"c,u")_((p, beta), (n, i))
+  & := - sqrt(omega_p)
+  (bold(epsilon)(zeta_n^(0, bold(u)) bold(e)_i)(bold(x)_p))_beta, \
+  (bold(R)_"e,sigma")_((p, j), (n, alpha))
+  & := sqrt(omega_p)
+  (nabla dot (xi_n^(bold(sigma)) bold(E)_alpha)(bold(x)_p))_j.
+$
+其中 $1 <= beta, alpha <= s$、$1 <= i, j <= d$。右端在本构残差行上为零，在平衡残差行上定义为
+$
+  (bold(b)_e)_((p, j)) := - sqrt(omega_p) f_j(bold(x)_p).
+$
+于是未约束的加权残差矩阵、右端和系数向量分别为
+$
+  tilde(bold(R))_N
+  := mat(
+    bold(R)_"c,sigma", bold(R)_"c,u";
+    bold(R)_"e,sigma", 0
+  ),
   quad
-  bold(Phi)^(bold(v)) = zeta_m^(0, bold(u)) bold(e)_j.
-$
-定义矩阵块
-$
-  bold(G)^(bold(sigma) bold(sigma))_((m, beta), (n, alpha))
-  := & (bold(cal(A)) : (xi_n^(bold(sigma)) bold(E)_alpha),
-         bold(cal(A)) : (xi_m^(bold(sigma)) bold(E)_beta))_(L^2(Omega)) \
-     & + (nabla dot (xi_n^(bold(sigma)) bold(E)_alpha),
-         nabla dot (xi_m^(bold(sigma)) bold(E)_beta))_(L^2(Omega)), \
-  bold(G)^(bold(sigma) bold(u))_((m, beta), (n, i))
-  := & - (bold(cal(A)) : (xi_m^(bold(sigma)) bold(E)_beta),
-         bold(epsilon)(zeta_n^(0, bold(u)) bold(e)_i))_(L^2(Omega)), \
-  bold(G)^(bold(u) bold(u))_((m, j), (n, i))
-  := & (bold(epsilon)(zeta_n^(0, bold(u)) bold(e)_i),
-         bold(epsilon)(zeta_m^(0, bold(u)) bold(e)_j))_(L^2(Omega)),
-$
-以及载荷向量
-$
-  bold(F)^(bold(sigma))_((m, beta))
-  := - (bold(f), nabla dot (xi_m^(bold(sigma)) bold(E)_beta))_(L^2(Omega)).
-$
-将两类方程按未知系数排列，得到原始矩阵方程。记该矩阵与右端分别为 $tilde(bold(G))$ 与 $tilde(bold(F))$，则未施加平均迹约束时有
-$
-  mat(
-    bold(G)^(bold(sigma) bold(sigma)), bold(G)^(bold(sigma) bold(u));
-    (bold(G)^(bold(sigma) bold(u)))^T, bold(G)^(bold(u) bold(u))
-  )
-  mat(
-    bold(phi)^(bold(sigma));
-    bold(phi)^(bold(u))
-  )
-  =
-  mat(
-    bold(F)^(bold(sigma));
-    0
-  ).
-$
-施加零平均迹约束时，令 $bold(c)^T bold(phi)^(bold(sigma)) = 0$，并取 $bold(Z)$ 的列张成该约束的零空间。于是约束后的对称系统为
-$
-  bold(Z)^T tilde(bold(G)) bold(Z) hat(bold(phi))
-  = bold(Z)^T tilde(bold(F)),
+  bold(b)_N := mat(0; bold(b)_e),
   quad
-  mat(bold(phi)^(bold(sigma)); bold(phi)^(bold(u))) = bold(Z) hat(bold(phi)).
+  tilde(bold(phi)) := mat(bold(phi)^(bold(sigma)); bold(phi)^(bold(u))).
 $
-由逐分量光滑性、零平均迹约束以及 $zeta_n^(0, bold(u)) in H_0^1(Omega)$ 可知，$bold(Sigma)_N subset bold(Sigma)$、$bold(U)_N subset bold(U)$ 保形，正文中的强制性限制到离散函数空间；系数矩阵的对称性来自双线性形式 $a$ 的对称性。
+若 $bold(c)^T bold(phi)^(bold(sigma)) = 0$ 表示零平均迹约束，取 $bold(Z)$ 的列张成完整系数空间中该约束的零空间，并写成 $tilde(bold(phi)) = bold(Z) hat(bold(phi))$。代码实际求解的问题即为
+$
+  hat(bold(phi))_N
+  := arg min_(hat(bold(psi)))
+  norm(tilde(bold(R))_N bold(Z) hat(bold(psi)) - bold(b)_N)_2.
+$
+该目标函数正是连续最小二乘泛函的 Gauss--Legendre 求积离散。由逐分量光滑性、零平均迹约束以及 $zeta_n^(0, bold(u)) in H_0^1(Omega)$ 可知，$bold(Sigma)_N subset bold(Sigma)$、$bold(U)_N subset bold(U)$ 保形，故正文中的稳定性与准最优估计仍适用于所得离散函数。
 
 = Kirchhoff-Love 板弯曲模型 <app:plate>
 
@@ -1692,102 +1563,66 @@ $
   quad forall
   (bold(Phi)^(bold(tau)), Phi^(v)) in bold(Sigma)_N times U_N.
 $
-测试空间由上述基函数张成。取测试函数
+取训练求积点与权重 ${(bold(x)_p, omega_p)}_(p=1)^Q$，并令 $bold(w)^"V" = (1, 1, 2)^T$。本构残差与平衡残差的加权矩阵块定义为
 $
-  bold(Phi)^(bold(tau)) = xi_m^(bold(cal(M))) bold(E)_beta,
+  (bold(R)_"c,M")_((p, beta), (n, alpha))
+  & := sqrt(omega_p w_beta^"V")
+  (bold(cal(A)) : (xi_n^(bold(cal(M)))(bold(x)_p) bold(E)_alpha))_beta, \
+  (bold(R)_"c,u")_((p, beta), n)
+  & := - sqrt(omega_p w_beta^"V")
+  (bold(cal(K))(zeta_n^(1, u))(bold(x)_p))_beta, \
+  (bold(R)_"e,M")_(p, (n, alpha))
+  & := sqrt(omega_p)
+  (nabla dot (nabla dot (xi_n^(bold(cal(M))) bold(E)_alpha)))(bold(x)_p), \
+  (bold(b)_e)_p & := - sqrt(omega_p) f(bold(x)_p).
+$
+将系数记为 $bold(phi) = mat(bold(phi)^(bold(cal(M))); phi^(u))$，并令
+$
+  bold(R)_N
+  := mat(
+    bold(R)_"c,M", bold(R)_"c,u";
+    bold(R)_"e,M", 0
+  ),
   quad
-  Phi^(v) = zeta_m^(1, u).
+  bold(b)_N := mat(0; bold(b)_e).
 $
-定义矩阵块
+则代码求解的板弯曲离散问题为
 $
-  bold(G)^(bold(cal(M)) bold(cal(M)))_((m, beta), (n, alpha))
-  := & (bold(cal(A)) : (xi_n^(bold(cal(M))) bold(E)_alpha),
-         bold(cal(A)) : (xi_m^(bold(cal(M))) bold(E)_beta))_(L^2(Omega)) \
-     & + (nabla dot (nabla dot (xi_n^(bold(cal(M))) bold(E)_alpha)),
-         nabla dot (nabla dot (xi_m^(bold(cal(M))) bold(E)_beta)))_(L^2(Omega)), \
-  bold(G)^(bold(cal(M)) u)_((m, beta), n)
-  := & - (bold(cal(A)) : (xi_m^(bold(cal(M))) bold(E)_beta),
-         bold(cal(K))(zeta_n^(1, u)))_(L^2(Omega)), \
-  bold(G)^(u u)_(m, n)
-  := & (bold(cal(K))(zeta_n^(1, u)),
-         bold(cal(K))(zeta_m^(1, u)))_(L^2(Omega)),
+  bold(phi)_N
+  := arg min_(bold(psi))
+  norm(bold(R)_N bold(psi) - bold(b)_N)_2.
 $
-以及载荷向量
-$
-  bold(F)^(bold(cal(M)))_((m, beta))
-  := - (f,
-    nabla dot (nabla dot (xi_m^(bold(cal(M))) bold(E)_beta)))_(L^2(Omega)).
-$
-将这两组方程按未知系数排列，便得到
-$
-  mat(
-    bold(G)^(bold(cal(M)) bold(cal(M))), bold(G)^(bold(cal(M)) u);
-    (bold(G)^(bold(cal(M)) u))^T, bold(G)^(u u)
-  )
-  mat(
-    bold(phi)^(bold(cal(M)));
-    phi^(u)
-  )
-  =
-  mat(
-    bold(F)^(bold(cal(M)));
-    0
-  ).
-$
-其中交叉块互为转置来自双线性形式 $a$ 的对称性。连续稳定性保证双线性形式在离散函数空间上强制；系数矩阵的对称性来自双线性形式 $a$ 的对称性。
+该目标函数是板弯曲最小二乘泛函的 Gauss--Legendre 求积离散；由于弯矩与挠度基分别属于 $bold(H)(div div, Omega; SS^2)$ 和 $H_0^2(Omega)$，所得离散函数保持保形。
 
-= 三种线性求解器的原理 <app:solver>
+= 加权残差最小二乘问题的求解 <app:solver>
 
-四类算例在离散后最终都可写成同一类对称代数系统；其中三维线弹性、二维线弹性与平面应力先对零平均迹约束做消元或零空间投影，再进入下述形式：
+四类算例最终均写成
 $
-  bold(G) bold(phi) = bold(F),
+  bold(phi)_N
+  := arg min_(bold(psi) in RR^(K_N))
+  norm(bold(R)_N bold(psi) - bold(b)_N)_2.
 $
-其中 $bold(G)$ 表示约束处理后的对称离散矩阵，$bold(phi)$ 表示拼接后的自由未知系数向量，$bold(F)$ 表示右端载荷向量。为简记，记
+为减小不同残差列尺度的影响，令
 $
-  bold(G) = bold(Q) bold(Lambda) bold(Q)^T,
+  s_j := max(norm((bold(R)_N)_(:, j))_2, epsilon s_"max"),
   quad
-  bold(Lambda) = diag(lambda_1, dots, lambda_K),
+  s_"max" := max_j norm((bold(R)_N)_(:, j))_2,
   quad
-  lambda_"max" = max_(1 <= i <= K) abs(lambda_i),
+  bold(S) := diag(s_1, dots, s_(K_N)),
 $
-其中 ${bold(q)_i}_(i=1)^N$ 为 $bold(G)$ 的标准正交特征向量组。
+其中 $epsilon$ 为机器精度。代码先求解缩放后的问题
+$
+  bold(y)_N
+  := arg min_(bold(y))
+  norm(bold(R)_N bold(S)^(-1) bold(y) - bold(b)_N)_2,
+  quad
+  bold(phi)_N = bold(S)^(-1) bold(y)_N,
+$
+再由 LAPACK GELSD 给出秩揭示的最小二乘解，截断参数取 $10^(-14)$。
 
-== Lstsq
-
-Lstsq 直接把代数系统视为最小二乘问题，求解
+当三维残差矩阵不适合整体存储时，代码按点批量组装增广矩阵 $[bold(R)_N, bold(b)_N]$，并用流式 TSQR 得到约化矩阵 $[hat(bold(R))_N, hat(bold(b))_N]$。Householder 正交变换保证存在与 $bold(psi)$ 无关的常数 $C$，使得
 $
-  bold(phi)_("Lstsq")
-  := arg min_(bold(psi) in RR^K)
-  norm(bold(G) bold(psi) - bold(F))_2.
+  norm(bold(R)_N bold(psi) - bold(b)_N)_2^2
+  = norm(hat(bold(R))_N bold(psi) - hat(bold(b))_N)_2^2 + C.
 $
-当 $bold(G)$ 非奇异时，该解与直接求解 $bold(G) bold(phi) = bold(F)$ 等价；当数值上接近奇异时，它返回相应的最小二乘解。
-
-== TSVD
-
-TSVD 利用 $bold(G)$ 的谱分解，仅保留大于截断阈值的特征模态。记相对截断阈值为 $tau_"TSVD" > 0$，并定义保留指标集
-$
-  I_"TSVD"
-  := { i in {1, dots, K}: lambda_i > tau_"TSVD" lambda_"max" }.
-$
-于是 TSVD 解写为
-$
-  bold(phi)_("TSVD")
-  = sum_(i in I_"TSVD")
-  (bold(q)_i^T bold(F)) / lambda_i bold(q)_i.
-$
-这等价于先将过小特征值对应的方向截断，再仅在保留下来的稳定子空间中求逆。
-
-== Ridge
-
-Ridge 通过给 $bold(G)$ 加入对角正则项来抬升小特征值方向的谱尺度。记相对正则强度为 $alpha_"Ridge" > 0$，则其线性系统写为
-$
-  (bold(G) + alpha_"Ridge" lambda_"max" bold(I)) bold(phi)_("Ridge")
-  = bold(F).
-$
-等价地，利用谱分解可写为
-$
-  bold(phi)_("Ridge")
-  = sum_(i=1)^N
-  (bold(q)_i^T bold(F)) / (lambda_i + alpha_"Ridge" lambda_"max") bold(q)_i.
-$
-因此 Ridge 不会直接删除任何模态，而是通过固定谱移位减弱病态方向对解的放大。
+因此约化问题与原问题具有相同的极小点，二者在本文中均称为 LS。

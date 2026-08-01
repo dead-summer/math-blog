@@ -33,7 +33,7 @@ ABLATION_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_ABLATION_N_LIST = [200, 400, 600, 800, 1000]
 ALGORITHM_LABELS = {
-    "direct": "Direct LS (GELSD)",
+    "direct": "LS",
 }
 
 

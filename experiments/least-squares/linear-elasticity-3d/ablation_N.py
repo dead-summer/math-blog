@@ -29,7 +29,7 @@ from linear_elasticity_3d import (
 
 DEFAULT_ABLATION_N_LIST = [200, 400, 600, 800, 1000]
 ALGORITHM_LABELS = {
-    "direct": "Direct LS (GELSD)",
+    "direct": "LS",
 }
 
 
