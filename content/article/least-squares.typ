@@ -922,12 +922,12 @@ $
 
 对三维线弹性，位移误差定义为
 $
-  norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
+  norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2(Omega))
   := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(i = 1)^3 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
 $
 而在 Voigt 顺序 $(11, 22, 33, 12, 23, 13)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 1, 2, 2, 2)^T$，并定义
 $
-  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
+  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2(Omega))
   := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(alpha=1)^6 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
 $
 
@@ -943,7 +943,7 @@ $
     columns: 6,
     align: (left, center, center, center, center, center),
   )[
-    | 方法 | $N$ | DOF | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | Time(s) |
+    | 方法 | $N$ | DOF | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2(Omega))$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2(Omega))$ | Time(s) |
     |:-----------|:----:|:----:|:--------:|:--------:|:-------:|
     | LS | 200  | 1808 | 4.05e-04 | 2.27e-02 |  2.87   |
     | LS | 400  | 3608 | 2.16e-05 | 1.47e-03 |  13.41  |
@@ -968,7 +968,7 @@ $
     columns: 5,
     align: (center, center, center, center, center),
   )[
-    | 方法 | level | DOF | $norm(bold(u) - bold(u)_h)_0$ | $norm(bold(sigma) - bold(sigma)_h)_0$ |
+    | 方法 | level | DOF | $norm(bold(u) - bold(u)_h)_(L^2(Omega))$ | $norm(bold(sigma) - bold(sigma)_h)_(L^2(Omega))$ |
     |:-----------:|:-----:|:----:|:--------:|:--------:|
     | Hu-Zhang ($P_4$) | 1 | 1215  | 6.13e-02 | 1.99e-01 |
     | Hu-Zhang ($P_4$) | 2 | 8472  | 7.15e-03 | 8.05e-03 |
@@ -1024,12 +1024,12 @@ $
 
 对二维线弹性，位移误差定义为
 $
-  norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
+  norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2(Omega))
   := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(i = 1)^2 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
 $
 而在 Voigt 顺序 $(11, 22, 12)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 2)^T$，并定义
 $
-  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
+  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2(Omega))
   := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(alpha=1)^3 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
 $
 
@@ -1045,7 +1045,7 @@ $
     columns: 6,
     align: (left, center, center, center, center, center),
   )[
-    | 方法 | $N$ | DOF | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | Time(s) |
+    | 方法 | $N$ | DOF | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2(Omega))$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2(Omega))$ | Time(s) |
     |:-----------|:----:|:----:|:--------:|:--------:|:-------:|
     | LS | 200  | 1004 | 5.96e-07 | 6.33e-05 |  0.37   |
     | LS | 400  | 2004 | 1.23e-09 | 2.06e-07 |  0.96   |
@@ -1070,7 +1070,7 @@ $
     columns: 5,
     align: (center, center, center, center, center),
   )[
-    | 方法 | level | DOF | $norm(bold(u) - bold(u)_h)_0$ | $norm(bold(sigma) - bold(sigma)_h)_0$ |
+    | 方法 | level | DOF | $norm(bold(u) - bold(u)_h)_(L^2(Omega))$ | $norm(bold(sigma) - bold(sigma)_h)_(L^2(Omega))$ |
     |:-----------:|:-----:|:----:|:--------:|:--------:|
     | Hu-Zhang ($P_4$) | 1 | 118  | 4.85e-02 | 1.63e-01 |
     | Hu-Zhang ($P_4$) | 2 | 427  | 2.89e-03 | 5.69e-03 |
@@ -1137,7 +1137,7 @@ $
     columns: 5,
     align: (left, left, center, center, center),
   )[
-    | 方法 | $nu$ | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | Time(s) |
+    | 方法 | $nu$ | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2(Omega))$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2(Omega))$ | Time(s) |
     |:-----------|:---------|:--------:|:--------:|:-------:|
     | LS |   0.49   | 2.17e-06 | 1.38e-04 | 169.34  |
     | LS |  0.499   | 2.26e-06 | 1.40e-04 | 168.62  |
@@ -1202,12 +1202,12 @@ $
 
 对平面应力，位移误差定义为
 $
-  norm(bold(Phi)^bold(u) - bold(u)_"ex")_0
+  norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2(Omega))
   := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(i = 1)^2 [(bold(Phi)^bold(u) (bold(x)_p))_i - (bold(u)_"ex" (bold(x)_p))_i]^2),
 $
 而在 Voigt 顺序 $(11, 22, 12)$ 下，对应力采用权重 $bold(w)^"V" = (1, 1, 2)^T$，并定义
 $
-  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0
+  norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2(Omega))
   := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(alpha=1)^3 w^"V"_alpha [(bold(Phi)^(bold(sigma)) (bold(x)_p))_alpha - (bold(sigma)_"ex" (bold(x)_p))_alpha]^2).
 $
 
@@ -1220,7 +1220,7 @@ $
     columns: 5,
     align: (left, center, center, center, center),
   )[
-    | 方法 | $N$ | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_0$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_0$ | Time(s) |
+    | 方法 | $N$ | $norm(bold(Phi)^bold(u) - bold(u)_"ex")_(L^2(Omega))$ | $norm(bold(Phi)^bold(sigma) - bold(sigma)_"ex")_(L^2(Omega))$ | Time(s) |
     |:-----------|:----:|:--------:|:--------:|:-------:|
     | LS | 200  | 5.96e-07 | 6.33e-05 |  0.32   |
     | LS | 400  | 1.23e-09 | 2.06e-07 |  0.85   |
@@ -1277,12 +1277,12 @@ $
 
 对板弯曲，挠度误差定义为
 $
-  norm(Phi^u - u_"ex")_0
+  norm(Phi^u - u_"ex")_(L^2(Omega))
   := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" abs(Phi^u (bold(x)_p) - u_"ex" (bold(x)_p))^2),
 $
 而在 Voigt 顺序 $(11, 22, 12)$ 下，对弯矩采用权重 $bold(w)^"V" = (1, 1, 2)^T$，其绝对误差定义为
 $
-  norm(bold(Phi)^(bold(cal(M))) - bold(cal(M))_"ex")_0
+  norm(bold(Phi)^(bold(cal(M))) - bold(cal(M))_"ex")_(L^2(Omega))
   := sqrt(sum_(p=1)^(Q_"test") omega_p^"test" sum_(alpha=1)^3 w^"V"_alpha ((bold(Phi)^(bold(cal(M))) (bold(x)_p))_alpha - (bold(cal(M))_"ex" (bold(x)_p))_alpha)^2).
 $
 
@@ -1295,7 +1295,7 @@ $
     columns: 5,
     align: (left, right, right, right, right),
   )[
-    | 方法 | $N$ | $norm(Phi^u - u_"ex")_0$ | $norm(bold(Phi)^(bold(cal(M))) - bold(cal(M))_"ex")_0$ |  Time(s) |
+    | 方法 | $N$ | $norm(Phi^u - u_"ex")_(L^2(Omega))$ | $norm(bold(Phi)^(bold(cal(M))) - bold(cal(M))_"ex")_(L^2(Omega))$ |  Time(s) |
     |:-------------------|-------:|-----------:|-----------:|---------:|
     | LS | 200  | 1.60e-10 | 1.15e-07 |  0.14   |
     | LS | 400  | 3.12e-13 | 2.12e-10 |  0.39   |
