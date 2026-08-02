@@ -1,6 +1,6 @@
 
 #import "../packages/zebraw.typ": *
-#import "@preview/shiroa:0.2.3": is-html-target, is-pdf-target, is-web-target, plain-text, templates
+#import "@preview/shiroa:0.2.3": is-pdf-target, is-web-target, plain-text, templates
 #import templates: *
 #import "html.typ" as html
 #import "mod.typ": *
@@ -10,11 +10,9 @@
 #import "@preview/numbly:0.1.0": numbly
 
 // Metadata
-#let is-html-target = is-html-target()
 #let is-pdf-target = is-pdf-target()
-#let is-web-target = is-web-target() or sys-is-html-target
+#let is-web-target = is-web-target()
 #let is-md-target = target == "md"
-#let sys-is-html-target = is-html-target
 
 #let default-kind = "post"
 
@@ -32,7 +30,7 @@
 
 // Sizes
 #let html-main-size = 16pt
-#let main-size = if sys-is-html-target { html-main-size } else { 10.5pt }
+#let main-size = 10.5pt
 // ,
 #let heading-sizes = (22pt, 18pt, 14pt, 12pt, main-size)
 #let html-heading-sizes = (22pt, 18pt, 14pt, 12pt, html-main-size)
@@ -120,10 +118,16 @@
   body
 }
 
-#let equation-rules(body) = {
+#let equation-rules(body) = context {
+  // Capture the document target before html.frame temporarily switches to
+  // the paged target used to render an embedded SVG.
+  let is-html-output = std.target() == "html"
+
   show math.equation: set text(weight: 400)
 
-  show math.equation.where(block: true): it => context if std.target() == "html" { it } else { block(width: 100%, it) }
+  // html.frame switches its local target to "paged" while rendering an SVG.
+  // Use the outer build target here so HTML equations keep their intrinsic width.
+  show math.equation.where(block: true): it => if is-html-output { it } else { block(width: 100%, it) }
   
   show math.equation.where(block: true): it => context if shiroa-sys-target() == "html" {
     // 为带标签的方程式生成 HTML id，使引用可以链接到此处
@@ -195,7 +199,7 @@
     it
   }
   show math.equation.where(block: false): it => context if shiroa-sys-target() == "html" {
-    let eq-size = main-size * 0.85
+    let eq-size = html-main-size * 0.85
     theme-frame(
       tag: "span",
       theme => {
@@ -404,7 +408,7 @@
       {
         // 目录中行内公式使用链接色(dash-color)而非正文色(main-color)
         show math.equation.where(block: false): eq => context if shiroa-sys-target() == "html" {
-          let eq-size = main-size * 0.85
+          let eq-size = html-main-size * 0.85
           theme-frame(
             tag: "span",
             theme => {

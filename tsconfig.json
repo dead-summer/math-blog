@@ -6,6 +6,7 @@
     "types": ["src/global.d.ts"],
     "typeRoots": ["./node_modules/@types", "."],
     "strictNullChecks": true,
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "$consts": ["src/consts"],

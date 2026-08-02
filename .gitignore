@@ -37,3 +37,4 @@ public/reference/*.md
 
 # Generated documents
 *.pdf
+build/
