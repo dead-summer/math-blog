@@ -1319,7 +1319,7 @@ $
 
 在具体理论上，本文分别建立了该方法在线弹性应力-位移混合形式与 Kirchhoff-Love 板弯曲弯矩-挠度混合形式下的连续与离散分析。理论结果表明，只要离散空间与相应连续问题的函数空间保持一致，连续稳定性、离散稳定性以及准最优误差估计便可为该方法提供一致的分析基础。数值实验进一步在三维线弹性、二维线弹性、近不可压缩三维线弹性、平面应力与 Kirchhoff-Love 板弯曲算例上验证了该方法的可行性：各特征数量扫描均呈现稳定的总体收敛趋势，近不可压缩扫描中的误差对 $nu -> 1/2$ 保持稳定，二维线弹性、平面应力与板弯曲还获得了很高的绝对 $L^2$ 精度。
 
-#bibliography("/public/reference/least-squares.bib")
+#bibliography("/public/reference/least-squares/least-squares.bib")
 
 #set heading(numbering: "附录 A.1", supplement: [Appendix])
 #counter(heading).update(0)

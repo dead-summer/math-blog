@@ -760,4 +760,4 @@ $
 ) <fig:ablation-activation>
 
 
-#bibliography("/public/reference/saddle-point.bib")
+#bibliography("/public/reference/saddle-point/saddle-point.bib")

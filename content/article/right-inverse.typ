@@ -622,4 +622,4 @@ $
 
 对于三维立方体区域 $[0, 1]^3$，上面的右逆还可以写成显式坐标积分公式，但一般 Lipschitz 区域上的右逆并不依赖这种特殊几何。
 
-#bibliography("/public/reference/right-inverse.bib")
+#bibliography("/public/reference/right-inverse/right-inverse.bib")

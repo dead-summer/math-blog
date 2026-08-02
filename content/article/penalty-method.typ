@@ -647,7 +647,7 @@ $
 本文工作仍有若干值得继续推进的方向，例如边界罚参数的自适应选取、离散误差与条件数之间关系的理论分析，以及面向更高维、更复杂几何区域的采样与预条件设计。本文的数值结果表明，边界罚化混合弱随机特征方法为在线性力学问题中构造低训练成本、结构清晰且物理量恢复稳定的近似框架提供了一条可行路径。
 
 
-#bibliography("/public/reference/penalty-method.bib")
+#bibliography("/public/reference/penalty-method/penalty-method.bib")
 
 #set heading(numbering: "附录 A.1", supplement: [附录])
 #counter(heading).update(0)
