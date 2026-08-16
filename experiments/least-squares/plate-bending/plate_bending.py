@@ -1,247 +1,249 @@
+"""Kirchhoff--Love plate-bending driver.
+
+The moment--deflection physics is specific to this experiment; quadrature,
+the quasi-uniform feature construction, streaming TSQR, and the
+coefficient-ball solve are shared through ``ls_common``.  Manufactured
+solutions are pluggable: a solution is a deflection callback, and the exact
+Hessian, moment, and transverse load are derived from it with autodiff unless
+closed forms are supplied.
+"""
+
 from __future__ import annotations
 
 import math
-import os
+import sys
 import time
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Callable, Sequence
 
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
-
-import matplotlib.pyplot as plt
 import numpy as np
-import scipy.linalg
-from scipy.linalg import get_lapack_funcs
 import torch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from ls_common import (  # noqa: E402
+    BASE_SEED,
+    DEVICE,
+    DTYPE,
+    VALID_ALGORITHMS,
+    VALID_DIRECT_SOLVERS,
+    build_quadrature_rule,
+    clear_cuda_cache,
+    generate_features,
+    load_config_defaults,
+    plot_error_summary,
+    print_aligned_markdown_table,
+    streaming_tsqr_compress,
+    validate_algorithm_selection,
+    validate_sampling_method,
+    warn_if_dense_infeasible,
+)
+from rfm_core import (  # noqa: E402
+    RitzProjectedFeatures,
+    build_ritz_projected_features,
+    relu3_feature_data,
+)
+from solvers import get_solver_spec, run_solver  # noqa: E402
+from system_backends import (  # noqa: E402
+    GramResidualDesign,
+    assemble_gram_residual_design,
+    get_system_backend,
+)
 
-BASE_SEED = 42
-MOMENT_SEED = BASE_SEED
-DEFLECTION_SEED = BASE_SEED + 1_000
-DTYPE = torch.float64
-VALID_SAMPLING_METHODS = ("mc", "sobol", "gauss_legendre")
-VALID_ALGORITHMS = ("direct",)
-VALID_DIRECT_SOLVERS = ("dense", "streaming_tsqr")
+
+PROJECTION_SEED = BASE_SEED + 17_000
 FEATURE_DIM = 2
-FEATURE_CENTER = 0.5
-FEATURE_INV_RADIUS = 2.0 / math.sqrt(FEATURE_DIM)
+HESSIAN_COMPONENTS = ((0, 0), (1, 1), (0, 1))
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "public" / "images" / "least-squares" / "plate-bending"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-ALGO_STYLE = {
-    "LS": {"color": "#0077B6", "marker": "o", "linestyle": "-"},
-}
-
-
-def detect_device() -> torch.device:
-    """Prefer CUDA when available and stay quiet otherwise."""
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-    return torch.device("cpu")
-
-
-DEVICE = torch.device("cpu")
-
-torch.manual_seed(BASE_SEED)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(BASE_SEED)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
 
 FROBENIUS_WEIGHT = torch.tensor([1.0, 1.0, 2.0], dtype=DTYPE, device=DEVICE)
 DIVDIV_WEIGHTS = torch.tensor([1.0, 1.0, 2.0], dtype=DTYPE, device=DEVICE)
 
 
-@dataclass(frozen=True)
-class AlgorithmResult:
-    """Compact metrics for one completed algorithm."""
-
-    name: str
-    r_c: float
-    r_e: float
-    abs_u: float
-    abs_M: float
-    wall_time: float
-    rank: int = 0
-    columns: int = 0
-    condition_estimate: float = float("nan")
+DeflectionFn = Callable[[torch.Tensor], torch.Tensor]
 
 
 @dataclass(frozen=True)
-class SharedBenchmarkData:
-    """Shared train/test samples reused across selected algorithms."""
+class PlateSolution:
+    """One manufactured clamped-plate solution.
 
-    x_int: torch.Tensor
-    w_int: torch.Tensor
-    f_int: torch.Tensor
-    x_test: torch.Tensor
-    w_test: torch.Tensor
-    u_exact_test: torch.Tensor
-    M_exact_test: torch.Tensor
-    compliance_voigt: torch.Tensor
+    Only ``deflection`` is required; the Hessian and the transverse load
+    ``f = D Delta^2 w`` fall back to autodiff when closed forms are omitted.
+    """
 
-
-@dataclass(frozen=True)
-class SharedFeatureSpace:
-    """Shared random feature spaces used by coefficient-based methods."""
-
-    a_m: torch.Tensor
-    r_m: torch.Tensor
-    a_u: torch.Tensor
-    r_u: torch.Tensor
-    gamma_m: float
-    gamma_u: float
+    deflection: DeflectionFn
+    hessian: Callable[[torch.Tensor], torch.Tensor] | None = None
+    gradient: Callable[[torch.Tensor], torch.Tensor] | None = None
+    body_force: Callable[[torch.Tensor, float], torch.Tensor] | None = None
 
 
-@dataclass(frozen=True)
-class FeatureEvaluationData:
-    """All tensors needed to evaluate coefficient-based methods."""
+def _autodiff_gradient(deflection: DeflectionFn, x: torch.Tensor) -> torch.Tensor:
+    x_ad = x.detach().requires_grad_(True)
+    return torch.autograd.grad(deflection(x_ad).sum(), x_ad)[0].detach()
 
-    x_int: torch.Tensor
-    w_int: torch.Tensor
-    f_int: torch.Tensor
-    a_m: torch.Tensor
-    r_m: torch.Tensor
-    a_u: torch.Tensor
-    r_u: torch.Tensor
-    gamma_m: float
-    gamma_u: float
-    compliance_voigt: torch.Tensor
-    assembly_batch_size: int
-    xi_m_test: torch.Tensor
-    psi_u_test: torch.Tensor
-    w_test: torch.Tensor
-    u_exact_test: torch.Tensor
-    M_exact_test: torch.Tensor
+
+def _autodiff_hessian(deflection: DeflectionFn, x: torch.Tensor) -> torch.Tensor:
+    """Hessian components (11, 22, 12) of the deflection."""
+
+    x_ad = x.detach().requires_grad_(True)
+    grad = torch.autograd.grad(
+        deflection(x_ad).sum(),
+        x_ad,
+        create_graph=True,
+    )[0]
+    h1 = torch.autograd.grad(grad[:, 0].sum(), x_ad, create_graph=False, retain_graph=True)[0]
+    h2 = torch.autograd.grad(grad[:, 1].sum(), x_ad, create_graph=False)[0]
+    return torch.stack([h1[:, 0], h2[:, 1], h1[:, 1]], dim=1).detach()
+
+
+def _autodiff_body_force(
+    deflection: DeflectionFn,
+    x: torch.Tensor,
+    D: float,
+) -> torch.Tensor:
+    """Evaluate ``f = D Delta^2 w`` with nested autodiff."""
+
+    x_ad = x.detach().requires_grad_(True)
+    grad = torch.autograd.grad(deflection(x_ad).sum(), x_ad, create_graph=True)[0]
+    laplacian = torch.zeros(x.shape[0], dtype=DTYPE, device=DEVICE)
+    for axis in range(2):
+        second = torch.autograd.grad(
+            grad[:, axis].sum(),
+            x_ad,
+            create_graph=True,
+        )[0][:, axis]
+        laplacian = laplacian + second
+    grad_lap = torch.autograd.grad(laplacian.sum(), x_ad, create_graph=True)[0]
+    bilaplacian = torch.zeros(x.shape[0], dtype=DTYPE, device=DEVICE)
+    for axis in range(2):
+        second = torch.autograd.grad(
+            grad_lap[:, axis].sum(),
+            x_ad,
+            create_graph=axis < 1,
+        )[0][:, axis]
+        bilaplacian = bilaplacian + second
+    return (D * bilaplacian).detach()
+
+
+def solution_gradient(solution: PlateSolution, x: torch.Tensor) -> torch.Tensor:
+    if solution.gradient is not None:
+        return solution.gradient(x)
+    return _autodiff_gradient(solution.deflection, x)
+
+
+def solution_hessian(solution: PlateSolution, x: torch.Tensor) -> torch.Tensor:
+    if solution.hessian is not None:
+        return solution.hessian(x)
+    return _autodiff_hessian(solution.deflection, x)
+
+
+def solution_body_force(solution: PlateSolution, x: torch.Tensor, D: float) -> torch.Tensor:
+    if solution.body_force is not None:
+        return solution.body_force(x, D)
+    return _autodiff_body_force(solution.deflection, x, D)
+
+
+def solution_moment(
+    solution: PlateSolution,
+    x: torch.Tensor,
+    D: float,
+    nu: float,
+) -> torch.Tensor:
+    """Exact bending moments in Voigt order (11, 22, 12)."""
+
+    hess = solution_hessian(solution, x)
+    u_xx, u_yy, u_xy = hess[:, 0], hess[:, 1], hess[:, 2]
+    M11 = -D * (u_xx + nu * u_yy)
+    M22 = -D * (nu * u_xx + u_yy)
+    M12 = -D * (1.0 - nu) * u_xy
+    return torch.stack([M11, M22, M12], dim=1)
+
+
+# --- default manufactured solution: w = p(x1) p(x2), p(t) = t^2 (1-t)^2 ----
+
+
+def poly_p(t: torch.Tensor) -> torch.Tensor:
+    return t.square() * (1.0 - t).square()
+
+
+def poly_dp(t: torch.Tensor) -> torch.Tensor:
+    return 2.0 * t - 6.0 * t.square() + 4.0 * t.pow(3)
+
+
+def poly_d2p(t: torch.Tensor) -> torch.Tensor:
+    return 2.0 - 12.0 * t + 12.0 * t.square()
+
+
+def poly_d4p(t: torch.Tensor) -> torch.Tensor:
+    return torch.full_like(t, 24.0)
+
+
+DEFAULT_SOLUTION = PlateSolution(
+    deflection=lambda x: poly_p(x[:, 0]) * poly_p(x[:, 1]),
+    hessian=lambda x: torch.stack(
+        [
+            poly_d2p(x[:, 0]) * poly_p(x[:, 1]),
+            poly_p(x[:, 0]) * poly_d2p(x[:, 1]),
+            poly_dp(x[:, 0]) * poly_dp(x[:, 1]),
+        ],
+        dim=1,
+    ),
+    gradient=lambda x: torch.stack(
+        [
+            poly_dp(x[:, 0]) * poly_p(x[:, 1]),
+            poly_p(x[:, 0]) * poly_dp(x[:, 1]),
+        ],
+        dim=1,
+    ),
+    body_force=lambda x, D: D
+    * (
+        poly_d4p(x[:, 0]) * poly_p(x[:, 1])
+        + 2.0 * poly_d2p(x[:, 0]) * poly_d2p(x[:, 1])
+        + poly_p(x[:, 0]) * poly_d4p(x[:, 1])
+    ),
+)
+
+SOLUTIONS: dict[str, PlateSolution] = {"default": DEFAULT_SOLUTION}
+
+
+# ---------------------------------------------------------------------------
+# Configuration and containers
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class LeastSquaresConfig:
-    """Configuration for the conforming least-squares experiment."""
+    """Configuration for the projected plate least-squares experiment."""
 
     E: float = 1.0
     nu: float = 0.3
     h: float = 1.0
-    gamma_m: float = 2.0
-    gamma_u: float = 2.0
     N_m: int = 1000
     N_u: int = 1000
-    Q_train: int = 32**2
-    Q_test: int = 32**2
-    sampling_method: str = "gauss_legendre"
-    direct_rcond: float = 1.0e-14
-    direct_solver: str = "dense"
+    Q_train: int = 4 * 1001
+    Q_test: int = 128**2
+    sampling_method: str = "mc"
+    ritz_ratio: float = 2.0
+    projection_samples: int | None = None
+    coefficient_budget: float = math.inf
+    ridge_lambda: float = 1.0e-7
+    manufactured_solution: str = "default"
+    direct_rcond: float = 1.0e-8
+    system_backend: str = "direct"
+    direct_solver: str = "streaming_tsqr"
     direct_batch_size: int = 1_024
     direct_qr_block_size: int = 64
     assembly_batch_size: int = 5_000
     algorithms_to_run: list[str] = field(
-        default_factory=lambda: ["direct"]
+        default_factory=lambda: ["ball", "ridge", "tsvd"]
     )
 
 
-@dataclass(frozen=True)
-class LeastSquaresExperimentData:
-    """All tensors needed to run and evaluate one least-squares solver."""
+def default_config() -> LeastSquaresConfig:
+    """Load the folder's ``defaults.json`` on top of the dataclass defaults."""
 
-    matrix: torch.Tensor
-    rhs: torch.Tensor
-    dim_m: int
-    eval_data: FeatureEvaluationData
-    source_rows: int
-    preparation_time: float
-    direct_solver: str
-
-
-@dataclass(frozen=True)
-class DirectResidualDesign:
-    """Weighted residual matrix and coefficient split metadata."""
-
-    matrix: torch.Tensor
-    rhs: torch.Tensor
-    dim_m: int
-
-
-@dataclass(frozen=True)
-class DirectResidualContext:
-    """Dimensions shared by streamed plate residual blocks."""
-
-    dim_m: int
-    dim_u: int
-    columns: int
-
-
-@dataclass(frozen=True)
-class DirectResidualBatch:
-    """One Fortran-contiguous augmented residual block ``[A_i, b_i]``."""
-
-    start: int
-    stop: int
-    augmented: np.ndarray
-
-
-@dataclass(frozen=True)
-class StreamingTSQRStats:
-    """Timing and shape diagnostics for streaming TSQR compression."""
-
-    source_rows: int
-    columns: int
-    batch_count: int
-    assembly_time: float
-    qr_time: float
-    total_time: float
-
-
-def clear_cuda_cache() -> None:
-    """Release cached CUDA buffers after large tensors are freed."""
-
-    if DEVICE.type == "cuda":
-        torch.cuda.empty_cache()
-
-
-def validate_sampling_method(method: str) -> None:
-    """Reject unsupported sampling modes early."""
-
-    if method not in VALID_SAMPLING_METHODS:
-        raise ValueError(
-            f"Unknown sampling_method='{method}'. "
-            f"Valid values: {list(VALID_SAMPLING_METHODS)}"
-        )
-
-
-def validate_algorithm_selection(
-    algorithm_ids: Sequence[str],
-    valid_algorithm_ids: Sequence[str],
-) -> list[str]:
-    """Validate algorithm ids and preserve user order."""
-
-    if not algorithm_ids:
-        raise ValueError("algorithms_to_run must contain at least one algorithm id.")
-
-    unknown_ids = [
-        algorithm_id
-        for algorithm_id in algorithm_ids
-        if algorithm_id not in valid_algorithm_ids
-    ]
-    if unknown_ids:
-        raise ValueError(
-            f"Unknown algorithm ids: {unknown_ids}. Valid ids: {list(valid_algorithm_ids)}"
-        )
-
-    seen: set[str] = set()
-    duplicates: list[str] = []
-    for algorithm_id in algorithm_ids:
-        if algorithm_id in seen and algorithm_id not in duplicates:
-            duplicates.append(algorithm_id)
-        seen.add(algorithm_id)
-    if duplicates:
-        raise ValueError(f"Duplicate algorithm ids: {duplicates}")
-
-    return list(algorithm_ids)
+    return load_config_defaults(LeastSquaresConfig, Path(__file__).resolve().parent)
 
 
 def validate_config(cfg: LeastSquaresConfig) -> None:
@@ -253,27 +255,35 @@ def validate_config(cfg: LeastSquaresConfig) -> None:
         raise ValueError("Config.nu must lie in (-1, 0.5).")
     if cfg.h <= 0.0:
         raise ValueError("Config.h must be positive.")
-    if cfg.gamma_m <= 0.0 or cfg.gamma_u <= 0.0:
-        raise ValueError("Config.gamma_m and Config.gamma_u must be positive.")
     if cfg.N_m <= 0 or cfg.N_u <= 0:
         raise ValueError("Config.N_m and Config.N_u must be positive.")
-    if cfg.Q_train <= 0:
-        raise ValueError("Config.Q_train must be positive.")
-    if cfg.Q_test <= 0:
-        raise ValueError("Config.Q_test must be positive.")
+    if cfg.ritz_ratio < 1.0:
+        raise ValueError("Config.ritz_ratio must be at least one.")
+    if cfg.projection_samples is not None and cfg.projection_samples <= 0:
+        raise ValueError("Config.projection_samples must be positive when set.")
+    if cfg.coefficient_budget <= 0.0:
+        raise ValueError("Config.coefficient_budget must be positive.")
+    if not math.isfinite(cfg.ridge_lambda) or cfg.ridge_lambda <= 0.0:
+        raise ValueError("Config.ridge_lambda must be finite and positive.")
+    if cfg.Q_train <= 0 or cfg.Q_test <= 0:
+        raise ValueError("Config.Q_train and Config.Q_test must be positive.")
     if not math.isfinite(cfg.direct_rcond) or cfg.direct_rcond <= 0.0:
         raise ValueError("Config.direct_rcond must be finite and positive.")
+    get_system_backend(cfg.system_backend)
     if cfg.direct_solver not in VALID_DIRECT_SOLVERS:
         raise ValueError(
             f"Unknown direct_solver='{cfg.direct_solver}'. "
             f"Valid values: {list(VALID_DIRECT_SOLVERS)}"
         )
-    if cfg.direct_batch_size <= 0:
-        raise ValueError("Config.direct_batch_size must be positive.")
-    if cfg.direct_qr_block_size <= 0:
-        raise ValueError("Config.direct_qr_block_size must be positive.")
+    if cfg.direct_batch_size <= 0 or cfg.direct_qr_block_size <= 0:
+        raise ValueError("Config batch sizes must be positive.")
     if cfg.assembly_batch_size <= 0:
         raise ValueError("Config.assembly_batch_size must be positive.")
+    if cfg.manufactured_solution not in SOLUTIONS:
+        raise ValueError(
+            f"Unknown manufactured_solution='{cfg.manufactured_solution}'. "
+            f"Valid values: {sorted(SOLUTIONS)}"
+        )
     validate_sampling_method(cfg.sampling_method)
     validate_algorithm_selection(cfg.algorithms_to_run, VALID_ALGORITHMS)
 
@@ -297,302 +307,110 @@ def build_compliance_matrix(D: float, nu: float) -> torch.Tensor:
     return compliance_voigt
 
 
-def poly_p(t: torch.Tensor) -> torch.Tensor:
-    """Evaluate p(t) = t^2 (1 - t)^2."""
+@dataclass(frozen=True)
+class AlgorithmResult:
+    """Compact metrics for one completed algorithm."""
+
+    name: str
+    r_c: float
+    r_e: float
+    abs_u: float
+    abs_M: float
+    wall_time: float
+    rank: int = 0
+    columns: int = 0
+    condition_estimate: float = float("nan")
+    w_h2_error: float = float("nan")
+    M_hdivdiv_error: float = float("nan")
+    coefficient_ball_active: bool = False
+    algorithm: str = ""
+    hyperparameter: float = float("nan")
+
+
+@dataclass(frozen=True)
+class SharedBenchmarkData:
+    """Shared train/test samples reused across runs."""
+
+    x_int: torch.Tensor
+    w_int: torch.Tensor
+    f_int: torch.Tensor
+    x_test: torch.Tensor
+    w_test: torch.Tensor
+    u_exact_test: torch.Tensor
+    M_exact_test: torch.Tensor
+    compliance_voigt: torch.Tensor
+    f_test: torch.Tensor
+    u_grad_exact_test: torch.Tensor
+    u_hess_exact_test: torch.Tensor
+
+
+@dataclass(frozen=True)
+class SharedFeatureSpace:
+    """Shared deterministic feature spaces used by coefficient-based methods."""
+
+    theta_m: torch.Tensor
+    theta_w: torch.Tensor
+    projected_w: RitzProjectedFeatures
+
+
+@dataclass(frozen=True)
+class FeatureEvaluationData:
+    """All tensors needed to evaluate coefficient-based methods."""
+
+    x_test: torch.Tensor
+    w_test: torch.Tensor
+    f_test: torch.Tensor
+    theta_m: torch.Tensor
+    projected_w: RitzProjectedFeatures
+    compliance_voigt: torch.Tensor
+    assembly_batch_size: int
+    xi_m_test: torch.Tensor
+    psi_u_test: torch.Tensor
+    u_exact_test: torch.Tensor
+    M_exact_test: torch.Tensor
+    u_grad_exact_test: torch.Tensor
+    u_hess_exact_test: torch.Tensor
+
+
+@dataclass(frozen=True)
+class DirectResidualDesign:
+    """Weighted residual matrix and coefficient split metadata."""
+
+    matrix: torch.Tensor
+    rhs: torch.Tensor
+    dim_m: int
+
+
+@dataclass(frozen=True)
+class LeastSquaresExperimentData:
+    """All tensors needed to run and evaluate one least-squares solver."""
+
+    residual_design: torch.Tensor | GramResidualDesign
+    rhs: torch.Tensor | None
+    column_count: int
+    dim_m: int
+    eval_data: FeatureEvaluationData
+    source_rows: int
+    preparation_time: float
+    system_backend: str
+    direct_solver: str
+
+
+# ---------------------------------------------------------------------------
+# Builders
+# ---------------------------------------------------------------------------
+
+
+def eval_features(x: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+    """Evaluate the raw ReLU-cubic features."""
+
+    return relu3_feature_data(x, theta, hessian_components=HESSIAN_COMPONENTS)[0]
+
+
+def eval_feature_hessians(x: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+    """Evaluate Hessian components (11, 22, 12) of ReLU-cubic features."""
 
-    return t.square() * (1.0 - t).square()
-
-
-def poly_dp(t: torch.Tensor) -> torch.Tensor:
-    """Evaluate p'(t) for p(t) = t^2 (1 - t)^2."""
-
-    return 2.0 * t - 6.0 * t.square() + 4.0 * t.pow(3)
-
-
-def poly_d2p(t: torch.Tensor) -> torch.Tensor:
-    """Evaluate p''(t) for p(t) = t^2 (1 - t)^2."""
-
-    return 2.0 - 12.0 * t + 12.0 * t.square()
-
-
-def poly_d4p(t: torch.Tensor) -> torch.Tensor:
-    """Evaluate p''''(t) for p(t) = t^2 (1 - t)^2."""
-
-    return torch.full_like(t, 24.0)
-
-
-def eval_exact_deflection(x: torch.Tensor) -> torch.Tensor:
-    """Evaluate the manufactured clamped deflection field."""
-
-    return poly_p(x[:, 0]) * poly_p(x[:, 1])
-
-
-def eval_exact_hessian(x: torch.Tensor) -> torch.Tensor:
-    """Evaluate the Hessian components (11, 22, 12) of the exact deflection."""
-
-    x1 = x[:, 0]
-    x2 = x[:, 1]
-    return torch.stack(
-        [
-            poly_d2p(x1) * poly_p(x2),
-            poly_p(x1) * poly_d2p(x2),
-            poly_dp(x1) * poly_dp(x2),
-        ],
-        dim=1,
-    )
-
-
-def eval_exact_moment(x: torch.Tensor, D: float, nu: float) -> torch.Tensor:
-    """Evaluate the exact bending moment field in Voigt order (11, 22, 12)."""
-
-    hess_u = eval_exact_hessian(x)
-    u_xx = hess_u[:, 0]
-    u_yy = hess_u[:, 1]
-    u_xy = hess_u[:, 2]
-    M11 = -D * (u_xx + nu * u_yy)
-    M22 = -D * (nu * u_xx + u_yy)
-    M12 = -D * (1.0 - nu) * u_xy
-    return torch.stack([M11, M22, M12], dim=1)
-
-
-def compute_body_force(x: torch.Tensor, D: float) -> torch.Tensor:
-    """Evaluate the manufactured transverse load f = D * Delta^2 u."""
-
-    x1 = x[:, 0]
-    x2 = x[:, 1]
-    return D * (
-        poly_d4p(x1) * poly_p(x2)
-        + 2.0 * poly_d2p(x1) * poly_d2p(x2)
-        + poly_p(x1) * poly_d4p(x2)
-    )
-
-
-def eval_zeta(x: torch.Tensor) -> torch.Tensor:
-    """Evaluate the H_0^2 envelope zeta(x)."""
-
-    a = x[:, 0] * (1.0 - x[:, 0])
-    b = x[:, 1] * (1.0 - x[:, 1])
-    return a.square() * b.square()
-
-
-def eval_zeta_grad(x: torch.Tensor) -> torch.Tensor:
-    """Evaluate the gradient of the H_0^2 envelope."""
-
-    x1 = x[:, 0]
-    x2 = x[:, 1]
-    a = x1 * (1.0 - x1)
-    b = x2 * (1.0 - x2)
-    da = 1.0 - 2.0 * x1
-    db = 1.0 - 2.0 * x2
-    grad_x = 2.0 * a * da * b.square()
-    grad_y = 2.0 * a.square() * b * db
-    return torch.stack([grad_x, grad_y], dim=1)
-
-
-def eval_zeta_hessian(x: torch.Tensor) -> torch.Tensor:
-    """Evaluate Hessian components (11, 22, 12) of the H_0^2 envelope."""
-
-    x1 = x[:, 0]
-    x2 = x[:, 1]
-    a = x1 * (1.0 - x1)
-    b = x2 * (1.0 - x2)
-    da = 1.0 - 2.0 * x1
-    db = 1.0 - 2.0 * x2
-    d2a = torch.full_like(x1, -2.0)
-    d2b = torch.full_like(x2, -2.0)
-    zeta_xx = 2.0 * (da.square() + a * d2a) * b.square()
-    zeta_yy = 2.0 * a.square() * (db.square() + b * d2b)
-    zeta_xy = 4.0 * a * da * b * db
-    return torch.stack([zeta_xx, zeta_yy, zeta_xy], dim=1)
-
-
-def infer_tensor_product_order(n_points: int, dim: int) -> int:
-    """Infer the tensor-product order and reject non-perfect powers."""
-
-    order = int(round(n_points ** (1.0 / dim)))
-    if order <= 0 or order**dim != n_points:
-        raise ValueError(
-            f"gauss_legendre requires n_points = n^{dim}, got {n_points}."
-        )
-    return order
-
-
-def build_quadrature_rule(
-    n_points: int,
-    method: str,
-    dim: int = 2,
-    seed: int = 0,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build quadrature points and weights on the unit box."""
-
-    validate_sampling_method(method)
-    if method == "gauss_legendre":
-        order = infer_tensor_product_order(n_points, dim)
-        nodes_1d, weights_1d = np.polynomial.legendre.leggauss(order)
-        nodes_1d = 0.5 * (nodes_1d + 1.0)
-        weights_1d = 0.5 * weights_1d
-
-        grids = np.meshgrid(*([nodes_1d] * dim), indexing="ij")
-        weight_grids = np.meshgrid(*([weights_1d] * dim), indexing="ij")
-        points = np.stack([grid.reshape(-1) for grid in grids], axis=1)
-        weights = np.prod(
-            np.stack([grid.reshape(-1) for grid in weight_grids], axis=1),
-            axis=1,
-        )
-        return (
-            torch.from_numpy(points).to(dtype=DTYPE, device=DEVICE),
-            torch.from_numpy(weights).to(dtype=DTYPE, device=DEVICE),
-        )
-
-    if method == "sobol":
-        engine = torch.quasirandom.SobolEngine(
-            dimension=dim,
-            scramble=True,
-            seed=seed,
-        )
-        points = engine.draw(n_points).to(dtype=DTYPE, device=DEVICE)
-        weights = torch.full(
-            (n_points,),
-            1.0 / n_points,
-            dtype=DTYPE,
-            device=DEVICE,
-        )
-        return points, weights
-
-    generator = torch.Generator(device="cpu")
-    generator.manual_seed(seed)
-    points = torch.rand(n_points, dim, generator=generator, dtype=DTYPE).to(DEVICE)
-    weights = torch.full(
-        (n_points,),
-        1.0 / n_points,
-        dtype=DTYPE,
-        device=DEVICE,
-    )
-    return points, weights
-
-
-def generate_features(N: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
-    """Generate random feature normals and offsets."""
-
-    generator = torch.Generator(device="cpu")
-    generator.manual_seed(seed)
-
-    raw = torch.randn(N, FEATURE_DIM, generator=generator, dtype=DTYPE)
-    norms = raw.norm(dim=1, keepdim=True).clamp_min(1.0e-12)
-    a = (raw / norms).to(DEVICE)
-    r = torch.rand(N, generator=generator, dtype=DTYPE).to(DEVICE)
-    return a, r
-
-
-def normalize_feature_coordinates(x: torch.Tensor) -> torch.Tensor:
-    """Map unit-box coordinates into the centered unit ball for features."""
-
-    return (x - FEATURE_CENTER) * FEATURE_INV_RADIUS
-
-
-def eval_features(
-    x: torch.Tensor,
-    a: torch.Tensor,
-    r: torch.Tensor,
-    gamma: float,
-) -> torch.Tensor:
-    """Evaluate xi_0 = 1 and xi_m = tanh(gamma (a_m^T x_hat + r_m))."""
-
-    x_hat = normalize_feature_coordinates(x)
-    pre = x_hat @ a.T + r.unsqueeze(0)
-    xi = torch.tanh(gamma * pre)
-    ones = torch.ones(x.shape[0], 1, dtype=DTYPE, device=DEVICE)
-    return torch.cat([ones, xi], dim=1)
-
-
-def eval_feature_grads(
-    x: torch.Tensor,
-    a: torch.Tensor,
-    r: torch.Tensor,
-    gamma: float,
-) -> torch.Tensor:
-    """Evaluate gradients of all random features."""
-
-    x_hat = normalize_feature_coordinates(x)
-    pre = x_hat @ a.T + r.unsqueeze(0)
-    xi = torch.tanh(gamma * pre)
-    dphi = gamma * (1.0 - xi.square())
-    scaled_a = FEATURE_INV_RADIUS * a
-    grad_xi = dphi.unsqueeze(2) * scaled_a.unsqueeze(0)
-    zeros = torch.zeros(x.shape[0], 1, FEATURE_DIM, dtype=DTYPE, device=DEVICE)
-    return torch.cat([zeros, grad_xi], dim=1)
-
-
-def eval_feature_hessians(
-    x: torch.Tensor,
-    a: torch.Tensor,
-    r: torch.Tensor,
-    gamma: float,
-) -> torch.Tensor:
-    """Evaluate Hessian components (11, 22, 12) of all random features."""
-
-    x_hat = normalize_feature_coordinates(x)
-    pre = x_hat @ a.T + r.unsqueeze(0)
-    xi = torch.tanh(gamma * pre)
-    d2phi = -2.0 * gamma * gamma * xi * (1.0 - xi.square())
-    scaled_a = FEATURE_INV_RADIUS * a
-
-    h11 = d2phi.unsqueeze(2) * scaled_a[:, 0].square().unsqueeze(0).unsqueeze(2)
-    h22 = d2phi.unsqueeze(2) * scaled_a[:, 1].square().unsqueeze(0).unsqueeze(2)
-    h12 = d2phi.unsqueeze(2) * (
-        scaled_a[:, 0] * scaled_a[:, 1]
-    ).unsqueeze(0).unsqueeze(2)
-    hess = torch.cat([h11, h22, h12], dim=2)
-    zeros = torch.zeros(x.shape[0], 1, 3, dtype=DTYPE, device=DEVICE)
-    return torch.cat([zeros, hess], dim=1)
-
-
-def eval_active_deflection_features(
-    x: torch.Tensor,
-    a: torch.Tensor,
-    r: torch.Tensor,
-    gamma: float,
-) -> torch.Tensor:
-    """Evaluate the conforming deflection basis psi = zeta * xi."""
-
-    xi = eval_features(x, a, r, gamma)
-    return eval_zeta(x).unsqueeze(1) * xi
-
-
-def eval_active_deflection_feature_data(
-    x: torch.Tensor,
-    a: torch.Tensor,
-    r: torch.Tensor,
-    gamma: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Evaluate conforming deflection features and their Hessians."""
-
-    xi = eval_features(x, a, r, gamma)
-    grad_xi = eval_feature_grads(x, a, r, gamma)
-    hess_xi = eval_feature_hessians(x, a, r, gamma)
-    zeta = eval_zeta(x)
-    grad_zeta = eval_zeta_grad(x)
-    hess_zeta = eval_zeta_hessian(x)
-
-    psi = zeta.unsqueeze(1) * xi
-    hess_psi_xx = (
-        xi * hess_zeta[:, 0].unsqueeze(1)
-        + 2.0 * grad_xi[:, :, 0] * grad_zeta[:, 0].unsqueeze(1)
-        + zeta.unsqueeze(1) * hess_xi[:, :, 0]
-    )
-    hess_psi_yy = (
-        xi * hess_zeta[:, 1].unsqueeze(1)
-        + 2.0 * grad_xi[:, :, 1] * grad_zeta[:, 1].unsqueeze(1)
-        + zeta.unsqueeze(1) * hess_xi[:, :, 1]
-    )
-    hess_psi_xy = (
-        xi * hess_zeta[:, 2].unsqueeze(1)
-        + grad_xi[:, :, 0] * grad_zeta[:, 1].unsqueeze(1)
-        + grad_xi[:, :, 1] * grad_zeta[:, 0].unsqueeze(1)
-        + zeta.unsqueeze(1) * hess_xi[:, :, 2]
-    )
-    hess_psi = torch.stack([hess_psi_xx, hess_psi_yy, hess_psi_xy], dim=2)
-    return psi, hess_psi
+    return relu3_feature_data(x, theta, hessian_components=HESSIAN_COMPONENTS)[2]
 
 
 def build_shared_benchmark(
@@ -602,59 +420,71 @@ def build_shared_benchmark(
     Q_train: int,
     Q_test: int,
     sampling_method: str,
+    manufactured_solution: str = "default",
     interior_seed: int = BASE_SEED + 1,
     test_seed: int = BASE_SEED + 3,
 ) -> SharedBenchmarkData:
-    """Build the shared train/test samples for a fair comparison run."""
+    """Build the shared train/test samples for one run."""
 
     D = compute_bending_stiffness(E, nu, h)
+    solution = SOLUTIONS[manufactured_solution]
     compliance_voigt = build_compliance_matrix(D, nu)
 
     x_int, w_int = build_quadrature_rule(
         Q_train,
         method=sampling_method,
+        dim=FEATURE_DIM,
         seed=interior_seed,
     )
-    f_int = compute_body_force(x_int, D)
-
     x_test, w_test = build_quadrature_rule(
         Q_test,
-        method=sampling_method,
+        method="gauss_legendre",
+        dim=FEATURE_DIM,
         seed=test_seed,
     )
-    u_exact_test = eval_exact_deflection(x_test)
-    M_exact_test = eval_exact_moment(x_test, D, nu)
     return SharedBenchmarkData(
         x_int=x_int,
         w_int=w_int,
-        f_int=f_int,
+        f_int=solution_body_force(solution, x_int, D),
         x_test=x_test,
         w_test=w_test,
-        u_exact_test=u_exact_test,
-        M_exact_test=M_exact_test,
+        u_exact_test=solution.deflection(x_test).detach(),
+        M_exact_test=solution_moment(solution, x_test, D, nu),
         compliance_voigt=compliance_voigt,
+        f_test=solution_body_force(solution, x_test, D),
+        u_grad_exact_test=solution_gradient(solution, x_test),
+        u_hess_exact_test=solution_hessian(solution, x_test),
     )
 
 
 def build_shared_feature_space(
     N_m: int,
     N_u: int,
-    gamma_m: float,
-    gamma_u: float,
-    moment_feature_seed: int = MOMENT_SEED,
-    deflection_feature_seed: int = DEFLECTION_SEED,
+    ritz_ratio: float = 2.0,
+    projection_samples: int | None = None,
+    projection_seed: int = PROJECTION_SEED,
 ) -> SharedFeatureSpace:
-    """Build the shared random feature spaces used by coefficient-based methods."""
+    """Build the quasi-uniform moments and the H2 Ritz-projected deflection basis.
 
-    a_m, r_m = generate_features(N_m, seed=moment_feature_seed)
-    a_u, r_u = generate_features(N_u, seed=deflection_feature_seed)
+    The hidden parameters are deterministic; only the Monte Carlo rule that
+    discretizes the projection inner product depends on ``projection_seed``.
+    """
+
+    theta_m = generate_features(N_m, FEATURE_DIM)
+    theta_w = generate_features(N_u, FEATURE_DIM)
     return SharedFeatureSpace(
-        a_m=a_m,
-        r_m=r_m,
-        a_u=a_u,
-        r_u=r_u,
-        gamma_m=gamma_m,
-        gamma_u=gamma_u,
+        theta_m=theta_m,
+        theta_w=theta_w,
+        projected_w=build_ritz_projected_features(
+            theta_w,
+            sobolev_order=2,
+            auxiliary_dimension=max(
+                N_u + 1,
+                int(math.ceil(ritz_ratio * (N_u + 1))),
+            ),
+            quadrature_samples=projection_samples,
+            quadrature_seed=projection_seed,
+        ),
     )
 
 
@@ -666,54 +496,91 @@ def build_feature_evaluation_data(
     """Build the shared evaluation tensors for coefficient-based methods."""
 
     return FeatureEvaluationData(
-        x_int=benchmark.x_int,
-        w_int=benchmark.w_int,
-        f_int=benchmark.f_int,
-        a_m=feature_space.a_m,
-        r_m=feature_space.r_m,
-        a_u=feature_space.a_u,
-        r_u=feature_space.r_u,
-        gamma_m=feature_space.gamma_m,
-        gamma_u=feature_space.gamma_u,
+        x_test=benchmark.x_test,
+        w_test=benchmark.w_test,
+        f_test=benchmark.f_test,
+        theta_m=feature_space.theta_m,
+        projected_w=feature_space.projected_w,
         compliance_voigt=benchmark.compliance_voigt,
         assembly_batch_size=assembly_batch_size,
-        xi_m_test=eval_features(
+        xi_m_test=eval_features(benchmark.x_test, feature_space.theta_m),
+        psi_u_test=feature_space.projected_w.evaluate(
             benchmark.x_test,
-            feature_space.a_m,
-            feature_space.r_m,
-            feature_space.gamma_m,
-        ),
-        psi_u_test=eval_active_deflection_features(
-            benchmark.x_test,
-            feature_space.a_u,
-            feature_space.r_u,
-            feature_space.gamma_u,
-        ),
-        w_test=benchmark.w_test,
+            hessian_components=HESSIAN_COMPONENTS,
+        )[0],
         u_exact_test=benchmark.u_exact_test,
         M_exact_test=benchmark.M_exact_test,
+        u_grad_exact_test=benchmark.u_grad_exact_test,
+        u_hess_exact_test=benchmark.u_hess_exact_test,
     )
 
 
-def iter_point_batches(point_count: int, batch_size: int) -> Iterator[tuple[int, int]]:
-    """Yield half-open point ranges with a possibly shorter final batch."""
-
-    for start in range(0, point_count, batch_size):
-        yield start, min(start + batch_size, point_count)
+# ---------------------------------------------------------------------------
+# Residual assembly
+# ---------------------------------------------------------------------------
 
 
-def build_direct_residual_context(
+def _fill_residual_rows(
+    matrix: torch.Tensor,
+    rhs: torch.Tensor,
+    batch_points: int,
+    dim_m: int,
+    compliance_voigt: torch.Tensor,
+    xi_m: torch.Tensor,
+    hess_m: torch.Tensor,
+    hess_u: torch.Tensor,
+    sqrt_weights: torch.Tensor,
+    body_force: torch.Tensor,
+) -> None:
+    """Write the weighted plate residual rows for one batch of points.
+
+    Feature tensors must already carry the sqrt-weight scaling.  The
+    constitutive residual is ``A M_h - kappa(w_h) = A M_h + hess(w_h)``.
+    """
+
+    sqrt_frobenius = torch.sqrt(FROBENIUS_WEIGHT)
+    for residual_component in range(3):
+        rows = slice(
+            residual_component * batch_points,
+            (residual_component + 1) * batch_points,
+        )
+        residual_scale = sqrt_frobenius[residual_component]
+        for moment_component in range(3):
+            matrix[rows, moment_component:dim_m:3] = (
+                residual_scale
+                * compliance_voigt[residual_component, moment_component]
+                * xi_m
+            )
+        matrix[rows, dim_m:] = residual_scale * hess_u[:, :, residual_component]
+
+    equilibrium_rows = slice(3 * batch_points, 4 * batch_points)
+    for moment_component in range(3):
+        matrix[equilibrium_rows, moment_component:dim_m:3] = (
+            DIVDIV_WEIGHTS[moment_component] * hess_m[:, :, moment_component]
+        )
+    rhs[equilibrium_rows] = -sqrt_weights * body_force
+
+
+def _weighted_feature_data(
+    benchmark: SharedBenchmarkData,
     feature_space: SharedFeatureSpace,
-) -> DirectResidualContext:
-    """Build coefficient dimensions for streamed residual assembly."""
-
-    dim_m = 3 * (feature_space.a_m.shape[0] + 1)
-    dim_u = feature_space.a_u.shape[0] + 1
-    return DirectResidualContext(
-        dim_m=dim_m,
-        dim_u=dim_u,
-        columns=dim_m + dim_u,
-    )
+    start: int,
+    stop: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    x = benchmark.x_int[start:stop]
+    weights = benchmark.w_int[start:stop]
+    body_force = benchmark.f_int[start:stop]
+    xi_m = eval_features(x, feature_space.theta_m)
+    hess_m = eval_feature_hessians(x, feature_space.theta_m)
+    hess_u = feature_space.projected_w.evaluate(
+        x,
+        hessian_components=HESSIAN_COMPONENTS,
+    )[2]
+    sqrt_weights = torch.sqrt(weights)
+    xi_m.mul_(sqrt_weights.unsqueeze(1))
+    hess_m.mul_(sqrt_weights.view(-1, 1, 1))
+    hess_u.mul_(sqrt_weights.view(-1, 1, 1))
+    return xi_m, hess_m, hess_u, sqrt_weights, body_force
 
 
 def assemble_direct_residual_batch(
@@ -721,9 +588,10 @@ def assemble_direct_residual_batch(
     stop: int,
     benchmark: SharedBenchmarkData,
     feature_space: SharedFeatureSpace,
-    context: DirectResidualContext,
-) -> DirectResidualBatch:
-    """Assemble one augmented plate residual block."""
+    dim_m: int,
+    columns: int,
+) -> np.ndarray:
+    """Assemble one Fortran-contiguous augmented plate residual block."""
 
     point_count = benchmark.x_int.shape[0]
     if not (0 <= start < stop <= point_count):
@@ -732,72 +600,64 @@ def assemble_direct_residual_batch(
         )
     batch_points = stop - start
     augmented = np.zeros(
-        (4 * batch_points, context.columns + 1),
+        (4 * batch_points, columns + 1),
         dtype=np.float64,
         order="F",
     )
     augmented_torch = torch.from_numpy(augmented)
-    matrix = augmented_torch[:, : context.columns]
-    rhs = augmented_torch[:, context.columns]
-
-    x = benchmark.x_int[start:stop]
-    weights = benchmark.w_int[start:stop]
-    body_force = benchmark.f_int[start:stop]
     with torch.no_grad():
-        xi_m = eval_features(
-            x,
-            feature_space.a_m,
-            feature_space.r_m,
-            feature_space.gamma_m,
+        xi_m, hess_m, hess_u, sqrt_weights, body_force = _weighted_feature_data(
+            benchmark,
+            feature_space,
+            start,
+            stop,
         )
-        hess_m = eval_feature_hessians(
-            x,
-            feature_space.a_m,
-            feature_space.r_m,
-            feature_space.gamma_m,
+        _fill_residual_rows(
+            augmented_torch[:, :columns],
+            augmented_torch[:, columns],
+            batch_points,
+            dim_m,
+            benchmark.compliance_voigt,
+            xi_m,
+            hess_m,
+            hess_u,
+            sqrt_weights,
+            body_force,
         )
-        _, hess_u = eval_active_deflection_feature_data(
-            x,
-            feature_space.a_u,
-            feature_space.r_u,
-            feature_space.gamma_u,
+    return augmented
+
+
+def assemble_direct_residual_design(
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+) -> DirectResidualDesign:
+    """Assemble the weighted constitutive and equilibrium residuals densely."""
+
+    dim_m = 3 * (feature_space.theta_m.shape[0] + 1)
+    dim_u = feature_space.theta_w.shape[0] + 1
+    q_count = benchmark.x_int.shape[0]
+    matrix = torch.zeros(dim_m + dim_u, 4 * q_count, dtype=DTYPE, device=DEVICE).T
+    rhs = torch.zeros(4 * q_count, dtype=DTYPE, device=DEVICE)
+    with torch.no_grad():
+        xi_m, hess_m, hess_u, sqrt_weights, body_force = _weighted_feature_data(
+            benchmark,
+            feature_space,
+            0,
+            q_count,
         )
-        sqrt_weights = torch.sqrt(weights)
-        xi_m.mul_(sqrt_weights.unsqueeze(1))
-        hess_m.mul_(sqrt_weights.view(-1, 1, 1))
-        hess_u.mul_(sqrt_weights.view(-1, 1, 1))
-        sqrt_frobenius = torch.sqrt(FROBENIUS_WEIGHT)
-
-        for residual_component in range(3):
-            rows = slice(
-                residual_component * batch_points,
-                (residual_component + 1) * batch_points,
-            )
-            residual_scale = sqrt_frobenius[residual_component]
-            for moment_component in range(3):
-                matrix[rows, moment_component : context.dim_m : 3] = (
-                    residual_scale
-                    * benchmark.compliance_voigt[
-                        residual_component,
-                        moment_component,
-                    ]
-                    * xi_m
-                )
-            matrix[rows, context.dim_m :] = (
-                residual_scale * hess_u[:, :, residual_component]
-            )
-
-        equilibrium_rows = slice(3 * batch_points, 4 * batch_points)
-        for moment_component in range(3):
-            matrix[equilibrium_rows, moment_component : context.dim_m : 3] = (
-                DIVDIV_WEIGHTS[moment_component]
-                * hess_m[:, :, moment_component]
-            )
-        rhs[equilibrium_rows] = -sqrt_weights * body_force
-
-    if not augmented.flags.f_contiguous:
-        raise RuntimeError("Augmented residual batch must be Fortran contiguous.")
-    return DirectResidualBatch(start=start, stop=stop, augmented=augmented)
+        _fill_residual_rows(
+            matrix,
+            rhs,
+            q_count,
+            dim_m,
+            benchmark.compliance_voigt,
+            xi_m,
+            hess_m,
+            hess_u,
+            sqrt_weights,
+            body_force,
+        )
+    return DirectResidualDesign(matrix, rhs, dim_m)
 
 
 def assemble_streaming_tsqr_design(
@@ -805,212 +665,67 @@ def assemble_streaming_tsqr_design(
     benchmark: SharedBenchmarkData,
     feature_space: SharedFeatureSpace,
     show_progress: bool = True,
-) -> tuple[DirectResidualDesign, StreamingTSQRStats]:
+):
     """Compress ``[A, b]`` with streaming Householder TSQR."""
 
-    total_started = time.perf_counter()
-    context = build_direct_residual_context(feature_space)
-    augmented_columns = context.columns + 1
-    reduced = np.zeros(
-        (augmented_columns, augmented_columns),
-        dtype=np.float64,
-        order="F",
-    )
-    batch_count = math.ceil(benchmark.x_int.shape[0] / cfg.direct_batch_size)
-    progress_stride = max(1, batch_count // 8)
-    assembly_time = 0.0
-    qr_time = 0.0
-    tpqrt = None
-
-    for batch_index, (start, stop) in enumerate(
-        iter_point_batches(benchmark.x_int.shape[0], cfg.direct_batch_size),
-        start=1,
-    ):
-        assembly_started = time.perf_counter()
-        batch = assemble_direct_residual_batch(
+    dim_m = 3 * (feature_space.theta_m.shape[0] + 1)
+    dim_u = feature_space.theta_w.shape[0] + 1
+    columns = dim_m + dim_u
+    matrix, rhs, stats = streaming_tsqr_compress(
+        point_count=benchmark.x_int.shape[0],
+        rows_per_point=4,
+        columns=columns,
+        batch_size=cfg.direct_batch_size,
+        qr_block_size=cfg.direct_qr_block_size,
+        assemble_augmented_batch=lambda start, stop: assemble_direct_residual_batch(
             start,
             stop,
             benchmark,
             feature_space,
-            context,
-        )
-        assembly_time += time.perf_counter() - assembly_started
-        augmented = batch.augmented
-        if tpqrt is None:
-            tpqrt = get_lapack_funcs("tpqrt", (reduced, augmented))
-
-        qr_started = time.perf_counter()
-        updated_reduced, overwritten_batch, block_reflectors, info = tpqrt(
-            0,
-            min(cfg.direct_qr_block_size, augmented_columns),
-            reduced,
-            augmented,
-            overwrite_a=True,
-            overwrite_b=True,
-        )
-        qr_time += time.perf_counter() - qr_started
-        if info != 0:
-            raise RuntimeError(f"DTPQRT failed on batch {batch_index} with info={info}.")
-        if not np.shares_memory(updated_reduced, reduced):
-            raise RuntimeError("DTPQRT copied the reduced factor instead of updating in-place.")
-        if not np.shares_memory(overwritten_batch, augmented):
-            raise RuntimeError("DTPQRT copied a residual batch instead of updating in-place.")
-        reduced = updated_reduced
-        del batch, augmented, overwritten_batch, block_reflectors
-
-        if show_progress and (
-            batch_index == 1
-            or batch_index == batch_count
-            or batch_index % progress_stride == 0
-        ):
-            elapsed = time.perf_counter() - total_started
-            eta = elapsed * (batch_count - batch_index) / batch_index
-            print(
-                f"  TSQR batch {batch_index}/{batch_count}: "
-                f"points [{start}, {stop}), elapsed={elapsed:.1f}s, eta={eta:.1f}s"
-            )
-
-    reduced_matrix_numpy = reduced[:, : context.columns]
-    if not reduced_matrix_numpy.flags.f_contiguous:
-        raise RuntimeError("Reduced direct residual matrix must be Fortran contiguous.")
-    reduced_rhs_numpy = np.array(reduced[:, context.columns], copy=True)
-    design = DirectResidualDesign(
-        matrix=torch.from_numpy(reduced_matrix_numpy),
-        rhs=torch.from_numpy(reduced_rhs_numpy),
-        dim_m=context.dim_m,
+            dim_m,
+            columns,
+        ),
+        show_progress=show_progress,
     )
-    stats = StreamingTSQRStats(
-        source_rows=4 * benchmark.x_int.shape[0],
-        columns=context.columns,
-        batch_count=batch_count,
-        assembly_time=assembly_time,
-        qr_time=qr_time,
-        total_time=time.perf_counter() - total_started,
-    )
-    return design, stats
+    return DirectResidualDesign(matrix, rhs, dim_m), stats
 
 
-def assemble_direct_residual_design(
+def assemble_streaming_gram_design(
+    cfg: LeastSquaresConfig,
     benchmark: SharedBenchmarkData,
     feature_space: SharedFeatureSpace,
-) -> DirectResidualDesign:
-    """Assemble the weighted constitutive and equilibrium residuals directly."""
+) -> tuple[GramResidualDesign, int]:
+    """Stream the plate residual batches into ``A.T A`` and ``A.T b``.
 
-    x = benchmark.x_int
-    sqrt_weights = torch.sqrt(benchmark.w_int)
-    xi_m = eval_features(
-        x,
-        feature_space.a_m,
-        feature_space.r_m,
-        feature_space.gamma_m,
-    )
-    hess_m = eval_feature_hessians(
-        x,
-        feature_space.a_m,
-        feature_space.r_m,
-        feature_space.gamma_m,
-    )
-    _, hess_u = eval_active_deflection_feature_data(
-        x,
-        feature_space.a_u,
-        feature_space.r_u,
-        feature_space.gamma_u,
-    )
+    This backend deliberately reuses :func:`assemble_direct_residual_batch`.
+    It therefore changes only how the linear system is stored, not the Monte
+    Carlo functional, Frobenius metric, or physical coefficient norm.
+    """
 
-    q_count = x.shape[0]
-    dim_m = 3 * xi_m.shape[1]
-    matrix = torch.zeros(
-        4 * q_count,
-        dim_m + hess_u.shape[1],
+    dim_m = 3 * (feature_space.theta_m.shape[0] + 1)
+    dim_u = feature_space.theta_w.shape[0] + 1
+    columns = dim_m + dim_u
+    design = assemble_gram_residual_design(
+        point_count=benchmark.x_int.shape[0],
+        batch_size=cfg.direct_batch_size,
+        column_count=columns,
+        assemble_augmented_batch=lambda start, stop: assemble_direct_residual_batch(
+            start,
+            stop,
+            benchmark,
+            feature_space,
+            dim_m,
+            columns,
+        ),
         dtype=DTYPE,
         device=DEVICE,
     )
-    rhs = torch.zeros(4 * q_count, dtype=DTYPE, device=DEVICE)
-    sqrt_frobenius = torch.sqrt(FROBENIUS_WEIGHT)
-    weighted_xi = sqrt_weights.unsqueeze(1) * xi_m
-
-    for residual_component in range(3):
-        rows = slice(residual_component * q_count, (residual_component + 1) * q_count)
-        residual_scale = sqrt_frobenius[residual_component]
-        for moment_component in range(3):
-            matrix[rows, moment_component:dim_m:3] = (
-                residual_scale
-                * benchmark.compliance_voigt[residual_component, moment_component]
-                * weighted_xi
-            )
-        matrix[rows, dim_m:] = (
-            residual_scale
-            * sqrt_weights.unsqueeze(1)
-            * hess_u[:, :, residual_component]
-        )
-
-    equilibrium_rows = slice(3 * q_count, 4 * q_count)
-    for moment_component in range(3):
-        matrix[equilibrium_rows, moment_component:dim_m:3] = (
-            DIVDIV_WEIGHTS[moment_component]
-            * sqrt_weights.unsqueeze(1)
-            * hess_m[:, :, moment_component]
-        )
-    rhs[equilibrium_rows] = -sqrt_weights * benchmark.f_int
-    return DirectResidualDesign(matrix, rhs, dim_m)
+    return design, dim_m
 
 
-def solve_direct_residual(
-    matrix: torch.Tensor,
-    rhs: torch.Tensor,
-    rcond: float,
-) -> tuple[torch.Tensor, float, int, float]:
-    """Column-scale and solve the residual least-squares problem with GELSD."""
-
-    column_norms = torch.linalg.vector_norm(matrix, dim=0)
-    floor = torch.finfo(matrix.dtype).eps * column_norms.max()
-    safe_norms = column_norms.clamp_min(floor)
-    matrix.div_(safe_norms.unsqueeze(0))
-    t0 = time.perf_counter()
-    scaled_solution, _, rank, singular_values = scipy.linalg.lstsq(
-        matrix.numpy(),
-        rhs.numpy(),
-        cond=rcond,
-        overwrite_a=True,
-        overwrite_b=False,
-        check_finite=False,
-        lapack_driver="gelsd",
-    )
-    wall_time = time.perf_counter() - t0
-    solution = torch.from_numpy(scaled_solution).to(dtype=DTYPE) / safe_norms
-    positive = singular_values[singular_values > 0.0]
-    condition_estimate = (
-        float(positive.max() / positive.min()) if len(positive) else float("inf")
-    )
-    return solution, wall_time, int(rank), condition_estimate
-
-
-def split_solution(z: torch.Tensor, dim_m: int) -> tuple[torch.Tensor, torch.Tensor]:
-    """Split the full coefficient vector into moment and deflection parts."""
-
-    return z[:dim_m], z[dim_m:]
-
-
-def compute_absolute_errors(
-    psi_u_test: torch.Tensor,
-    xi_m_test: torch.Tensor,
-    moment_coeffs: torch.Tensor,
-    deflection_coeffs: torch.Tensor,
-    w_test: torch.Tensor,
-    u_exact: torch.Tensor,
-    M_exact: torch.Tensor,
-) -> tuple[float, float]:
-    """Compute absolute L2 errors for deflection and moments."""
-
-    M_h = xi_m_test @ moment_coeffs.reshape(-1, 3)
-    u_h = psi_u_test @ deflection_coeffs
-
-    u_err = torch.sqrt((w_test * (u_h - u_exact).square()).sum())
-
-    M_err = torch.sqrt(
-        (w_test * (FROBENIUS_WEIGHT * (M_h - M_exact).square()).sum(dim=1)).sum()
-    )
-    return u_err.item(), M_err.item()
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
 
 
 def compute_coefficient_residual_norms(
@@ -1018,7 +733,7 @@ def compute_coefficient_residual_norms(
     moment_coeffs: torch.Tensor,
     deflection_coeffs: torch.Tensor,
 ) -> tuple[float, float]:
-    """Evaluate least-squares residual norms on sampled interior points."""
+    """Evaluate continuous residual norms on the deterministic test rule."""
 
     if not torch.isfinite(moment_coeffs).all() or not torch.isfinite(deflection_coeffs).all():
         return float("nan"), float("nan")
@@ -1028,20 +743,18 @@ def compute_coefficient_residual_norms(
     equilibrium_sq = 0.0
 
     with torch.no_grad():
-        for start in range(0, data.x_int.shape[0], data.assembly_batch_size):
-            end = min(start + data.assembly_batch_size, data.x_int.shape[0])
-            xb = data.x_int[start:end]
-            wb = data.w_int[start:end]
-            fb = data.f_int[start:end]
+        for start in range(0, data.x_test.shape[0], data.assembly_batch_size):
+            end = min(start + data.assembly_batch_size, data.x_test.shape[0])
+            xb = data.x_test[start:end]
+            wb = data.w_test[start:end]
+            fb = data.f_test[start:end]
 
-            xi_m_batch = eval_features(xb, data.a_m, data.r_m, data.gamma_m)
-            hess_m_batch = eval_feature_hessians(xb, data.a_m, data.r_m, data.gamma_m)
-            _, hess_psi_batch = eval_active_deflection_feature_data(
+            xi_m_batch = eval_features(xb, data.theta_m)
+            hess_m_batch = eval_feature_hessians(xb, data.theta_m)
+            hess_psi_batch = data.projected_w.evaluate(
                 xb,
-                data.a_u,
-                data.r_u,
-                data.gamma_u,
-            )
+                hessian_components=HESSIAN_COMPONENTS,
+            )[2]
 
             M_h = xi_m_batch @ moment_blocks
             hess_u = torch.einsum("qfj,f->qj", hess_psi_batch, deflection_coeffs)
@@ -1070,20 +783,32 @@ def evaluate_feature_result(
 ) -> AlgorithmResult:
     """Evaluate one coefficient-based method and package the metrics."""
 
-    r_c, r_e = compute_coefficient_residual_norms(
-        data,
-        moment_coeffs,
-        deflection_coeffs,
+    r_c, r_e = compute_coefficient_residual_norms(data, moment_coeffs, deflection_coeffs)
+    M_h = data.xi_m_test @ moment_coeffs.reshape(-1, 3)
+    u_h = data.psi_u_test @ deflection_coeffs
+    abs_u = torch.sqrt((data.w_test * (u_h - data.u_exact_test).square()).sum()).item()
+    abs_M = torch.sqrt(
+        (
+            data.w_test
+            * (FROBENIUS_WEIGHT * (M_h - data.M_exact_test).square()).sum(dim=1)
+        ).sum()
+    ).item()
+
+    deflection_values, deflection_gradients, deflection_hessians = data.projected_w.evaluate(
+        data.x_test,
+        hessian_components=HESSIAN_COMPONENTS,
     )
-    abs_u, abs_M = compute_absolute_errors(
-        data.psi_u_test,
-        data.xi_m_test,
-        moment_coeffs,
-        deflection_coeffs,
-        data.w_test,
-        data.u_exact_test,
-        data.M_exact_test,
-    )
+    w_h = deflection_values @ deflection_coeffs
+    grad_w_h = torch.einsum("qfs,f->qs", deflection_gradients, deflection_coeffs)
+    hess_w_h = torch.einsum("qfj,f->qj", deflection_hessians, deflection_coeffs)
+    gradient_error_sq = (
+        data.w_test * (grad_w_h - data.u_grad_exact_test).square().sum(dim=1)
+    ).sum().item()
+    hessian_error_sq = (
+        data.w_test
+        * (FROBENIUS_WEIGHT * (hess_w_h - data.u_hess_exact_test).square()).sum(dim=1)
+    ).sum().item()
+    w_l2_error_sq = (data.w_test * (w_h - data.u_exact_test).square()).sum().item()
     return AlgorithmResult(
         name=name,
         r_c=r_c,
@@ -1091,6 +816,8 @@ def evaluate_feature_result(
         abs_u=abs_u,
         abs_M=abs_M,
         wall_time=wall_time,
+        w_h2_error=math.sqrt(w_l2_error_sq + gradient_error_sq + hessian_error_sq),
+        M_hdivdiv_error=math.hypot(abs_M, r_e),
     )
 
 
@@ -1098,87 +825,37 @@ def print_result_summary(result: AlgorithmResult) -> None:
     """Print one compact result line."""
 
     print(
-        f"    Done in {result.wall_time:.2f}s, "
-        f"‖Φ^u-u‖={result.abs_u:.2e}, "
-        f"‖Φ^M-M‖={result.abs_M:.2e}, "
+        f"    [{result.name}] Done in {result.wall_time:.2f}s, "
+        f"hyper={result.hyperparameter:g}, "
+        f"‖w_N-w_*‖_H2={result.w_h2_error:.2e}, "
+        f"‖M_N-M_*‖_Hdivdiv={result.M_hdivdiv_error:.2e}, "
+        f"constitutive={result.r_c:.2e}, "
+        f"equilibrium={result.r_e:.2e}, "
         f"rank={result.rank}/{result.columns}, "
         f"cond≈{result.condition_estimate:.2e}"
     )
 
 
-def print_aligned_markdown_table(
-    title: str,
-    headers: Sequence[str],
-    rows: Sequence[Sequence[str]],
-    alignments: Sequence[str],
-) -> None:
-    """Print a compact markdown-style table with content-aware widths."""
-
-    if not rows:
-        return
-    if len(headers) != len(alignments):
-        raise ValueError("headers and alignments must have the same length.")
-    if any(len(row) != len(headers) for row in rows):
-        raise ValueError("Each row must have the same number of columns as headers.")
-
-    widths = [
-        max(len(header), max(len(row[index]) for row in rows))
-        for index, header in enumerate(headers)
-    ]
-
-    def format_row(row: Sequence[str]) -> str:
-        cells: list[str] = []
-        for index, cell in enumerate(row):
-            if alignments[index] == "left":
-                cells.append(f"{cell:<{widths[index]}}")
-            elif alignments[index] == "center":
-                cells.append(f"{cell:^{widths[index]}}")
-            elif alignments[index] == "right":
-                cells.append(f"{cell:>{widths[index]}}")
-            else:
-                raise ValueError(f"Unsupported alignment: {alignments[index]}")
-        return f"| {' | '.join(cells)} |"
-
-    def format_separator() -> str:
-        cells: list[str] = []
-        for index, alignment in enumerate(alignments):
-            if alignment == "left":
-                cells.append(f":{'-' * (widths[index] + 1)}")
-            elif alignment == "center":
-                cells.append(f":{'-' * widths[index]}:")
-            elif alignment == "right":
-                cells.append(f"{'-' * (widths[index] + 1)}:")
-            else:
-                raise ValueError(f"Unsupported alignment: {alignment}")
-        return f"|{'|'.join(cells)}|"
-
-    print(f"\n=== {title} ===\n")
-    print(format_row(headers))
-    print(format_separator())
-    for row in rows:
-        print(format_row(row))
-
-
-def print_summary_table(
-    results: Sequence[AlgorithmResult],
-    title: str,
-) -> None:
+def print_summary_table(results: Sequence[AlgorithmResult], title: str) -> None:
     """Print a compact markdown-style summary table."""
 
     if not results:
         return
-
     headers = (
         "Method",
-        "‖Φ^u-u‖",
-        "‖Φ^M-M‖",
+        "‖w_N-w_*‖_L2",
+        "‖w_N-w_*‖_H2",
+        "‖M_N-M_*‖_L2",
+        "‖M_N-M_*‖_Hdivdiv",
         "Time(s)",
     )
     rows = [
         (
             result.name,
             f"{result.abs_u:.2e}",
+            f"{result.w_h2_error:.2e}",
             f"{result.abs_M:.2e}",
+            f"{result.M_hdivdiv_error:.2e}",
             f"{result.wall_time:.2f}",
         )
         for result in results
@@ -1187,69 +864,13 @@ def print_summary_table(
         title=title,
         headers=headers,
         rows=rows,
-        alignments=("left", "center", "center", "center"),
+        alignments=("left", "center", "center", "center", "center", "center"),
     )
 
 
-def configure_plotting() -> None:
-    """Apply the shared matplotlib settings used by experiment plots."""
-
-    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
-    plt.rcParams["axes.unicode_minus"] = False
-
-
-def plot_l2_summary(
-    results: Sequence[AlgorithmResult],
-    save_path: str,
-) -> None:
-    """Plot final absolute L2 errors as bar charts."""
-
-    if not results:
-        print(f"  Skipped: {save_path} (no results to plot)")
-        return
-
-    configure_plotting()
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
-    titles = [
-        r"Deflection $\|\Phi^u - u_{ex}\|_{L^2}$",
-        r"Moment $\|\Phi^M - M_{ex}\|_{L^2}$",
-    ]
-    keys = ["abs_u", "abs_M"]
-    labels = [result.name for result in results]
-    x_positions = np.arange(len(results), dtype=float)
-    colors = [
-        ALGO_STYLE.get(label, {}).get("color", "#4C78A8")
-        for label in labels
-    ]
-
-    for ax, title, key in zip(axes, titles, keys):
-        values = np.array([getattr(result, key) for result in results], dtype=float)
-        valid = np.isfinite(values) & (values > 0.0)
-        if valid.any():
-            valid_indices = np.flatnonzero(valid)
-            ax.bar(
-                x_positions[valid],
-                values[valid],
-                width=0.65,
-                color=[colors[index] for index in valid_indices],
-            )
-
-        invalid_indices = np.flatnonzero(~valid)
-        for index in invalid_indices:
-            print(f"  Skipped {labels[index]} {key}={values[index]!r} in {save_path}")
-
-        ax.set_yscale("log")
-        ax.set_ylabel("Absolute $L^2$ error")
-        ax.set_title(title)
-        ax.set_xticks(x_positions)
-        ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.grid(alpha=0.3, linestyle="--", axis="y")
-
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=500, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: {save_path}")
+# ---------------------------------------------------------------------------
+# Experiment driver
+# ---------------------------------------------------------------------------
 
 
 def run_algorithm(
@@ -1259,28 +880,34 @@ def run_algorithm(
 ) -> AlgorithmResult:
     """Run one configured least-squares algorithm and evaluate it."""
 
-    if algorithm_id != "direct":
-        raise ValueError(f"Unsupported algorithm: {algorithm_id}")
+    spec = get_solver_spec(algorithm_id)
+    storage_label = (
+        f"direct/{data.direct_solver} + SVD"
+        if data.system_backend == "direct"
+        else "streaming Gram + symmetric eigensolve"
+    )
     print(
-        f"Running LS ({data.direct_solver} + GELSD) on source system "
-        f"({data.source_rows}, {data.matrix.shape[1]})..."
+        f"Running {spec.label} ({storage_label}) on source system "
+        f"({data.source_rows}, {data.column_count})..."
     )
     solve_started = time.perf_counter()
-    z, gelsd_time, rank, condition_estimate = solve_direct_residual(
-        data.matrix,
-        data.rhs,
-        cfg.direct_rcond,
+    output = run_solver(algorithm_id, data.residual_design, data.rhs, cfg)
+    print(
+        f"    {spec.hyperparameter_name}={output.hyperparameter:g}, "
+        f"regularization active: {output.regularization_active}"
     )
     reduced_solve_time = time.perf_counter() - solve_started
     wall_time = data.preparation_time + reduced_solve_time
     print(
         f"    timings: preparation={data.preparation_time:.2f}s, "
         f"reduced solve={reduced_solve_time:.2f}s, "
-        f"GELSD={gelsd_time:.2f}s, total={wall_time:.2f}s"
+        f"solver={output.solve_time:.2f}s, total={wall_time:.2f}s"
     )
-    moment_coeffs, deflection_coeffs = split_solution(z, data.dim_m)
+    z = output.coefficients
+    moment_coeffs = z[: data.dim_m]
+    deflection_coeffs = z[data.dim_m :]
     evaluated = evaluate_feature_result(
-        "LS",
+        spec.label,
         wall_time,
         moment_coeffs,
         deflection_coeffs,
@@ -1293,13 +920,107 @@ def run_algorithm(
         abs_u=evaluated.abs_u,
         abs_M=evaluated.abs_M,
         wall_time=evaluated.wall_time,
-        rank=rank,
-        columns=data.matrix.shape[1],
-        condition_estimate=condition_estimate,
+        rank=output.rank,
+        columns=data.column_count,
+        condition_estimate=output.condition_estimate,
+        w_h2_error=evaluated.w_h2_error,
+        M_hdivdiv_error=evaluated.M_hdivdiv_error,
+        coefficient_ball_active=output.regularization_active,
+        algorithm=spec.id,
+        hyperparameter=output.hyperparameter,
     )
-
     print_result_summary(result)
     return result
+
+
+def prepare_experiment(
+    cfg: LeastSquaresConfig,
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+) -> LeastSquaresExperimentData:
+    """Assemble the residual system once; reusable across coefficient budgets."""
+
+    validate_config(cfg)
+    if feature_space.theta_m.shape[0] != cfg.N_m or feature_space.theta_w.shape[0] != cfg.N_u:
+        raise ValueError("SharedFeatureSpace feature counts do not match LeastSquaresConfig.")
+    source_rows = 4 * benchmark.x_int.shape[0]
+    expected_columns = 3 * (cfg.N_m + 1) + (cfg.N_u + 1)
+    backend = get_system_backend(cfg.system_backend)
+    if not backend.stores_normal_equations:
+        warn_if_dense_infeasible(cfg.direct_solver, source_rows, expected_columns)
+        if cfg.direct_solver == "dense":
+            print("Assembling dense direct weighted residual matrix...")
+            t0 = time.perf_counter()
+            direct_design = assemble_direct_residual_design(benchmark, feature_space)
+            preparation_time = time.perf_counter() - t0
+            print(
+                f"Residual shapes: A={tuple(direct_design.matrix.shape)}, "
+                f"b={tuple(direct_design.rhs.shape)}, "
+                f"assembly={preparation_time:.2f}s"
+            )
+        else:
+            print("Compressing direct residuals with streaming TSQR...")
+            direct_design, streaming_stats = assemble_streaming_tsqr_design(
+                cfg,
+                benchmark,
+                feature_space,
+            )
+            preparation_time = streaming_stats.total_time
+            print(
+                f"Residual shapes: source A=({streaming_stats.source_rows}, "
+                f"{streaming_stats.columns}), "
+                f"reduced A={tuple(direct_design.matrix.shape)}, "
+                f"b={tuple(direct_design.rhs.shape)}"
+            )
+            print(
+                f"TSQR timings: batch assembly={streaming_stats.assembly_time:.2f}s, "
+                f"QR updates={streaming_stats.qr_time:.2f}s, "
+                f"compression total={streaming_stats.total_time:.2f}s"
+            )
+        residual_design: torch.Tensor | GramResidualDesign = direct_design.matrix
+        rhs: torch.Tensor | None = direct_design.rhs
+        dim_m = direct_design.dim_m
+        column_count = int(direct_design.matrix.shape[1])
+    else:
+        print("Accumulating weighted residuals with the streaming Gram backend...")
+        t0 = time.perf_counter()
+        gram_design, dim_m = assemble_streaming_gram_design(
+            cfg,
+            benchmark,
+            feature_space,
+        )
+        preparation_time = time.perf_counter() - t0
+        if gram_design.source_rows != source_rows:
+            raise RuntimeError(
+                "Gram residual row count mismatch: "
+                f"assembled {gram_design.source_rows}, expected {source_rows}."
+            )
+        print(
+            f"Residual shapes: source A=({gram_design.source_rows}, "
+            f"{gram_design.column_count}), "
+            f"G={tuple(gram_design.gram.shape)}, "
+            f"assembly={preparation_time:.2f}s"
+        )
+        residual_design = gram_design
+        rhs = None
+        column_count = gram_design.column_count
+    clear_cuda_cache()
+
+    return LeastSquaresExperimentData(
+        residual_design=residual_design,
+        rhs=rhs,
+        column_count=column_count,
+        dim_m=dim_m,
+        eval_data=build_feature_evaluation_data(
+            benchmark,
+            feature_space,
+            cfg.assembly_batch_size,
+        ),
+        source_rows=source_rows,
+        preparation_time=preparation_time,
+        system_backend=cfg.system_backend,
+        direct_solver=cfg.direct_solver,
+    )
 
 
 def run_experiment(
@@ -1308,26 +1029,26 @@ def run_experiment(
     plot_results: bool = True,
     benchmark: SharedBenchmarkData | None = None,
     feature_space: SharedFeatureSpace | None = None,
+    experiment_data: LeastSquaresExperimentData | None = None,
 ) -> list[AlgorithmResult]:
     """Run direct residual least squares and return its metrics."""
 
-    cfg = LeastSquaresConfig() if cfg is None else cfg
+    cfg = default_config() if cfg is None else cfg
     validate_config(cfg)
-    selected_algorithm_ids = validate_algorithm_selection(
-        cfg.algorithms_to_run,
-        VALID_ALGORITHMS,
-    )
+    selected_algorithm_ids = validate_algorithm_selection(cfg.algorithms_to_run)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"Device: {DEVICE}")
     print(f"Output: {OUTPUT_DIR}")
     print(
         f"Config: h={cfg.h}, N_m={cfg.N_m}, N_u={cfg.N_u}, "
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
-        f"gamma_m={cfg.gamma_m}, gamma_u={cfg.gamma_u}, "
+        f"activation=ReLU^3, ritz_ratio={cfg.ritz_ratio}, "
+        f"coefficient_budget={cfg.coefficient_budget}, "
+        f"ridge_lambda={cfg.ridge_lambda:.2e}, "
         f"direct_rcond={cfg.direct_rcond:.2e}, "
+        f"system_backend={cfg.system_backend}, "
         f"direct_solver={cfg.direct_solver}, "
-        f"direct_batch_size={cfg.direct_batch_size}, "
-        f"direct_qr_block_size={cfg.direct_qr_block_size}, "
         f"sampling={cfg.sampling_method}"
     )
     print(f"Algorithms: {selected_algorithm_ids}")
@@ -1335,98 +1056,42 @@ def run_experiment(
     D = compute_bending_stiffness(cfg.E, cfg.nu, cfg.h)
     print(f"Material: E={cfg.E}, nu={cfg.nu}, h={cfg.h}, D={D:.4f}")
 
-    if benchmark is None:
-        print("Building benchmark data...")
-        benchmark = build_shared_benchmark(
-            E=cfg.E,
-            nu=cfg.nu,
-            h=cfg.h,
-            Q_train=cfg.Q_train,
-            Q_test=cfg.Q_test,
-            sampling_method=cfg.sampling_method,
-        )
-    else:
-        print("Using shared benchmark data...")
+    if experiment_data is None:
+        if benchmark is None:
+            print("Building benchmark data...")
+            benchmark = build_shared_benchmark(
+                E=cfg.E,
+                nu=cfg.nu,
+                h=cfg.h,
+                Q_train=cfg.Q_train,
+                Q_test=cfg.Q_test,
+                sampling_method=cfg.sampling_method,
+                manufactured_solution=cfg.manufactured_solution,
+            )
+        else:
+            print("Using shared benchmark data...")
 
-    if feature_space is None:
-        print("Generating random feature spaces...")
-        feature_space = build_shared_feature_space(
-            N_m=cfg.N_m,
-            N_u=cfg.N_u,
-            gamma_m=cfg.gamma_m,
-            gamma_u=cfg.gamma_u,
-        )
-    else:
-        print("Using shared random feature spaces...")
+        if feature_space is None:
+            print("Generating quasi-uniform feature spaces...")
+            feature_space = build_shared_feature_space(
+                N_m=cfg.N_m,
+                N_u=cfg.N_u,
+                ritz_ratio=cfg.ritz_ratio,
+                projection_samples=cfg.projection_samples,
+            )
+        else:
+            print("Using shared feature spaces...")
 
-    if feature_space.gamma_m != cfg.gamma_m or feature_space.gamma_u != cfg.gamma_u:
-        raise ValueError("SharedFeatureSpace gamma does not match LeastSquaresConfig.")
-    if feature_space.a_m.shape[0] != cfg.N_m or feature_space.a_u.shape[0] != cfg.N_u:
-        raise ValueError("SharedFeatureSpace feature counts do not match LeastSquaresConfig.")
-
-    source_rows = 4 * benchmark.x_int.shape[0]
-    expected_columns = 3 * (cfg.N_m + 1) + (cfg.N_u + 1)
-    dense_matrix_gib = (
-        source_rows
-        * expected_columns
-        * torch.tensor([], dtype=DTYPE).element_size()
-        / 2**30
-    )
-    print(
-        f"Direct system estimate: ({source_rows}, {expected_columns}), "
-        f"rows/columns={source_rows / expected_columns:.2f}, "
-        f"dense A={dense_matrix_gib:.2f} GiB"
-    )
-    if cfg.direct_solver == "dense" and dense_matrix_gib > 4.0:
-        warnings.warn(
-            "The selected dense direct backend may exceed workstation memory; "
-            "use direct_solver='streaming_tsqr' for this configuration.",
-            RuntimeWarning,
-        )
-    if cfg.direct_solver == "dense":
-        print("Assembling dense direct weighted residual matrix...")
-        t0 = time.perf_counter()
-        direct_design = assemble_direct_residual_design(benchmark, feature_space)
-        preparation_time = time.perf_counter() - t0
         print(
-            f"Residual shapes: A={tuple(direct_design.matrix.shape)}, "
-            f"b={tuple(direct_design.rhs.shape)}, "
-            f"assembly={preparation_time:.2f}s"
+            "Ritz projection: "
+            f"K={feature_space.projected_w.space.dimension}, "
+            f"samples={feature_space.projected_w.quadrature_samples}, "
+            f"residual={feature_space.projected_w.gram_residual:.2e}, "
+            f"boundary={feature_space.projected_w.boundary_residual():.2e}"
         )
+        experiment_data = prepare_experiment(cfg, benchmark, feature_space)
     else:
-        print("Compressing direct residuals with streaming TSQR...")
-        direct_design, streaming_stats = assemble_streaming_tsqr_design(
-            cfg,
-            benchmark,
-            feature_space,
-        )
-        preparation_time = streaming_stats.total_time
-        print(
-            f"Residual shapes: source A=({streaming_stats.source_rows}, "
-            f"{streaming_stats.columns}), "
-            f"reduced A={tuple(direct_design.matrix.shape)}, "
-            f"b={tuple(direct_design.rhs.shape)}"
-        )
-        print(
-            f"TSQR timings: batch assembly={streaming_stats.assembly_time:.2f}s, "
-            f"QR updates={streaming_stats.qr_time:.2f}s, "
-            f"compression total={streaming_stats.total_time:.2f}s"
-        )
-    clear_cuda_cache()
-
-    experiment_data = LeastSquaresExperimentData(
-        matrix=direct_design.matrix,
-        rhs=direct_design.rhs,
-        dim_m=direct_design.dim_m,
-        eval_data=build_feature_evaluation_data(
-            benchmark,
-            feature_space,
-            cfg.assembly_batch_size,
-        ),
-        source_rows=source_rows,
-        preparation_time=preparation_time,
-        direct_solver=cfg.direct_solver,
-    )
+        print("Using prepared residual system...")
 
     results = [
         run_algorithm(algorithm_id, experiment_data, cfg)
@@ -1437,7 +1102,18 @@ def run_experiment(
 
     if plot_results:
         print("\nGenerating plots...")
-        plot_l2_summary(results, str(OUTPUT_DIR / "l2-error-summary.png"))
+        plot_error_summary(
+            [result.name for result in results],
+            [
+                r"Deflection $\|w_N-w_\star\|_{H^2}$",
+                r"Moment $\|M_N-M_\star\|_{H(\mathrm{div\,div})}$",
+            ],
+            [
+                [result.w_h2_error for result in results],
+                [result.M_hdivdiv_error for result in results],
+            ],
+            str(OUTPUT_DIR / "graph-error-summary.png"),
+        )
 
     return results
 
