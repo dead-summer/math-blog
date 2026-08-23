@@ -8,6 +8,6 @@
   "coefficient_budget": 3e5,
   "ridge_lambda": 1e-6,
   "direct_rcond": 1e-6,
-  "system_backend": "direct",
+  "system_backend": "gram",
   "direct_solver": "streaming_tsqr"
 }

@@ -130,7 +130,7 @@ SOLVERS: dict[str, SolverSpec] = {
             label="LS(tsvd)",
             hyperparameter_name="rcond",
             config_field="direct_rcond",
-            default_ladder=(1.0e-10, 1.0e-8, 1.0e-6),
+            default_ladder=(1.0e-6, 1.0e-7, 1.0e-8),
             solve=_solve_tsvd,
         ),
     )

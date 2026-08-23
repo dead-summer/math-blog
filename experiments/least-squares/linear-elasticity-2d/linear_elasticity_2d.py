@@ -49,29 +49,6 @@ def div_free_displacement(material: ec.Material) -> ec.DisplacementFn:
     return displacement
 
 
-def near_incompressible_displacement(material: ec.Material) -> ec.DisplacementFn:
-    """A lambda-scaled nearly incompressible zero-boundary displacement."""
-
-    lam = material.lam
-    if not math.isfinite(lam) or lam == 0.0:
-        raise ValueError("lam must be finite and nonzero for near_incompressible.")
-    div_free = div_free_displacement(material)
-
-    def displacement(x: torch.Tensor) -> torch.Tensor:
-        x1, x2 = x[:, 0], x[:, 1]
-        pi = math.pi
-        perturbation = torch.stack(
-            [
-                torch.sin(2.0 * pi * x1) * x2 * (1.0 - x2),
-                torch.sin(2.0 * pi * x2) * x1 * (1.0 - x1),
-            ],
-            dim=1,
-        )
-        return div_free(x) + perturbation / lam
-
-    return displacement
-
-
 PROBLEM = ec.ElasticityProblem(
     name="linear-elasticity-2d",
     spec=ec.make_voigt_spec(2),
@@ -79,7 +56,6 @@ PROBLEM = ec.ElasticityProblem(
     solutions={
         "hu_zhang": hu_zhang_displacement,
         "div_free": div_free_displacement,
-        "near_incompressible": near_incompressible_displacement,
     },
     default_solution="hu_zhang",
     use_trace_constraint=True,

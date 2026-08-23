@@ -32,7 +32,6 @@ from ls_common import (
     build_quadrature_rule,
     clear_cuda_cache,
     generate_features,
-    iter_point_batches,
     load_config_defaults,
     plot_error_summary,
     print_aligned_markdown_table,
@@ -44,6 +43,7 @@ from ls_common import (
 from rfm_core import (
     RitzProjectedFeatures,
     build_ritz_projected_features,
+    relu3_feature_box_means,
     relu3_feature_data,
     relu3_feature_values,
     relu3_feature_values_and_gradients,
@@ -57,7 +57,6 @@ from system_backends import (
 
 
 PROJECTION_SEED = BASE_SEED + 17_000
-TRACE_PROJECTION_SEED = BASE_SEED + 29_000
 
 # Voigt component orders fixed to match the historical per-dimension drivers.
 VOIGT_PAIRS = {
@@ -246,9 +245,6 @@ class LeastSquaresConfig:
     sampling_method: str = "mc"
     ritz_ratio: float = 2.0
     projection_samples: int | None = None
-    trace_projection_samples: int = 2**19
-    trace_projection_seed: int = TRACE_PROJECTION_SEED
-    trace_projection_batch_size: int = 4_096
     coefficient_budget: float = math.inf
     ridge_lambda: float = 1.0e-7
     manufactured_solution: str = "hu_zhang"
@@ -279,10 +275,6 @@ def validate_config(problem: ElasticityProblem, cfg: LeastSquaresConfig) -> None
         raise ValueError("Config.ritz_ratio must be at least one.")
     if cfg.projection_samples is not None and cfg.projection_samples <= 0:
         raise ValueError("Config.projection_samples must be positive when set.")
-    if cfg.trace_projection_samples <= 0:
-        raise ValueError("Config.trace_projection_samples must be positive.")
-    if cfg.trace_projection_batch_size <= 0:
-        raise ValueError("Config.trace_projection_batch_size must be positive.")
     if cfg.coefficient_budget <= 0.0:
         raise ValueError("Config.coefficient_budget must be positive.")
     if not math.isfinite(cfg.ridge_lambda) or cfg.ridge_lambda <= 0.0:
@@ -493,8 +485,6 @@ class SharedFeatureSpace:
     theta_u: torch.Tensor
     projected_u: RitzProjectedFeatures
     mean_raw_sigma: torch.Tensor | None = None
-    trace_projection_samples: int = 0
-    trace_projection_seed: int = 0
 
 
 @dataclass(frozen=True)
@@ -686,15 +676,14 @@ def build_shared_feature_space(
     ritz_ratio: float = 2.0,
     projection_samples: int | None = None,
     projection_seed: int = PROJECTION_SEED,
-    trace_projection_samples: int | None = None,
-    trace_projection_seed: int = TRACE_PROJECTION_SEED,
-    trace_projection_batch_size: int = 4_096,
 ) -> SharedFeatureSpace:
     """Build the quasi-uniform features and the H1 Ritz-projected displacement basis.
 
-    The hidden parameters are deterministic.  Independent Monte Carlo rules
-    discretize the displacement Ritz inner product and the stress trace
-    projection, so the physical trial space does not depend on training data.
+    The hidden parameters are deterministic.  A Monte Carlo rule discretizes
+    the displacement Ritz inner product, so the physical trial space does not
+    depend on training data.  The stress trace projection needs no rule at
+    all: on the unit box every raw stress feature has a closed-form mean, so
+    the zero-mean gauge is exact and carries no quadrature bias.
     """
 
     d = problem.spec.dimension
@@ -710,32 +699,14 @@ def build_shared_feature_space(
         quadrature_samples=projection_samples,
         quadrature_seed=projection_seed,
     )
-    mean_raw_sigma = None
-    actual_trace_samples = 0
-    if problem.use_trace_constraint:
-        actual_trace_samples = (
-            max(16 * (N_s + 1), 2_048)
-            if trace_projection_samples is None
-            else trace_projection_samples
-        )
-        if actual_trace_samples <= 0:
-            raise ValueError("trace_projection_samples must be positive.")
-        if trace_projection_batch_size <= 0:
-            raise ValueError("trace_projection_batch_size must be positive.")
-        mean_raw_sigma = accumulate_independent_raw_sigma_mean(
-            theta_s,
-            dimension=d,
-            sample_count=actual_trace_samples,
-            seed=trace_projection_seed,
-            batch_size=trace_projection_batch_size,
-        )
+    mean_raw_sigma = (
+        relu3_feature_box_means(theta_s) if problem.use_trace_constraint else None
+    )
     return SharedFeatureSpace(
         theta_s=theta_s,
         theta_u=theta_u,
         projected_u=projected_u,
         mean_raw_sigma=mean_raw_sigma,
-        trace_projection_samples=actual_trace_samples,
-        trace_projection_seed=(trace_projection_seed if actual_trace_samples else 0),
     )
 
 
@@ -765,45 +736,12 @@ def build_feature_evaluation_data(
     )
 
 
-def accumulate_independent_raw_sigma_mean(
-    theta_s: torch.Tensor,
-    *,
-    dimension: int,
-    sample_count: int,
-    seed: int,
-    batch_size: int,
-) -> torch.Tensor:
-    """Estimate raw stress-feature means with an independent iid MC rule."""
-
-    mean_raw_sigma = torch.zeros(
-        theta_s.shape[0] + 1,
-        dtype=DTYPE,
-        device=DEVICE,
-    )
-    generator = torch.Generator(device="cpu")
-    generator.manual_seed(seed)
-    with torch.no_grad():
-        for start, stop in iter_point_batches(sample_count, batch_size):
-            points = torch.rand(
-                stop - start,
-                dimension,
-                generator=generator,
-                dtype=DTYPE,
-            ).to(device=DEVICE)
-            raw_sigma = relu3_feature_values(points, theta_s)
-            mean_raw_sigma.add_(raw_sigma.sum(dim=0) / sample_count)
-    # The constant feature has an exactly known mean.  Pinning it avoids a
-    # harmless accumulation roundoff in the zero-mean basis elimination.
-    mean_raw_sigma[0] = 1.0
-    return mean_raw_sigma
-
-
 def accumulate_raw_sigma_mean(
     benchmark: SharedBenchmarkData,
     feature_space: SharedFeatureSpace,
     batch_size: int,
 ) -> torch.Tensor:
-    """Compatibility accessor for the independently built trace projection."""
+    """Compatibility accessor for the closed-form stress-feature box means."""
 
     del benchmark, batch_size
     if feature_space.mean_raw_sigma is None:
@@ -1587,7 +1525,6 @@ def run_experiment(
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
         f"activation=ReLU^3, ritz_ratio={cfg.ritz_ratio}, "
         f"projection_samples={cfg.projection_samples}, "
-        f"trace_projection_samples={cfg.trace_projection_samples}, "
         f"coefficient_budget={cfg.coefficient_budget}, "
         f"ridge_lambda={cfg.ridge_lambda:.2e}, "
         f"direct_rcond={cfg.direct_rcond:.2e}, "
@@ -1624,9 +1561,6 @@ def run_experiment(
                 N_u=cfg.N_u,
                 ritz_ratio=cfg.ritz_ratio,
                 projection_samples=cfg.projection_samples,
-                trace_projection_samples=cfg.trace_projection_samples,
-                trace_projection_seed=cfg.trace_projection_seed,
-                trace_projection_batch_size=cfg.trace_projection_batch_size,
             )
         else:
             print("Using shared feature spaces...")
@@ -1639,11 +1573,7 @@ def run_experiment(
             f"boundary={feature_space.projected_u.boundary_residual():.2e}"
         )
         if problem.use_trace_constraint:
-            print(
-                "Trace projection: "
-                f"samples={feature_space.trace_projection_samples}, "
-                f"seed={feature_space.trace_projection_seed}"
-            )
+            print("Trace gauge: exact box means")
         experiment_data = prepare_experiment(problem, cfg, benchmark, feature_space)
     else:
         print("Using prepared residual system...")

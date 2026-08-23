@@ -186,7 +186,7 @@ def quasi_uniform_features(
 
     Non-polynomial rows tile the active parameter domain: for each direction,
     the hyperplane ``omega @ x + b = 0`` intersects the unit box.  Biases are
-    midpoint layers in the normalized fibre coordinate, and each layer has a
+    midpoint layers in the relative bias, and each layer has a
     quasi-uniform direction set (equispaced angles in 2D, a Fibonacci lattice
     in 3D) with deterministic rotations.  Parameters outside this domain give
     either the zero function or an ordinary cubic on the box.  Instead of
@@ -221,7 +221,8 @@ def quasi_uniform_features(
         )
 
     # Retain the original asymptotic layer balance.  Replacing the physical
-    # bias by the normalized fibre coordinate only changes fixed constants.
+    # bias by its position relative to that interval only changes fixed
+    # constants.
     if spatial_dimension == 2:
         layer_estimate = math.sqrt(bias_range * active_count / math.pi)
     else:
@@ -240,10 +241,10 @@ def quasi_uniform_features(
         directions = direction_builder(count, math.modf(layer * GOLDEN_RATIO_CONJUGATE)[0])
         minimum = np.minimum(directions, 0.0).sum(axis=1)
         maximum = np.maximum(directions, 0.0).sum(axis=1)
-        fibre_coordinate = (layer + 0.5) / layer_count
+        relative_bias = (layer + 0.5) / layer_count
         # omega @ x ranges over [minimum, maximum] on the unit box, so these
         # midpoint biases make every retained hyperplane cross its interior.
-        biases = -maximum + fibre_coordinate * (maximum - minimum)
+        biases = -maximum + relative_bias * (maximum - minimum)
         blocks.append(
             np.concatenate([directions, biases[:, None]], axis=1)
         )
@@ -330,13 +331,13 @@ def parameter_set_diagnostics(
         dim=1,
         keepdim=True,
     )
-    fibre_coordinate = torch.rand(
+    relative_bias = torch.rand(
         probe_count,
         1,
         generator=generator,
         dtype=normalized.dtype,
     )
-    biases = -maximum + fibre_coordinate * (maximum - minimum)
+    biases = -maximum + relative_bias * (maximum - minimum)
     probes = torch.cat([raw_directions, biases], dim=1)
     probes /= probes.norm(dim=1, keepdim=True)
     if normalized.shape[0] == 0:

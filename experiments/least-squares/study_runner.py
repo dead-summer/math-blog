@@ -150,7 +150,6 @@ def build_feature_space(
     cfg: Any,
     *,
     projection_seed: int,
-    trace_projection_seed: int | None = None,
 ) -> Any:
     kwargs = {
         spec.feature_width_names[0]: getattr(cfg, spec.width_fields[0]),
@@ -159,16 +158,6 @@ def build_feature_space(
         "projection_samples": cfg.projection_samples,
         "projection_seed": projection_seed,
     }
-    if hasattr(cfg, "trace_projection_samples"):
-        kwargs.update(
-            trace_projection_samples=cfg.trace_projection_samples,
-            trace_projection_seed=(
-                cfg.trace_projection_seed
-                if trace_projection_seed is None
-                else trace_projection_seed
-            ),
-            trace_projection_batch_size=cfg.trace_projection_batch_size,
-        )
     return module.build_shared_feature_space(**kwargs)
 
 
@@ -213,17 +202,11 @@ def run_configuration(
 
     seed = 100_000 * (run_index + 1)
     projection_seed = seed + 23
-    trace_projection_seed = (
-        int(cfg.trace_projection_seed) + seed
-        if hasattr(cfg, "trace_projection_seed")
-        else None
-    )
     feature_space = build_feature_space(
         module,
         spec,
         cfg,
         projection_seed=projection_seed,
-        trace_projection_seed=trace_projection_seed,
     )
     parameter_diagnostics = parameter_set_diagnostics(
         feature_space.theta_m if spec.key == "plate" else feature_space.theta_s
@@ -318,15 +301,6 @@ def run_configuration(
             "parameter_separation": float(parameter_diagnostics.separation),
             "projection_seed": projection_seed,
             "training_seed": train_seed,
-            "trace_projection_samples": int(
-                getattr(feature_space, "trace_projection_samples", 0)
-            ),
-            "trace_projection_seed": int(
-                getattr(feature_space, "trace_projection_seed", 0)
-            ),
-            "trace_projection_batch_size": int(
-                getattr(cfg, "trace_projection_batch_size", 0)
-            ),
             "system_backend": str(getattr(cfg, "system_backend", "direct")),
             "direct_solver": str(cfg.direct_solver),
             "nu": float(cfg.nu),
@@ -509,20 +483,6 @@ def run_study(args: argparse.Namespace) -> None:
         base_cfg = replace(base_cfg, Q_test=args.test_points)
     if args.projection_samples is not None:
         base_cfg = replace(base_cfg, projection_samples=args.projection_samples)
-    trace_overrides = {
-        "trace_projection_samples": args.trace_projection_samples,
-        "trace_projection_seed": args.trace_projection_seed,
-        "trace_projection_batch_size": args.trace_projection_batch_size,
-    }
-    requested_trace_overrides = {
-        key: value for key, value in trace_overrides.items() if value is not None
-    }
-    if requested_trace_overrides:
-        if not hasattr(base_cfg, "trace_projection_samples"):
-            raise ValueError(
-                f"Trace projection options are not supported for model {spec.key}."
-            )
-        base_cfg = replace(base_cfg, **requested_trace_overrides)
     if args.system_backend is not None:
         base_cfg = replace(base_cfg, system_backend=args.system_backend)
     if args.direct_solver is not None:
@@ -627,21 +587,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--validation-points", type=int)
     parser.add_argument("--test-points", type=int)
     parser.add_argument("--projection-samples", type=int)
-    parser.add_argument(
-        "--trace-projection-samples",
-        type=int,
-        help="independent MC sample count for the mean-trace projection",
-    )
-    parser.add_argument(
-        "--trace-projection-seed",
-        type=int,
-        help="base seed used to derive each repeat's mean-trace projection rule",
-    )
-    parser.add_argument(
-        "--trace-projection-batch-size",
-        type=int,
-        help="streaming batch size for the mean-trace projection",
-    )
     parser.add_argument(
         "--system-backend",
         choices=VALID_SYSTEM_BACKENDS,

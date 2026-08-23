@@ -9,5 +9,5 @@
   "ridge_lambda": 1e-7,
   "direct_rcond": 1e-8,
   "system_backend": "direct",
-  "direct_solver": "streaming_tsqr"
+  "direct_solver": "dense"
 }

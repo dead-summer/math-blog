@@ -3,15 +3,13 @@
   "N_u": 1000,
   "Q_train": 12808,
   "projection_samples": 12808,
-  "trace_projection_samples": 2097152,
-  "trace_projection_batch_size": 4096,
   "sampling_method": "mc",
   "manufactured_solution": "hu_zhang",
   "algorithms_to_run": ["ball", "ridge", "tsvd"],
   "coefficient_budget": 1e5,
   "ridge_lambda": 1e-7,
   "direct_rcond": 1e-7,
-  "system_backend": "direct",
-  "direct_solver": "streaming_tsqr",
+  "system_backend": "gram",
+  "direct_solver": "dense",
   "direct_batch_size": 1024
 }
