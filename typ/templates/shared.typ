@@ -24,6 +24,14 @@
   "Source Han Serif SC",
 )
 
+// Chinese emphasis (including theorem bodies) uses WenKai instead of
+// falling back to the upright Source Han Serif face.
+#let emph-fonts = (
+  "Libertinus Serif",
+  "LXGW WenKai",
+  "Source Han Serif SC",
+)
+
 #let code-font = (
   "DejaVu Sans Mono",
 )
@@ -55,6 +63,7 @@
   set text(lang: lang) if lang != none
   set text(region: region) if region != none
   set text(font: text-fonts)
+  show emph: set text(font: emph-fonts)
 
   show: it => context if std.target() == "html" {
     set text(html-main-size)
