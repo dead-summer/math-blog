@@ -1,15 +1,21 @@
 {
+  "activation_power": 7,
+  "ritz_degree": 7,
   "N_s": 1000,
   "N_u": 1000,
   "Q_train": 12808,
   "projection_samples": 12808,
   "sampling_method": "mc",
   "manufactured_solution": "hu_zhang",
-  "algorithms_to_run": ["ball", "ridge", "tsvd"],
-  "coefficient_budget": 1e5,
-  "ridge_lambda": 1e-7,
-  "direct_rcond": 1e-7,
-  "system_backend": "gram",
-  "direct_solver": "dense",
+  "algorithms_to_run": [
+    "ball",
+    "ridge",
+    "tsvd"
+  ],
+  "coefficient_budget": 100000.0,
+  "ridge_lambda": 1e-12,
+  "direct_rcond": 1e-14,
+  "system_backend": "direct",
+  "direct_solver": "streaming_tsqr",
   "direct_batch_size": 1024
 }

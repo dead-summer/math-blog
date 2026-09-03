@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, field
+import warnings
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -32,6 +33,7 @@ from ls_common import (
     build_quadrature_rule,
     clear_cuda_cache,
     generate_features,
+    iter_point_batches,
     load_config_defaults,
     plot_error_summary,
     print_aligned_markdown_table,
@@ -43,10 +45,11 @@ from ls_common import (
 from rfm_core import (
     RitzProjectedFeatures,
     build_ritz_projected_features,
-    relu3_feature_box_means,
-    relu3_feature_data,
-    relu3_feature_values,
-    relu3_feature_values_and_gradients,
+    matched_spline_degree,
+    relu_power_feature_box_means,
+    relu_power_feature_values_and_gradients,
+    saturation_index,
+    validate_activation_power,
 )
 from solvers import get_solver_spec, run_solver
 from system_backends import (
@@ -207,8 +210,7 @@ def plane_stress_material(spec: VoigtSpec, E: float, nu: float) -> Material:
 
 
 DisplacementFn = Callable[[torch.Tensor], torch.Tensor]
-# A manufactured solution receives the material (for lambda-scaled fields)
-# and returns the displacement callback.
+# A material-dependent manufactured solution returns the displacement callback.
 SolutionFactory = Callable[[Material], DisplacementFn]
 
 
@@ -243,17 +245,21 @@ class LeastSquaresConfig:
     Q_train: int = 4 * 1001
     Q_test: int = 128**2
     sampling_method: str = "mc"
+    activation_power: int = 7
+    ritz_degree: int = 7
     ritz_ratio: float = 2.0
     projection_samples: int | None = None
+    projection_batch_size: int = 2_048
     coefficient_budget: float = math.inf
-    ridge_lambda: float = 1.0e-7
+    ridge_lambda: float = 1.0e-12
     manufactured_solution: str = "hu_zhang"
-    direct_rcond: float = 1.0e-8
+    direct_rcond: float = 1.0e-12
     system_backend: str = "direct"
     direct_solver: str = "streaming_tsqr"
     direct_batch_size: int = 1_024
     direct_qr_block_size: int = 64
     body_force_batch_size: int = 5_000
+    evaluation_batch_size: int = 4_096
     algorithms_to_run: list[str] = field(
         default_factory=lambda: ["ball", "ridge", "tsvd"]
     )
@@ -271,10 +277,17 @@ def validate_config(problem: ElasticityProblem, cfg: LeastSquaresConfig) -> None
         raise ValueError("Config.nu must lie in (-1, 0.5).")
     if cfg.N_s <= 0 or cfg.N_u <= 0:
         raise ValueError("Config.N_s and Config.N_u must be positive.")
+    # The stress-displacement graph norm carries one derivative, so the
+    # training-generalization argument needs rho_k in W^{2,inf}.
+    validate_activation_power(cfg.activation_power, sobolev_order=1)
+    if cfg.ritz_degree < 3:
+        raise ValueError("Config.ritz_degree must be at least 3.")
     if cfg.ritz_ratio < 1.0:
         raise ValueError("Config.ritz_ratio must be at least one.")
     if cfg.projection_samples is not None and cfg.projection_samples <= 0:
         raise ValueError("Config.projection_samples must be positive when set.")
+    if cfg.projection_batch_size <= 0:
+        raise ValueError("Config.projection_batch_size must be positive.")
     if cfg.coefficient_budget <= 0.0:
         raise ValueError("Config.coefficient_budget must be positive.")
     if not math.isfinite(cfg.ridge_lambda) or cfg.ridge_lambda <= 0.0:
@@ -297,6 +310,8 @@ def validate_config(problem: ElasticityProblem, cfg: LeastSquaresConfig) -> None
         raise ValueError("Config.direct_qr_block_size must be positive.")
     if cfg.body_force_batch_size <= 0:
         raise ValueError("Config.body_force_batch_size must be positive.")
+    if cfg.evaluation_batch_size <= 0:
+        raise ValueError("Config.evaluation_batch_size must be positive.")
     validate_sampling_method(cfg.sampling_method)
     resolve_solution_factory(problem, getattr(cfg, "manufactured_solution", None))
     validate_algorithm_selection(
@@ -457,6 +472,7 @@ class AlgorithmResult:
     sigma_hdiv_exact_norm: float = float("nan")
     relative_u_h1_error: float = float("nan")
     relative_sigma_hdiv_error: float = float("nan")
+    coefficient_norm: float = float("nan")
     algorithm: str = ""
     hyperparameter: float = float("nan")
 
@@ -484,6 +500,7 @@ class SharedFeatureSpace:
     theta_s: torch.Tensor
     theta_u: torch.Tensor
     projected_u: RitzProjectedFeatures
+    activation_power: int = 3
     mean_raw_sigma: torch.Tensor | None = None
 
 
@@ -565,10 +582,15 @@ def lift_stress_coefficients(
 
 @dataclass(frozen=True)
 class FeatureEvaluationData:
-    """All tensors needed to evaluate coefficient-based methods."""
+    """All tensors needed to evaluate coefficient-based methods.
 
-    raw_sigma_basis_test: torch.Tensor
-    active_u_basis_test: torch.Tensor
+    Only per-point exact data and the feature *descriptions* are held.  The
+    dictionary and Ritz bases are re-evaluated in blocks by
+    :func:`evaluate_feature_result`, so nothing of size ``Q_test * N`` is ever
+    stored; caching them would not save work either, because every metric that
+    needs their values also needs their gradients from the same call.
+    """
+
     w_test: torch.Tensor
     u_exact_test: torch.Tensor
     sigma_exact_test: torch.Tensor
@@ -578,6 +600,8 @@ class FeatureEvaluationData:
     theta_s: torch.Tensor
     projected_u: RitzProjectedFeatures
     compliance_voigt: torch.Tensor
+    evaluation_batch_size: int
+    activation_power: int = 3
 
 
 @dataclass(frozen=True)
@@ -673,8 +697,11 @@ def build_shared_feature_space(
     problem: ElasticityProblem,
     N_s: int,
     N_u: int,
+    activation_power: int = 3,
+    ritz_degree: int = 3,
     ritz_ratio: float = 2.0,
     projection_samples: int | None = None,
+    projection_batch_size: int | None = None,
     projection_seed: int = PROJECTION_SEED,
 ) -> SharedFeatureSpace:
     """Build the quasi-uniform features and the H1 Ritz-projected displacement basis.
@@ -684,11 +711,16 @@ def build_shared_feature_space(
     depend on training data.  The stress trace projection needs no rule at
     all: on the unit box every raw stress feature has a closed-form mean, so
     the zero-mean gauge is exact and carries no quadrature bias.
+
+    ``ritz_degree`` must keep the spline saturation ``ritz_degree + 1`` at or
+    above the dictionary's ``s_cap(d)``; otherwise the displacement error is
+    capped by this auxiliary space rather than by the dictionary.
     """
 
     d = problem.spec.dimension
-    theta_s = generate_features(N_s, d)
-    theta_u = generate_features(N_u, d)
+    validate_activation_power(activation_power, sobolev_order=1)
+    theta_s = generate_features(N_s, d, activation_power)
+    theta_u = generate_features(N_u, d, activation_power)
     projected_u = build_ritz_projected_features(
         theta_u,
         sobolev_order=1,
@@ -696,16 +728,22 @@ def build_shared_feature_space(
             N_u + 1,
             int(math.ceil(ritz_ratio * (N_u + 1))),
         ),
+        power=activation_power,
+        degree=ritz_degree,
         quadrature_samples=projection_samples,
         quadrature_seed=projection_seed,
+        batch_size=projection_batch_size,
     )
     mean_raw_sigma = (
-        relu3_feature_box_means(theta_s) if problem.use_trace_constraint else None
+        relu_power_feature_box_means(theta_s, activation_power)
+        if problem.use_trace_constraint
+        else None
     )
     return SharedFeatureSpace(
         theta_s=theta_s,
         theta_u=theta_u,
         projected_u=projected_u,
+        activation_power=activation_power,
         mean_raw_sigma=mean_raw_sigma,
     )
 
@@ -713,17 +751,11 @@ def build_shared_feature_space(
 def build_feature_evaluation_data(
     benchmark: SharedBenchmarkData,
     feature_space: SharedFeatureSpace,
+    evaluation_batch_size: int,
 ) -> FeatureEvaluationData:
     """Build the shared evaluation tensors for coefficient-based methods."""
 
     return FeatureEvaluationData(
-        raw_sigma_basis_test=relu3_feature_values(
-            benchmark.x_test,
-            feature_space.theta_s,
-        ),
-        active_u_basis_test=feature_space.projected_u.evaluate_values(
-            benchmark.x_test
-        ),
         w_test=benchmark.w_test,
         u_exact_test=benchmark.u_exact_test,
         sigma_exact_test=benchmark.sigma_exact_test,
@@ -733,6 +765,8 @@ def build_feature_evaluation_data(
         theta_s=feature_space.theta_s,
         projected_u=feature_space.projected_u,
         compliance_voigt=benchmark.compliance_voigt,
+        evaluation_batch_size=evaluation_batch_size,
+        activation_power=feature_space.activation_power,
     )
 
 
@@ -909,8 +943,8 @@ def _weighted_feature_data(
     x = benchmark.x_int[start:stop]
     weights = benchmark.w_int[start:stop]
     body_force = benchmark.f_int[start:stop]
-    raw_sigma, grad_sigma = relu3_feature_values_and_gradients(
-        x, feature_space.theta_s
+    raw_sigma, grad_sigma = relu_power_feature_values_and_gradients(
+        x, feature_space.theta_s, feature_space.activation_power
     )
     _, grad_u = feature_space.projected_u.evaluate_values_and_gradients(x)
     sqrt_weights = torch.sqrt(weights)
@@ -1130,101 +1164,125 @@ def evaluate_feature_result(
     displacement_coeffs: torch.Tensor,
     data: FeatureEvaluationData,
 ) -> AlgorithmResult:
-    """Evaluate one coefficient-based method and package the metrics."""
+    """Evaluate one coefficient-based method and package the metrics.
+
+    Every metric is a weighted sum over the deterministic test rule, so the
+    test points are consumed in blocks of ``data.evaluation_batch_size``: the
+    dictionary and Ritz bases and their gradients are never materialized at the
+    full ``Q_test x N x d`` size, which otherwise dominates peak memory at the
+    widths where the reduced system itself is still small.
+    """
 
     spec = problem.spec
     d = spec.dimension
     n_v = spec.components
     stress_blocks = sigma_coeffs.reshape(-1, n_v)
     displacement_blocks = displacement_coeffs.reshape(-1, d)
-
-    u_h = data.active_u_basis_test @ displacement_blocks
-    sigma_h_test = data.raw_sigma_basis_test @ stress_blocks
-    u_l2_error = torch.sqrt(
-        (data.w_test * (u_h - data.u_exact_test).square().sum(dim=1)).sum()
-    ).item()
-    sigma_l2_error = torch.sqrt(
-        (
-            data.w_test
-            * (spec.voigt_weight * (sigma_h_test - data.sigma_exact_test).square()).sum(
-                dim=1
-            )
-        ).sum()
-    ).item()
-    sigma_error = sigma_h_test - data.sigma_exact_test
-    trace_error = sigma_error[:, :d].sum(dim=1)
-    hydrostatic_error_squared = trace_error.square() / float(d)
-    deviatoric_error = sigma_error.clone()
-    deviatoric_error[:, :d] -= trace_error.unsqueeze(1) / float(d)
-    sigma_hydrostatic_l2_error = torch.sqrt(
-        (data.w_test * hydrostatic_error_squared).sum()
-    ).item()
-    sigma_deviatoric_l2_error = torch.sqrt(
-        (
-            data.w_test
-            * (spec.voigt_weight * deviatoric_error.square()).sum(dim=1)
-        ).sum()
-    ).item()
-    continuous_trace_mean = (
-        data.w_test * sigma_h_test[:, :d].sum(dim=1)
-    ).sum().item()
-
-    raw_sigma, raw_sigma_gradient = relu3_feature_values_and_gradients(
-        data.x_test, data.theta_s
-    )
-    _, displacement_gradient_basis = data.projected_u.evaluate_values_and_gradients(
-        data.x_test
-    )
-    sigma_h = raw_sigma @ stress_blocks
-    grad_u_h = torch.einsum(
-        "qfs,fc->qcs",
-        displacement_gradient_basis,
-        displacement_blocks,
-    )
-    strain_h = gradient_to_engineering_strain(spec, grad_u_h)
-    constitutive = sigma_h @ data.compliance_voigt.T - strain_h
-
     voigt_index = {pair: v for v, pair in enumerate(spec.pairs)}
-    div_sigma_columns = []
-    for comp in range(d):
-        accum = torch.zeros(data.x_test.shape[0], dtype=DTYPE, device=DEVICE)
-        for dim_k in range(d):
-            pair = (min(comp, dim_k), max(comp, dim_k))
-            accum = accum + raw_sigma_gradient[:, :, dim_k] @ stress_blocks[
-                :, voigt_index[pair]
-            ]
-        div_sigma_columns.append(accum)
-    equilibrium = torch.stack(div_sigma_columns, dim=1) + data.f_test
 
-    displacement_gradient_error = torch.sqrt(
-        (data.w_test * (grad_u_h - data.u_grad_exact_test).square().sum((1, 2))).sum()
-    ).item()
-    constitutive_residual = torch.sqrt(
+    squared: dict[str, float] = dict.fromkeys(
         (
-            data.w_test
-            * (
-                spec.engineering_frobenius_weight * constitutive.square()
-            ).sum(dim=1)
-        ).sum()
-    ).item()
-    equilibrium_residual = torch.sqrt(
-        (data.w_test * equilibrium.square().sum(dim=1)).sum()
-    ).item()
-    u_exact_l2 = torch.sqrt(
-        (data.w_test * data.u_exact_test.square().sum(dim=1)).sum()
-    ).item()
-    u_exact_grad = torch.sqrt(
-        (data.w_test * data.u_grad_exact_test.square().sum((1, 2))).sum()
-    ).item()
-    sigma_exact_l2 = torch.sqrt(
-        (
-            data.w_test
-            * (spec.voigt_weight * data.sigma_exact_test.square()).sum(dim=1)
-        ).sum()
-    ).item()
-    div_sigma_exact_l2 = torch.sqrt(
-        (data.w_test * data.f_test.square().sum(dim=1)).sum()
-    ).item()
+            "u_l2",
+            "sigma_l2",
+            "sigma_hydrostatic",
+            "sigma_deviatoric",
+            "displacement_gradient",
+            "constitutive",
+            "equilibrium",
+            "u_exact_l2",
+            "u_exact_grad",
+            "sigma_exact_l2",
+            "div_sigma_exact_l2",
+        ),
+        0.0,
+    )
+    continuous_trace_mean = 0.0
+
+    with torch.no_grad():
+        for start, stop in iter_point_batches(
+            data.x_test.shape[0],
+            data.evaluation_batch_size,
+        ):
+            w = data.w_test[start:stop]
+            u_exact = data.u_exact_test[start:stop]
+            sigma_exact = data.sigma_exact_test[start:stop]
+            u_grad_exact = data.u_grad_exact_test[start:stop]
+            body_force = data.f_test[start:stop]
+
+            raw_sigma, raw_sigma_gradient = relu_power_feature_values_and_gradients(
+                data.x_test[start:stop],
+                data.theta_s,
+                data.activation_power,
+            )
+            u_basis, displacement_gradient_basis = (
+                data.projected_u.evaluate_values_and_gradients(data.x_test[start:stop])
+            )
+
+            u_h = u_basis @ displacement_blocks
+            sigma_h = raw_sigma @ stress_blocks
+            grad_u_h = torch.einsum(
+                "qfs,fc->qcs",
+                displacement_gradient_basis,
+                displacement_blocks,
+            )
+
+            sigma_error = sigma_h - sigma_exact
+            trace_error = sigma_error[:, :d].sum(dim=1)
+            deviatoric_error = sigma_error.clone()
+            deviatoric_error[:, :d] -= trace_error.unsqueeze(1) / float(d)
+
+            strain_h = gradient_to_engineering_strain(spec, grad_u_h)
+            constitutive = sigma_h @ data.compliance_voigt.T - strain_h
+
+            div_sigma_columns = []
+            for comp in range(d):
+                accum = torch.zeros(stop - start, dtype=DTYPE, device=DEVICE)
+                for dim_k in range(d):
+                    pair = (min(comp, dim_k), max(comp, dim_k))
+                    accum = accum + raw_sigma_gradient[:, :, dim_k] @ stress_blocks[
+                        :, voigt_index[pair]
+                    ]
+                div_sigma_columns.append(accum)
+            equilibrium = torch.stack(div_sigma_columns, dim=1) + body_force
+
+            squared["u_l2"] += (w * (u_h - u_exact).square().sum(dim=1)).sum().item()
+            squared["sigma_l2"] += (
+                w * (spec.voigt_weight * sigma_error.square()).sum(dim=1)
+            ).sum().item()
+            squared["sigma_hydrostatic"] += (
+                w * (trace_error.square() / float(d))
+            ).sum().item()
+            squared["sigma_deviatoric"] += (
+                w * (spec.voigt_weight * deviatoric_error.square()).sum(dim=1)
+            ).sum().item()
+            squared["displacement_gradient"] += (
+                w * (grad_u_h - u_grad_exact).square().sum((1, 2))
+            ).sum().item()
+            squared["constitutive"] += (
+                w * (spec.engineering_frobenius_weight * constitutive.square()).sum(dim=1)
+            ).sum().item()
+            squared["equilibrium"] += (w * equilibrium.square().sum(dim=1)).sum().item()
+            squared["u_exact_l2"] += (w * u_exact.square().sum(dim=1)).sum().item()
+            squared["u_exact_grad"] += (w * u_grad_exact.square().sum((1, 2))).sum().item()
+            squared["sigma_exact_l2"] += (
+                w * (spec.voigt_weight * sigma_exact.square()).sum(dim=1)
+            ).sum().item()
+            squared["div_sigma_exact_l2"] += (
+                w * body_force.square().sum(dim=1)
+            ).sum().item()
+            continuous_trace_mean += (w * sigma_h[:, :d].sum(dim=1)).sum().item()
+
+    u_l2_error = math.sqrt(squared["u_l2"])
+    sigma_l2_error = math.sqrt(squared["sigma_l2"])
+    sigma_hydrostatic_l2_error = math.sqrt(squared["sigma_hydrostatic"])
+    sigma_deviatoric_l2_error = math.sqrt(squared["sigma_deviatoric"])
+    displacement_gradient_error = math.sqrt(squared["displacement_gradient"])
+    constitutive_residual = math.sqrt(squared["constitutive"])
+    equilibrium_residual = math.sqrt(squared["equilibrium"])
+    u_exact_l2 = math.sqrt(squared["u_exact_l2"])
+    u_exact_grad = math.sqrt(squared["u_exact_grad"])
+    sigma_exact_l2 = math.sqrt(squared["sigma_exact_l2"])
+    div_sigma_exact_l2 = math.sqrt(squared["div_sigma_exact_l2"])
     u_h1_error = math.hypot(u_l2_error, displacement_gradient_error)
     sigma_hdiv_error = math.hypot(sigma_l2_error, equilibrium_residual)
     u_h1_exact_norm = math.hypot(u_exact_l2, u_exact_grad)
@@ -1269,6 +1327,14 @@ def print_result_summary(result: AlgorithmResult) -> None:
         f"hydrostatic={result.sigma_hydrostatic_l2_error:.2e}; "
         f"relative graph errors=(u {result.relative_u_h1_error:.2e}, "
         f"sigma {result.relative_sigma_hdiv_error:.2e})"
+    )
+    # ||c|| growing while the graph error stalls is the signature of a
+    # saturated dictionary: the retained small singular directions carry
+    # coefficient norm but no approximation power.
+    print(
+        f"    coefficients: ||c||_2={result.coefficient_norm:.3e}, "
+        f"B=||c||_2*sqrt(m)={result.coefficient_norm * math.sqrt(max(result.columns, 1)):.3e}, "
+        f"ball active={result.coefficient_ball_active}"
     )
 
 
@@ -1388,6 +1454,7 @@ def run_algorithm(
         sigma_hdiv_exact_norm=evaluated.sigma_hdiv_exact_norm,
         relative_u_h1_error=evaluated.relative_u_h1_error,
         relative_sigma_hdiv_error=evaluated.relative_sigma_hdiv_error,
+        coefficient_norm=float(torch.linalg.vector_norm(z)),
         algorithm=spec.id,
         hyperparameter=output.hyperparameter,
     )
@@ -1495,11 +1562,39 @@ def prepare_experiment(
         column_count=column_count,
         solved_dim_s=solved_dim_s,
         stress_adapter=stress_adapter,
-        eval_data=build_feature_evaluation_data(benchmark, feature_space),
+        eval_data=build_feature_evaluation_data(
+            benchmark,
+            feature_space,
+            cfg.evaluation_batch_size,
+        ),
         source_rows=source_rows,
         preparation_time=preparation_time,
         system_backend=cfg.system_backend,
         direct_solver=cfg.direct_solver,
+    )
+
+
+def retarget_experiment_data(
+    cfg: LeastSquaresConfig,
+    data: LeastSquaresExperimentData,
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+) -> LeastSquaresExperimentData:
+    """Point an assembled residual system at a different test rule.
+
+    Only ``eval_data`` depends on the test quadrature; the residual system and
+    its spectral factorization depend on the training points alone.  A run that
+    selects its hyperparameter on validation points and then reports on test
+    points therefore assembles and factorizes once, not twice.
+    """
+
+    return replace(
+        data,
+        eval_data=build_feature_evaluation_data(
+            benchmark,
+            feature_space,
+            cfg.evaluation_batch_size,
+        ),
     )
 
 
@@ -1523,17 +1618,32 @@ def run_experiment(
     print(
         f"Config: N_s={cfg.N_s}, N_u={cfg.N_u}, "
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
-        f"activation=ReLU^3, ritz_ratio={cfg.ritz_ratio}, "
+        f"activation=ReLU^{cfg.activation_power}, "
+        f"ritz_degree={cfg.ritz_degree}, ritz_ratio={cfg.ritz_ratio}, "
         f"projection_samples={cfg.projection_samples}, "
+        f"projection_batch_size={cfg.projection_batch_size}, "
         f"coefficient_budget={cfg.coefficient_budget}, "
         f"ridge_lambda={cfg.ridge_lambda:.2e}, "
         f"direct_rcond={cfg.direct_rcond:.2e}, "
         f"system_backend={cfg.system_backend}, "
         f"direct_solver={cfg.direct_solver}, "
+        f"direct_batch_size={cfg.direct_batch_size}, "
+        f"direct_qr_block_size={cfg.direct_qr_block_size}, "
         f"sampling={cfg.sampling_method}, "
         "manufactured_solution="
         f"{getattr(cfg, 'manufactured_solution', None) or problem.default_solution}"
     )
+    required_degree = matched_spline_degree(problem.spec.dimension, cfg.activation_power)
+    if cfg.ritz_degree < required_degree:
+        warnings.warn(
+            f"ritz_degree={cfg.ritz_degree} saturates at Sobolev index "
+            f"{cfg.ritz_degree + 1}, below the dictionary's "
+            f"s_cap({problem.spec.dimension})="
+            f"{saturation_index(problem.spec.dimension, cfg.activation_power):g}. "
+            f"The Ritz space, not the dictionary, will limit the displacement "
+            f"error; use ritz_degree >= {required_degree}.",
+            RuntimeWarning,
+        )
     print(f"Algorithms: {selected_algorithm_ids}")
     print(f"Material: {problem.make_material(cfg).summary}")
 
@@ -1559,6 +1669,8 @@ def run_experiment(
                 problem,
                 N_s=cfg.N_s,
                 N_u=cfg.N_u,
+                activation_power=cfg.activation_power,
+                ritz_degree=cfg.ritz_degree,
                 ritz_ratio=cfg.ritz_ratio,
                 projection_samples=cfg.projection_samples,
             )
@@ -1568,6 +1680,7 @@ def run_experiment(
         print(
             "Ritz projection: "
             f"K={feature_space.projected_u.space.dimension}, "
+            f"degree={feature_space.projected_u.degree}, "
             f"samples={feature_space.projected_u.quadrature_samples}, "
             f"residual={feature_space.projected_u.gram_residual:.2e}, "
             f"boundary={feature_space.projected_u.boundary_residual():.2e}"

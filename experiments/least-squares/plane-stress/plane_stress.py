@@ -51,8 +51,6 @@ PROBLEM = ec.ElasticityProblem(
 class LeastSquaresConfig(ec.LeastSquaresConfig):
     """Plane-stress defaults."""
 
-    E: float = 1.5
-    nu: float = 0.5
     manufactured_solution: str = "default"
 
 
@@ -76,6 +74,15 @@ def prepare_experiment(
     feature_space: ec.SharedFeatureSpace,
 ) -> ec.LeastSquaresExperimentData:
     return ec.prepare_experiment(PROBLEM, cfg, benchmark, feature_space)
+
+
+def retarget_experiment_data(
+    cfg: LeastSquaresConfig,
+    data: ec.LeastSquaresExperimentData,
+    benchmark: ec.SharedBenchmarkData,
+    feature_space: ec.SharedFeatureSpace,
+) -> ec.LeastSquaresExperimentData:
+    return ec.retarget_experiment_data(cfg, data, benchmark, feature_space)
 
 
 def run_experiment(

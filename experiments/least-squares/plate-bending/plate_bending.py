@@ -13,7 +13,8 @@ from __future__ import annotations
 import math
 import sys
 import time
-from dataclasses import dataclass, field
+import warnings
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -30,6 +31,7 @@ from ls_common import (  # noqa: E402
     build_quadrature_rule,
     clear_cuda_cache,
     generate_features,
+    iter_point_batches,
     load_config_defaults,
     plot_error_summary,
     print_aligned_markdown_table,
@@ -41,7 +43,10 @@ from ls_common import (  # noqa: E402
 from rfm_core import (  # noqa: E402
     RitzProjectedFeatures,
     build_ritz_projected_features,
-    relu3_feature_data,
+    matched_spline_degree,
+    relu_power_feature_values_and_hessians,
+    saturation_index,
+    validate_activation_power,
 )
 from solvers import get_solver_spec, run_solver  # noqa: E402
 from system_backends import (  # noqa: E402
@@ -204,7 +209,29 @@ DEFAULT_SOLUTION = PlateSolution(
     ),
 )
 
-SOLUTIONS: dict[str, PlateSolution] = {"default": DEFAULT_SOLUTION}
+# --- non-polynomial clamped solution: w = sin^2(pi x1) sin^2(pi x2) -------
+#
+# The default deflection is a polynomial of total degree eight, so a
+# rho_k dictionary whose polynomial supplement spans P_k reproduces it (and its
+# moment, of degree six) exactly once k is large enough.  That is a genuine
+# property of the space, but it makes the deflection floor measure polynomial
+# reproduction rather than ridge approximation: at k = 7 the moment error drops
+# to 3e-15 and the plate's primary metric stops measuring convergence at all.
+# This solution is analytic and not a polynomial, so it keeps every study
+# meaningful at every k, and it is what ``defaults.json`` selects.  Both traces
+# vanish: sin^2(pi t) and its derivative pi sin(2 pi t) are zero at t = 0 and
+# t = 1.
+
+
+TRIG_SOLUTION = PlateSolution(
+    deflection=lambda x: torch.sin(math.pi * x[:, 0]).square()
+    * torch.sin(math.pi * x[:, 1]).square(),
+)
+
+SOLUTIONS: dict[str, PlateSolution] = {
+    "default": DEFAULT_SOLUTION,
+    "trig": TRIG_SOLUTION,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -224,17 +251,19 @@ class LeastSquaresConfig:
     Q_train: int = 4 * 1001
     Q_test: int = 128**2
     sampling_method: str = "mc"
+    activation_power: int = 7
+    ritz_degree: int = 7
     ritz_ratio: float = 2.0
     projection_samples: int | None = None
     coefficient_budget: float = math.inf
-    ridge_lambda: float = 1.0e-7
+    ridge_lambda: float = 1.0e-12
     manufactured_solution: str = "default"
-    direct_rcond: float = 1.0e-8
+    direct_rcond: float = 1.0e-12
     system_backend: str = "direct"
     direct_solver: str = "streaming_tsqr"
     direct_batch_size: int = 1_024
     direct_qr_block_size: int = 64
-    assembly_batch_size: int = 5_000
+    evaluation_batch_size: int = 4_096
     algorithms_to_run: list[str] = field(
         default_factory=lambda: ["ball", "ridge", "tsvd"]
     )
@@ -257,6 +286,11 @@ def validate_config(cfg: LeastSquaresConfig) -> None:
         raise ValueError("Config.h must be positive.")
     if cfg.N_m <= 0 or cfg.N_u <= 0:
         raise ValueError("Config.N_m and Config.N_u must be positive.")
+    # The moment-deflection graph norm carries two derivatives, so the
+    # training-generalization argument needs rho_k in W^{3,inf}.
+    validate_activation_power(cfg.activation_power, sobolev_order=2)
+    if cfg.ritz_degree < 3:
+        raise ValueError("Config.ritz_degree must be at least 3.")
     if cfg.ritz_ratio < 1.0:
         raise ValueError("Config.ritz_ratio must be at least one.")
     if cfg.projection_samples is not None and cfg.projection_samples <= 0:
@@ -277,8 +311,8 @@ def validate_config(cfg: LeastSquaresConfig) -> None:
         )
     if cfg.direct_batch_size <= 0 or cfg.direct_qr_block_size <= 0:
         raise ValueError("Config batch sizes must be positive.")
-    if cfg.assembly_batch_size <= 0:
-        raise ValueError("Config.assembly_batch_size must be positive.")
+    if cfg.evaluation_batch_size <= 0:
+        raise ValueError("Config.evaluation_batch_size must be positive.")
     if cfg.manufactured_solution not in SOLUTIONS:
         raise ValueError(
             f"Unknown manufactured_solution='{cfg.manufactured_solution}'. "
@@ -323,6 +357,7 @@ class AlgorithmResult:
     w_h2_error: float = float("nan")
     M_hdivdiv_error: float = float("nan")
     coefficient_ball_active: bool = False
+    coefficient_norm: float = float("nan")
     algorithm: str = ""
     hyperparameter: float = float("nan")
 
@@ -351,11 +386,18 @@ class SharedFeatureSpace:
     theta_m: torch.Tensor
     theta_w: torch.Tensor
     projected_w: RitzProjectedFeatures
+    activation_power: int = 3
 
 
 @dataclass(frozen=True)
 class FeatureEvaluationData:
-    """All tensors needed to evaluate coefficient-based methods."""
+    """All tensors needed to evaluate coefficient-based methods.
+
+    Only per-point exact data and the feature *descriptions* are held; the
+    dictionary and Ritz bases are re-evaluated in blocks by
+    :func:`evaluate_feature_result`, so nothing of size ``Q_test * N`` is
+    stored.
+    """
 
     x_test: torch.Tensor
     w_test: torch.Tensor
@@ -363,9 +405,8 @@ class FeatureEvaluationData:
     theta_m: torch.Tensor
     projected_w: RitzProjectedFeatures
     compliance_voigt: torch.Tensor
-    assembly_batch_size: int
-    xi_m_test: torch.Tensor
-    psi_u_test: torch.Tensor
+    activation_power: int
+    evaluation_batch_size: int
     u_exact_test: torch.Tensor
     M_exact_test: torch.Tensor
     u_grad_exact_test: torch.Tensor
@@ -401,16 +442,14 @@ class LeastSquaresExperimentData:
 # ---------------------------------------------------------------------------
 
 
-def eval_features(x: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
-    """Evaluate the raw ReLU-cubic features."""
+def eval_features_and_hessians(
+    x: torch.Tensor, theta: torch.Tensor, power: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Evaluate ``rho_power`` values and Hessian components (11, 22, 12)."""
 
-    return relu3_feature_data(x, theta, hessian_components=HESSIAN_COMPONENTS)[0]
-
-
-def eval_feature_hessians(x: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
-    """Evaluate Hessian components (11, 22, 12) of ReLU-cubic features."""
-
-    return relu3_feature_data(x, theta, hessian_components=HESSIAN_COMPONENTS)[2]
+    return relu_power_feature_values_and_hessians(
+        x, theta, power, hessian_components=HESSIAN_COMPONENTS
+    )
 
 
 def build_shared_benchmark(
@@ -460,6 +499,8 @@ def build_shared_benchmark(
 def build_shared_feature_space(
     N_m: int,
     N_u: int,
+    activation_power: int = 3,
+    ritz_degree: int = 3,
     ritz_ratio: float = 2.0,
     projection_samples: int | None = None,
     projection_seed: int = PROJECTION_SEED,
@@ -468,13 +509,20 @@ def build_shared_feature_space(
 
     The hidden parameters are deterministic; only the Monte Carlo rule that
     discretizes the projection inner product depends on ``projection_seed``.
+
+    The clamped auxiliary space removes two boundary layers per face, so it has
+    zero trace and zero normal derivative at any ``ritz_degree``.  Its
+    saturation index ``ritz_degree + 1`` must stay at or above the dictionary's
+    ``s_cap(2) = (2*activation_power + 3)/2``.
     """
 
-    theta_m = generate_features(N_m, FEATURE_DIM)
-    theta_w = generate_features(N_u, FEATURE_DIM)
+    validate_activation_power(activation_power, sobolev_order=2)
+    theta_m = generate_features(N_m, FEATURE_DIM, activation_power)
+    theta_w = generate_features(N_u, FEATURE_DIM, activation_power)
     return SharedFeatureSpace(
         theta_m=theta_m,
         theta_w=theta_w,
+        activation_power=activation_power,
         projected_w=build_ritz_projected_features(
             theta_w,
             sobolev_order=2,
@@ -482,6 +530,8 @@ def build_shared_feature_space(
                 N_u + 1,
                 int(math.ceil(ritz_ratio * (N_u + 1))),
             ),
+            power=activation_power,
+            degree=ritz_degree,
             quadrature_samples=projection_samples,
             quadrature_seed=projection_seed,
         ),
@@ -491,7 +541,7 @@ def build_shared_feature_space(
 def build_feature_evaluation_data(
     benchmark: SharedBenchmarkData,
     feature_space: SharedFeatureSpace,
-    assembly_batch_size: int,
+    evaluation_batch_size: int,
 ) -> FeatureEvaluationData:
     """Build the shared evaluation tensors for coefficient-based methods."""
 
@@ -502,12 +552,8 @@ def build_feature_evaluation_data(
         theta_m=feature_space.theta_m,
         projected_w=feature_space.projected_w,
         compliance_voigt=benchmark.compliance_voigt,
-        assembly_batch_size=assembly_batch_size,
-        xi_m_test=eval_features(benchmark.x_test, feature_space.theta_m),
-        psi_u_test=feature_space.projected_w.evaluate(
-            benchmark.x_test,
-            hessian_components=HESSIAN_COMPONENTS,
-        )[0],
+        activation_power=feature_space.activation_power,
+        evaluation_batch_size=evaluation_batch_size,
         u_exact_test=benchmark.u_exact_test,
         M_exact_test=benchmark.M_exact_test,
         u_grad_exact_test=benchmark.u_grad_exact_test,
@@ -570,8 +616,9 @@ def _weighted_feature_data(
     x = benchmark.x_int[start:stop]
     weights = benchmark.w_int[start:stop]
     body_force = benchmark.f_int[start:stop]
-    xi_m = eval_features(x, feature_space.theta_m)
-    hess_m = eval_feature_hessians(x, feature_space.theta_m)
+    xi_m, hess_m = eval_features_and_hessians(
+        x, feature_space.theta_m, feature_space.activation_power
+    )
     hess_u = feature_space.projected_w.evaluate(
         x,
         hessian_components=HESSIAN_COMPONENTS,
@@ -728,52 +775,6 @@ def assemble_streaming_gram_design(
 # ---------------------------------------------------------------------------
 
 
-def compute_coefficient_residual_norms(
-    data: FeatureEvaluationData,
-    moment_coeffs: torch.Tensor,
-    deflection_coeffs: torch.Tensor,
-) -> tuple[float, float]:
-    """Evaluate continuous residual norms on the deterministic test rule."""
-
-    if not torch.isfinite(moment_coeffs).all() or not torch.isfinite(deflection_coeffs).all():
-        return float("nan"), float("nan")
-
-    moment_blocks = moment_coeffs.reshape(-1, 3)
-    constitutive_sq = 0.0
-    equilibrium_sq = 0.0
-
-    with torch.no_grad():
-        for start in range(0, data.x_test.shape[0], data.assembly_batch_size):
-            end = min(start + data.assembly_batch_size, data.x_test.shape[0])
-            xb = data.x_test[start:end]
-            wb = data.w_test[start:end]
-            fb = data.f_test[start:end]
-
-            xi_m_batch = eval_features(xb, data.theta_m)
-            hess_m_batch = eval_feature_hessians(xb, data.theta_m)
-            hess_psi_batch = data.projected_w.evaluate(
-                xb,
-                hessian_components=HESSIAN_COMPONENTS,
-            )[2]
-
-            M_h = xi_m_batch @ moment_blocks
-            hess_u = torch.einsum("qfj,f->qj", hess_psi_batch, deflection_coeffs)
-            r_c = M_h @ data.compliance_voigt.T + hess_u
-            r_e = (
-                hess_m_batch[:, :, 0] @ moment_blocks[:, 0]
-                + hess_m_batch[:, :, 1] @ moment_blocks[:, 1]
-                + 2.0 * (hess_m_batch[:, :, 2] @ moment_blocks[:, 2])
-                + fb
-            )
-
-            constitutive_sq += (
-                wb * (FROBENIUS_WEIGHT * r_c.square()).sum(dim=1)
-            ).sum().item()
-            equilibrium_sq += (wb * r_e.square()).sum().item()
-
-    return constitutive_sq**0.5, equilibrium_sq**0.5
-
-
 def evaluate_feature_result(
     name: str,
     wall_time: float,
@@ -781,43 +782,96 @@ def evaluate_feature_result(
     deflection_coeffs: torch.Tensor,
     data: FeatureEvaluationData,
 ) -> AlgorithmResult:
-    """Evaluate one coefficient-based method and package the metrics."""
+    """Evaluate one coefficient-based method and package the metrics.
 
-    r_c, r_e = compute_coefficient_residual_norms(data, moment_coeffs, deflection_coeffs)
-    M_h = data.xi_m_test @ moment_coeffs.reshape(-1, 3)
-    u_h = data.psi_u_test @ deflection_coeffs
-    abs_u = torch.sqrt((data.w_test * (u_h - data.u_exact_test).square()).sum()).item()
-    abs_M = torch.sqrt(
-        (
-            data.w_test
-            * (FROBENIUS_WEIGHT * (M_h - data.M_exact_test).square()).sum(dim=1)
-        ).sum()
-    ).item()
+    Every metric is a weighted sum over the deterministic test rule, so the
+    test points are consumed in blocks of ``data.evaluation_batch_size``: the
+    moment dictionary, the Ritz deflection basis and their second derivatives
+    are never materialized at the full ``Q_test x N`` size.  One pass now
+    serves both the field errors and the continuous residual norms, which
+    previously evaluated the same bases twice.
+    """
 
-    deflection_values, deflection_gradients, deflection_hessians = data.projected_w.evaluate(
-        data.x_test,
-        hessian_components=HESSIAN_COMPONENTS,
+    finite = bool(
+        torch.isfinite(moment_coeffs).all() and torch.isfinite(deflection_coeffs).all()
     )
-    w_h = deflection_values @ deflection_coeffs
-    grad_w_h = torch.einsum("qfs,f->qs", deflection_gradients, deflection_coeffs)
-    hess_w_h = torch.einsum("qfj,f->qj", deflection_hessians, deflection_coeffs)
-    gradient_error_sq = (
-        data.w_test * (grad_w_h - data.u_grad_exact_test).square().sum(dim=1)
-    ).sum().item()
-    hessian_error_sq = (
-        data.w_test
-        * (FROBENIUS_WEIGHT * (hess_w_h - data.u_hess_exact_test).square()).sum(dim=1)
-    ).sum().item()
-    w_l2_error_sq = (data.w_test * (w_h - data.u_exact_test).square()).sum().item()
+    moment_blocks = moment_coeffs.reshape(-1, 3)
+    squared: dict[str, float] = dict.fromkeys(
+        ("w_l2", "w_gradient", "w_hessian", "moment_l2", "constitutive", "equilibrium"),
+        float("nan") if not finite else 0.0,
+    )
+
+    if finite:
+        with torch.no_grad():
+            for start, stop in iter_point_batches(
+                data.x_test.shape[0],
+                data.evaluation_batch_size,
+            ):
+                x = data.x_test[start:stop]
+                w = data.w_test[start:stop]
+                body_force = data.f_test[start:stop]
+
+                xi_m, hess_m = eval_features_and_hessians(
+                    x, data.theta_m, data.activation_power
+                )
+                psi, psi_gradients, psi_hessians = data.projected_w.evaluate(
+                    x,
+                    hessian_components=HESSIAN_COMPONENTS,
+                )
+
+                M_h = xi_m @ moment_blocks
+                w_h = psi @ deflection_coeffs
+                grad_w_h = torch.einsum("qfs,f->qs", psi_gradients, deflection_coeffs)
+                hess_w_h = torch.einsum("qfj,f->qj", psi_hessians, deflection_coeffs)
+
+                r_c = M_h @ data.compliance_voigt.T + hess_w_h
+                r_e = (
+                    hess_m[:, :, 0] @ moment_blocks[:, 0]
+                    + hess_m[:, :, 1] @ moment_blocks[:, 1]
+                    + 2.0 * (hess_m[:, :, 2] @ moment_blocks[:, 2])
+                    + body_force
+                )
+
+                squared["w_l2"] += (
+                    w * (w_h - data.u_exact_test[start:stop]).square()
+                ).sum().item()
+                squared["w_gradient"] += (
+                    w
+                    * (grad_w_h - data.u_grad_exact_test[start:stop]).square().sum(dim=1)
+                ).sum().item()
+                squared["w_hessian"] += (
+                    w
+                    * (
+                        FROBENIUS_WEIGHT
+                        * (hess_w_h - data.u_hess_exact_test[start:stop]).square()
+                    ).sum(dim=1)
+                ).sum().item()
+                squared["moment_l2"] += (
+                    w
+                    * (
+                        FROBENIUS_WEIGHT
+                        * (M_h - data.M_exact_test[start:stop]).square()
+                    ).sum(dim=1)
+                ).sum().item()
+                squared["constitutive"] += (
+                    w * (FROBENIUS_WEIGHT * r_c.square()).sum(dim=1)
+                ).sum().item()
+                squared["equilibrium"] += (w * r_e.square()).sum().item()
+
+    r_c_norm = math.sqrt(squared["constitutive"])
+    r_e_norm = math.sqrt(squared["equilibrium"])
+    abs_M = math.sqrt(squared["moment_l2"])
     return AlgorithmResult(
         name=name,
-        r_c=r_c,
-        r_e=r_e,
-        abs_u=abs_u,
+        r_c=r_c_norm,
+        r_e=r_e_norm,
+        abs_u=math.sqrt(squared["w_l2"]),
         abs_M=abs_M,
         wall_time=wall_time,
-        w_h2_error=math.sqrt(w_l2_error_sq + gradient_error_sq + hessian_error_sq),
-        M_hdivdiv_error=math.hypot(abs_M, r_e),
+        w_h2_error=math.sqrt(
+            squared["w_l2"] + squared["w_gradient"] + squared["w_hessian"]
+        ),
+        M_hdivdiv_error=math.hypot(abs_M, r_e_norm),
     )
 
 
@@ -833,6 +887,14 @@ def print_result_summary(result: AlgorithmResult) -> None:
         f"equilibrium={result.r_e:.2e}, "
         f"rank={result.rank}/{result.columns}, "
         f"cond≈{result.condition_estimate:.2e}"
+    )
+    # ||c|| growing while the graph error stalls is the signature of a
+    # saturated dictionary: the retained small singular directions carry
+    # coefficient norm but no approximation power.
+    print(
+        f"    coefficients: ||c||_2={result.coefficient_norm:.3e}, "
+        f"B=||c||_2*sqrt(m)={result.coefficient_norm * math.sqrt(max(result.columns, 1)):.3e}, "
+        f"ball active={result.coefficient_ball_active}"
     )
 
 
@@ -926,6 +988,7 @@ def run_algorithm(
         w_h2_error=evaluated.w_h2_error,
         M_hdivdiv_error=evaluated.M_hdivdiv_error,
         coefficient_ball_active=output.regularization_active,
+        coefficient_norm=float(torch.linalg.vector_norm(z)),
         algorithm=spec.id,
         hyperparameter=output.hyperparameter,
     )
@@ -1014,12 +1077,36 @@ def prepare_experiment(
         eval_data=build_feature_evaluation_data(
             benchmark,
             feature_space,
-            cfg.assembly_batch_size,
+            cfg.evaluation_batch_size,
         ),
         source_rows=source_rows,
         preparation_time=preparation_time,
         system_backend=cfg.system_backend,
         direct_solver=cfg.direct_solver,
+    )
+
+
+def retarget_experiment_data(
+    cfg: LeastSquaresConfig,
+    data: LeastSquaresExperimentData,
+    benchmark: SharedBenchmarkData,
+    feature_space: SharedFeatureSpace,
+) -> LeastSquaresExperimentData:
+    """Point an assembled residual system at a different test rule.
+
+    Only ``eval_data`` depends on the test quadrature; the residual system and
+    its spectral factorization depend on the training points alone.  A run that
+    selects its hyperparameter on validation points and then reports on test
+    points therefore assembles and factorizes once, not twice.
+    """
+
+    return replace(
+        data,
+        eval_data=build_feature_evaluation_data(
+            benchmark,
+            feature_space,
+            cfg.evaluation_batch_size,
+        ),
     )
 
 
@@ -1043,7 +1130,8 @@ def run_experiment(
     print(
         f"Config: h={cfg.h}, N_m={cfg.N_m}, N_u={cfg.N_u}, "
         f"Q_train={cfg.Q_train}, Q_test={cfg.Q_test}, "
-        f"activation=ReLU^3, ritz_ratio={cfg.ritz_ratio}, "
+        f"activation=ReLU^{cfg.activation_power}, "
+        f"ritz_degree={cfg.ritz_degree}, ritz_ratio={cfg.ritz_ratio}, "
         f"coefficient_budget={cfg.coefficient_budget}, "
         f"ridge_lambda={cfg.ridge_lambda:.2e}, "
         f"direct_rcond={cfg.direct_rcond:.2e}, "
@@ -1052,6 +1140,17 @@ def run_experiment(
         f"sampling={cfg.sampling_method}"
     )
     print(f"Algorithms: {selected_algorithm_ids}")
+    required_degree = matched_spline_degree(FEATURE_DIM, cfg.activation_power)
+    if cfg.ritz_degree < required_degree:
+        warnings.warn(
+            f"ritz_degree={cfg.ritz_degree} saturates at Sobolev index "
+            f"{cfg.ritz_degree + 1}, below the dictionary's "
+            f"s_cap({FEATURE_DIM})="
+            f"{saturation_index(FEATURE_DIM, cfg.activation_power):g}. "
+            f"The Ritz space, not the dictionary, will limit the deflection "
+            f"error; use ritz_degree >= {required_degree}.",
+            RuntimeWarning,
+        )
 
     D = compute_bending_stiffness(cfg.E, cfg.nu, cfg.h)
     print(f"Material: E={cfg.E}, nu={cfg.nu}, h={cfg.h}, D={D:.4f}")
@@ -1076,6 +1175,8 @@ def run_experiment(
             feature_space = build_shared_feature_space(
                 N_m=cfg.N_m,
                 N_u=cfg.N_u,
+                activation_power=cfg.activation_power,
+                ritz_degree=cfg.ritz_degree,
                 ritz_ratio=cfg.ritz_ratio,
                 projection_samples=cfg.projection_samples,
             )
@@ -1085,6 +1186,7 @@ def run_experiment(
         print(
             "Ritz projection: "
             f"K={feature_space.projected_w.space.dimension}, "
+            f"degree={feature_space.projected_w.degree}, "
             f"samples={feature_space.projected_w.quadrature_samples}, "
             f"residual={feature_space.projected_w.gram_residual:.2e}, "
             f"boundary={feature_space.projected_w.boundary_residual():.2e}"

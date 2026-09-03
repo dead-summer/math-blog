@@ -67,7 +67,7 @@ PROBLEM = ec.ElasticityProblem(
         "hu_zhang": hu_zhang_displacement,
         "div_free": div_free_displacement,
     },
-    default_solution="div_free",
+    default_solution="hu_zhang",
     use_trace_constraint=True,
     output_dir=OUTPUT_DIR,
 )
@@ -78,7 +78,7 @@ class LeastSquaresConfig(ec.LeastSquaresConfig):
     """3D linear elasticity defaults."""
 
     Q_test: int = 32**3
-    manufactured_solution: str = "div_free"
+    manufactured_solution: str = "hu_zhang"
     direct_solver: str = "streaming_tsqr"
 
 
@@ -102,6 +102,15 @@ def prepare_experiment(
     feature_space: ec.SharedFeatureSpace,
 ) -> ec.LeastSquaresExperimentData:
     return ec.prepare_experiment(PROBLEM, cfg, benchmark, feature_space)
+
+
+def retarget_experiment_data(
+    cfg: LeastSquaresConfig,
+    data: ec.LeastSquaresExperimentData,
+    benchmark: ec.SharedBenchmarkData,
+    feature_space: ec.SharedFeatureSpace,
+) -> ec.LeastSquaresExperimentData:
+    return ec.retarget_experiment_data(cfg, data, benchmark, feature_space)
 
 
 def run_experiment(

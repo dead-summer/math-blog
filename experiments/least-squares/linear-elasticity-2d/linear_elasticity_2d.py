@@ -34,17 +34,35 @@ def hu_zhang_displacement(material: ec.Material) -> ec.DisplacementFn:
     return displacement
 
 
-def div_free_displacement(material: ec.Material) -> ec.DisplacementFn:
-    """A divergence-free manufactured displacement with zero boundary trace."""
+def grieshaber_li_yang_displacement(material: ec.Material) -> ec.DisplacementFn:
+    """Near-incompressible benchmark of Grieshaber et al. and Li--Yang.
+
+    Li and Yang, CMAME 2020, Example 1, use this zero-trace displacement with
+    ``mu=1`` and varying ``lambda``.  Its first summand is divergence-free and
+    the second is scaled by ``1 / (1 + lambda)``, so the volumetric stress
+    remains uniformly bounded as ``lambda`` grows.
+    """
+
+    lam = material.lam
 
     def displacement(x: torch.Tensor) -> torch.Tensor:
         x1, x2 = x[:, 0], x[:, 1]
-        pi = math.pi
-        h1 = torch.sin(2.0 * pi * x1)
-        h2 = torch.sin(2.0 * pi * x2)
-        g1 = (1.0 - torch.cos(2.0 * pi * x1)) / (2.0 * pi)
-        g2 = (1.0 - torch.cos(2.0 * pi * x2)) / (2.0 * pi)
-        return torch.stack([-g1 * h2, h1 * g2], dim=1)
+        perturbation = (
+            torch.sin(math.pi * x1)
+            * torch.sin(math.pi * x2)
+            / (1.0 + lam)
+        )
+        u1 = (
+            torch.sin(2.0 * math.pi * x2)
+            * (-1.0 + torch.cos(2.0 * math.pi * x1))
+            + perturbation
+        )
+        u2 = (
+            torch.sin(2.0 * math.pi * x1)
+            * (1.0 - torch.cos(2.0 * math.pi * x2))
+            + perturbation
+        )
+        return torch.stack([u1, u2], dim=1)
 
     return displacement
 
@@ -55,7 +73,7 @@ PROBLEM = ec.ElasticityProblem(
     material_law=ec.isotropic_material,
     solutions={
         "hu_zhang": hu_zhang_displacement,
-        "div_free": div_free_displacement,
+        "grieshaber_li_yang": grieshaber_li_yang_displacement,
     },
     default_solution="hu_zhang",
     use_trace_constraint=True,
@@ -88,6 +106,15 @@ def prepare_experiment(
     feature_space: ec.SharedFeatureSpace,
 ) -> ec.LeastSquaresExperimentData:
     return ec.prepare_experiment(PROBLEM, cfg, benchmark, feature_space)
+
+
+def retarget_experiment_data(
+    cfg: LeastSquaresConfig,
+    data: ec.LeastSquaresExperimentData,
+    benchmark: ec.SharedBenchmarkData,
+    feature_space: ec.SharedFeatureSpace,
+) -> ec.LeastSquaresExperimentData:
+    return ec.retarget_experiment_data(cfg, data, benchmark, feature_space)
 
 
 def run_experiment(
