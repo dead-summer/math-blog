@@ -1,0 +1,122 @@
+[
+  {
+    "model": "elasticity-2d",
+    "activation_power": 3,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-06,
+    "rank": 2079,
+    "coefficient_norm": 31.37716340604213,
+    "budget": 2219.5878046567527,
+    "scalar_graph": 0.00013462658493309398,
+    "tensor_graph": 0.0006923555197925176
+  },
+  {
+    "model": "elasticity-2d",
+    "activation_power": 3,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-08,
+    "rank": 4159,
+    "coefficient_norm": 121.1634558195867,
+    "budget": 8570.976459122336,
+    "scalar_graph": 0.00011055947455608037,
+    "tensor_graph": 0.0005952881917550496
+  },
+  {
+    "model": "elasticity-2d",
+    "activation_power": 3,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-10,
+    "rank": 4749,
+    "coefficient_norm": 4006.537891746537,
+    "budget": 283418.3105826367,
+    "scalar_graph": 0.00011250011026989819,
+    "tensor_graph": 0.0006734865434406887
+  },
+  {
+    "model": "elasticity-2d",
+    "activation_power": 3,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-12,
+    "rank": 4863,
+    "coefficient_norm": 162022.5806791435,
+    "budget": 11461308.324805135,
+    "scalar_graph": 0.00011213211173657029,
+    "tensor_graph": 0.001810151537360397
+  },
+  {
+    "model": "elasticity-2d",
+    "activation_power": 3,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-14,
+    "rank": 4888,
+    "coefficient_norm": 4099805.7894886765,
+    "budget": 290015984.36581117,
+    "scalar_graph": 0.00011233182333352807,
+    "tensor_graph": 0.06893847216990769
+  },
+  {
+    "model": "elasticity-2d",
+    "activation_power": 7,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-06,
+    "rank": 185,
+    "coefficient_norm": 11.961924911806165,
+    "budget": 846.174088807278,
+    "scalar_graph": 0.002979505186324942,
+    "tensor_graph": 0.010862102137321661
+  },
+  {
+    "model": "elasticity-2d",
+    "activation_power": 7,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-08,
+    "rank": 355,
+    "coefficient_norm": 16.810538491679925,
+    "budget": 1189.1599550602025,
+    "scalar_graph": 4.415417675307833e-05,
+    "tensor_graph": 9.50568216938949e-05
+  },
+  {
+    "model": "elasticity-2d",
+    "activation_power": 7,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-10,
+    "rank": 835,
+    "coefficient_norm": 19.891450161505443,
+    "budget": 1407.1004323773002,
+    "scalar_graph": 1.4921669314141994e-07,
+    "tensor_graph": 6.260072338519265e-07
+  },
+  {
+    "model": "elasticity-2d",
+    "activation_power": 7,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-12,
+    "rank": 1952,
+    "coefficient_norm": 21.626084822575184,
+    "budget": 1529.8066786182808,
+    "scalar_graph": 2.204336386096624e-09,
+    "tensor_graph": 9.156432600758506e-09
+  },
+  {
+    "model": "elasticity-2d",
+    "activation_power": 7,
+    "N": 1000,
+    "columns": 5004,
+    "rcond": 1e-14,
+    "rank": 3649,
+    "coefficient_norm": 35.93742938399876,
+    "budget": 2542.1762623729314,
+    "scalar_graph": 3.913983098204916e-10,
+    "tensor_graph": 2.2915589806119775e-09
+  }
+]

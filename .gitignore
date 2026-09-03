@@ -29,6 +29,14 @@ yarn-error.log*
 # Python cache
 __pycache__/
 
+# Least-squares campaign runtime and historical snapshots
+/results-remote/
+/experiments/least-squares/results-archive/
+/experiments/least-squares/results-remote/
+/experiments/least-squares/results/logs/
+/experiments/least-squares/approximation-floors/results/logs/
+/experiments/least-squares/approximation-floors/results/*-stale.csv
+
 # Local scratch content
 test/
 
