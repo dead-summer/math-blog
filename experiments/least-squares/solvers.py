@@ -3,22 +3,41 @@
 Every algorithm consumes one shared spectral factor of the weighted residual
 system and returns physical coefficients plus compact diagnostics.  The
 factor comes either from a direct SVD of ``A`` or an eigendecomposition of the
-streamed normal equations ``G=A.T@A``.  Three algorithms are registered:
+streamed normal equations ``G=A.T@A``.  All three registered algorithms are
+the same spectral filter ``c(mu) = V_r (S_r^2 + mu I)^-1 S_r U_r^T b`` over the
+retained directions; they differ only in how ``mu`` is fixed:
 
 ``ball``
     The paper's physical-coefficient ball solver: minimize ``||Ac-b||``
     subject to ``||c||_2 <= B / sqrt(m)`` where ``B`` is the coefficient
-    budget and ``m`` the column count.
+    budget and ``m`` the column count.  KKT fixes ``mu``: zero when the
+    truncated minimum-norm solution already lies in the ball, otherwise the
+    unique positive root of the secular equation ``||c(mu)|| = B / sqrt(m)``.
 ``ridge``
-    Tikhonov regularization with ``lam = lambda_rel * sigma_max``; the
-    hyperparameter is the relative level ``lambda_rel``.
+    Tikhonov regularization with ``lam = lambda_rel * sigma_max``, i.e. a
+    fixed ``mu = lam^2`` and no truncation; the hyperparameter is the relative
+    level ``lambda_rel``.
 ``tsvd``
-    Truncated-SVD minimum-norm solution; the hyperparameter is the relative
-    cutoff ``rcond``.
+    Truncated-SVD minimum-norm solution, i.e. ``mu = 0``; the hyperparameter
+    is the relative cutoff ``rcond``.
+
+Only ``ball`` has its ``mu`` determined by the constraint set that the
+total-error theorem analyses, so the paper reports ``ball`` alone; the other
+two stay registered as same-family probes.  ``tsvd`` is also the ``B = inf``
+endpoint of the ball budget ladder, hence already inside the budget selection.
+See ``README.md``, section 实际求解的离散问题.
 
 All three share one cached factor, so hyperparameter ladders and algorithm
 comparisons cost a single SVD/eigendecomposition.  Neither backend scales the
 columns; coefficient-ball radii therefore retain their physical meaning.
+
+The useful end of every ladder depends on the activation power.  A saturated
+dictionary (low ``k`` relative to the solution's smoothness) has no signal in
+its small singular directions, so tightening ``rcond`` past roughly ``1e-8``
+only inflates ``||c||`` and makes the off-sample equilibrium residual worse.  An
+unsaturated dictionary keeps real information down to the arithmetic limit and
+needs ``rcond`` near ``1e-12``.  The ladders below therefore span both regimes
+and rely on the validation rule to pick the right end.
 """
 
 from __future__ import annotations
@@ -122,7 +141,7 @@ SOLVERS: dict[str, SolverSpec] = {
             label="LS(ridge)",
             hyperparameter_name="lambda_rel",
             config_field="ridge_lambda",
-            default_ladder=(1.0e-8, 1.0e-7, 1.0e-6, 1.0e-5),
+            default_ladder=(1.0e-14, 1.0e-12, 1.0e-10, 1.0e-8, 1.0e-6, 1.0e-5),
             solve=_solve_ridge,
         ),
         SolverSpec(
@@ -130,7 +149,7 @@ SOLVERS: dict[str, SolverSpec] = {
             label="LS(tsvd)",
             hyperparameter_name="rcond",
             config_field="direct_rcond",
-            default_ladder=(1.0e-6, 1.0e-7, 1.0e-8),
+            default_ladder=(1.0e-6, 1.0e-8, 1.0e-10, 1.0e-12, 1.0e-14),
             solve=_solve_tsvd,
         ),
     )
@@ -160,7 +179,16 @@ def get_factor(
     matrix: torch.Tensor | GramResidualDesign,
     rhs: torch.Tensor | None = None,
 ) -> LeastSquaresSpectralFactor:
-    """Return a cached direct-SVD or Gram-eigh spectral factor."""
+    """Return a cached direct-SVD or Gram-eigh spectral factor.
+
+    The direct path *consumes* ``matrix``: the SVD overwrites it in place and
+    its storage is then released.  The factor supersedes it -- every downstream
+    solve reads only the cached spectral data -- and keeping both alive would
+    hold three ``m x m`` blocks at once, which is the dominant term once the
+    reduced system is large.  A second factorization of the same matrix against
+    a different right-hand side is therefore an error rather than a silent
+    read of destroyed data.
+    """
 
     if isinstance(matrix, GramResidualDesign):
         if rhs is not None:
@@ -170,10 +198,17 @@ def get_factor(
         raise ValueError("rhs is required for a direct residual matrix")
 
     cached = getattr(matrix, "_ls_svd_factor", None)
-    if cached is not None and cached[0] is rhs:
-        return cached[1]
+    if cached is not None:
+        cached_rhs, cached_factor = cached
+        if cached_rhs is not rhs:
+            raise ValueError(
+                "This residual matrix was already consumed by a factorization "
+                "with a different right-hand side; assemble a new system."
+            )
+        return cached_factor
     factor = factorize_l2_ball_least_squares(matrix.numpy(), rhs.numpy())
     matrix._ls_svd_factor = (rhs, factor)
+    matrix.set_(torch.empty(0, dtype=matrix.dtype, device=matrix.device))
     return factor
 
 

@@ -1,12 +1,21 @@
 """Shared numerical primitives for the least-squares linearized-network experiments.
 
 The module deliberately keeps the four model drivers free of activation-,
-projection-, and coefficient-solver details.  Features are ReLU cubics whose
-hidden parameters form a deterministic quasi-uniform tensor point set on the
-direction--bias domain ``S^{d-1} x [-c, c]``; no feature randomness remains.
-Essential boundary conditions are imposed by an empirical Sobolev--Ritz
-projection into tensor-product cubic B-spline spaces.  The output coefficients
-are constrained in their physical, unscaled Euclidean norm.
+projection-, and coefficient-solver details.  Features are ReLU powers
+``rho_k(t) = max(t, 0)^k`` whose hidden parameters form a deterministic
+quasi-uniform tensor point set on the direction--bias domain
+``S^{d-1} x [-c, c]``; no feature randomness remains.  Essential boundary
+conditions are imposed by an empirical Sobolev--Ritz projection into
+tensor-product B-spline spaces.  The output coefficients are constrained in
+their physical, unscaled Euclidean norm.
+
+The activation power ``k`` is the dictionary's single most important knob: the
+spherical Legendre coefficients of ``rho_k`` decay at rate
+``-(d + 2k + 1)/2``, so the dictionary saturates at Sobolev index
+``s_cap(d) = (d + 2k + 1)/2`` and approximates ``H^m`` at rate
+``N^{-(s_cap(d) - m)/d}``.  Every extra derivative in the error norm costs one
+factor ``N^{1/d}``, which is why graph-norm errors sit orders of magnitude above
+``L^2`` errors at fixed ``N``.
 """
 
 from __future__ import annotations
@@ -14,6 +23,7 @@ from __future__ import annotations
 import functools
 import itertools
 import math
+import os
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
@@ -30,6 +40,55 @@ ValueGradientTuple = tuple[torch.Tensor, torch.Tensor]
 
 GOLDEN_RATIO_CONJUGATE = (math.sqrt(5.0) - 1.0) / 2.0
 DEFAULT_BIAS_RANGE = 2.0
+DEFAULT_ACTIVATION_POWER = 3
+
+
+def validate_activation_power(power: int, sobolev_order: int = 1) -> int:
+    """Reject activation powers outside the range the analysis covers.
+
+    ``rho_k`` must be smooth enough for the graph norm in use: the training
+    generalization argument needs ``rho_k in W^(m+1,oo)``, and the paper states
+    its results for ``k >= 3``.
+    """
+
+    if not isinstance(power, (int, np.integer)) or isinstance(power, bool):
+        raise ValueError("activation power must be an integer")
+    minimum = max(3, sobolev_order + 1)
+    if power < minimum:
+        raise ValueError(
+            f"activation power must be at least {minimum} for Sobolev order "
+            f"{sobolev_order}; got {power}"
+        )
+    return int(power)
+
+
+def saturation_index(spatial_dimension: int, power: int) -> float:
+    """Dictionary saturation index ``s_cap(d) = (d + 2k + 1)/2``."""
+
+    return 0.5 * (spatial_dimension + 2 * power + 1)
+
+
+def approximation_rate(spatial_dimension: int, power: int, sobolev_order: int) -> float:
+    """Best-approximation rate exponent ``beta = (s_cap(d) - m)/d``.
+
+    The error of the quasi-uniform ``rho_power`` dictionary in ``H^m`` behaves
+    like ``N^{-beta}`` once the target is at least ``s_cap(d)``-smooth.
+    """
+
+    return (
+        saturation_index(spatial_dimension, power) - sobolev_order
+    ) / spatial_dimension
+
+
+def matched_spline_degree(spatial_dimension: int, power: int) -> int:
+    """Smallest spline degree whose saturation ``p+1`` covers ``s_cap(d)``.
+
+    Using a lower degree makes the auxiliary Ritz term dominate the total
+    error asymptotically, so the observed convergence order falls below
+    :func:`approximation_rate`.
+    """
+
+    return max(3, math.ceil(saturation_index(spatial_dimension, power)) - 1)
 
 
 def _circle_directions(count: int, rotation: float) -> np.ndarray:
@@ -69,45 +128,121 @@ def _total_degree_indices(spatial_dimension: int, degree: int) -> list[tuple[int
     return indices
 
 
-def _affine_cube_coefficients(
+def _affine_power_coefficients(
     direction: np.ndarray,
     bias: float,
+    power: int,
     multi_indices: list[tuple[int, ...]],
 ) -> np.ndarray:
-    """Coefficients of ``(direction @ x + bias)^3`` in a monomial basis."""
+    """Coefficients of ``(direction @ x + bias)^power`` in a monomial basis."""
 
     coefficients = []
     for alpha in multi_indices:
         alpha_degree = sum(alpha)
-        multinomial = math.factorial(3) / (
-            math.factorial(3 - alpha_degree)
+        multinomial = math.factorial(power) / (
+            math.factorial(power - alpha_degree)
             * math.prod(math.factorial(component) for component in alpha)
         )
         direction_factor = math.prod(
             direction[axis] ** exponent for axis, exponent in enumerate(alpha)
         )
         coefficients.append(
-            multinomial * bias ** (3 - alpha_degree) * direction_factor
+            multinomial * bias ** (power - alpha_degree) * direction_factor
         )
     return np.asarray(coefficients)
 
 
-@functools.lru_cache(maxsize=8)
-def _polynomial_supplement_parameters_cached(
-    spatial_dimension: int,
-    bias_range: float,
-) -> np.ndarray:
-    """Select globally positive ridge cubics spanning ``P_3 / constants``.
+def _monomial_box_gram_factor(multi_indices: list[tuple[int, ...]]) -> np.ndarray:
+    """Cholesky factor of the monomial Gram matrix on the unit box.
 
-    Cubes of affine forms span all polynomials of total degree at most three.
-    We choose a small, deterministic, well-conditioned subset by pivoted QR.
-    The separate constant feature supplies the one omitted polynomial degree
-    of freedom.
+    ``int_{[0,1]^d} x^alpha x^beta dx = prod_i 1 / (alpha_i + beta_i + 1)``, so
+    the factor turns monomial coefficient vectors into an isometric coordinate
+    system for ``L^2(Omega)``.  Selecting the supplement in that metric keeps
+    the retained ridge powers well separated as functions, which the raw
+    monomial coordinates fail to do once ``power`` is large.
     """
 
-    polynomial_dimension = math.comb(spatial_dimension + 3, 3)
+    size = len(multi_indices)
+    gram = np.empty((size, size), dtype=np.float64)
+    for row, alpha in enumerate(multi_indices):
+        for column, beta in enumerate(multi_indices):
+            gram[row, column] = math.prod(
+                1.0 / (a + b + 1.0) for a, b in zip(alpha, beta)
+            )
+    return scipy.linalg.cholesky(gram, lower=False)
+
+
+def _quadrature_box_isometry(
+    spatial_dimension: int,
+    power: int,
+    parameters: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``L^2(Omega)``-isometric coordinates of ridge powers, without monomials.
+
+    A tensor Gauss--Legendre rule with ``power + 1`` nodes per axis integrates
+    every product of two degree-``power`` polynomials on the box exactly, so
+    the weighted evaluation matrix ``sqrt(w_q) (omega_j . x_q + b_j)^power``
+    has exactly the Gram matrix that :func:`_monomial_box_gram_factor` builds
+    an isometry for.  Its columns therefore rank the candidates identically
+    under pivoted QR, which is invariant under the orthogonal change of
+    coordinates relating the two representations.
+
+    This route exists because the monomial one stops working in double
+    precision: the multinomial expansion of ``(omega . x + b)^power``
+    alternates in sign, and the tensor-product Hilbert Gram matrix loses
+    numerical positive definiteness, both once the total degree passes about
+    twelve.  Evaluating the affine form directly avoids both.
+
+    Returns the weighted evaluation matrix and the isometric coordinates of
+    the constant function, which are the square-rooted quadrature weights.
+    """
+
+    nodes, weights = np.polynomial.legendre.leggauss(power + 1)
+    nodes = 0.5 * (nodes + 1.0)
+    weights = 0.5 * weights
+    grids = np.meshgrid(*([nodes] * spatial_dimension), indexing="ij")
+    weight_grids = np.meshgrid(*([weights] * spatial_dimension), indexing="ij")
+    points = np.stack([grid.reshape(-1) for grid in grids], axis=1)
+    root_weights = np.sqrt(
+        np.prod(
+            np.stack([grid.reshape(-1) for grid in weight_grids], axis=1),
+            axis=1,
+        )
+    )
+    affine = (
+        points @ parameters[:, :spatial_dimension].T
+        + parameters[:, spatial_dimension]
+    )
+    return root_weights[:, None] * affine**power, root_weights
+
+
+@functools.lru_cache(maxsize=16)
+def _polynomial_supplement_parameters_cached(
+    spatial_dimension: int,
+    power: int,
+    bias_range: float,
+) -> np.ndarray:
+    """Select globally positive ridge powers spanning ``P_power / constants``.
+
+    ``power``-th powers of affine forms span all polynomials of total degree at
+    most ``power``.  We choose a small, deterministic, well-conditioned subset
+    by pivoted QR in the ``L^2(Omega)`` metric.  The separate constant feature
+    supplies the one omitted polynomial degree of freedom.
+    """
+
+    polynomial_dimension = math.comb(spatial_dimension + power, power)
     supplement_count = polynomial_dimension - 1
-    direction_count = 64 if spatial_dimension == 2 else 128
+    # The candidate pool only needs to be a small multiple of the number of
+    # retained polynomial directions.  The old ``8 * dimension`` pool with
+    # ``power + 2`` bias layers made the pivoted QR needlessly expensive in
+    # three dimensions (for ``d=3,k=9`` it factored a 220 x 19,360 matrix for
+    # every fresh Python process).  Four direction copies and five bias layers
+    # still leave an order-of-magnitude oversampling margin while keeping the
+    # deterministic pivot selection well conditioned.
+    direction_count = max(
+        64 if spatial_dimension == 2 else 128,
+        4 * polynomial_dimension,
+    )
     direction_builder = (
         _circle_directions
         if spatial_dimension == 2
@@ -115,44 +250,85 @@ def _polynomial_supplement_parameters_cached(
     )
     directions = direction_builder(direction_count, 0.37)
 
-    # Every candidate is strictly positive on [0,1]^d, hence its ReLU cubic
-    # is an ordinary affine cubic there.  Varying both direction and bias is
-    # essential: a single fixed-bias sphere does not span all of P_3.
-    root_dimension = math.sqrt(float(spatial_dimension))
-    margin = bias_range - root_dimension
-    candidate_biases = np.linspace(
-        root_dimension + 0.1 * margin,
-        root_dimension + 0.9 * margin,
-        5,
-    )
-    multi_indices = _total_degree_indices(spatial_dimension, degree=3)
+    # Every candidate is strictly positive on [0,1]^d, hence its ReLU power
+    # is an ordinary affine power there.  Varying both direction and bias is
+    # essential: a single fixed-bias sphere does not span all of P_power.
+    #
+    # The lower end of each direction's admissible bias interval is the exact
+    # per-direction threshold b_+(omega) = -sum_i min(omega_i, 0) rather than
+    # the direction-independent sqrt(d).  Biases just above b_+(omega) put the
+    # hyperplane against a corner of the box and so maximize the variation of
+    # (omega . x + b)^power over it; the resulting supplement is far better
+    # conditioned as a function basis (500x at d=2, 6600x at d=3, for
+    # power = 7).  A small offset keeps every candidate strictly degenerate.
+    corner_thresholds = -np.minimum(directions, 0.0).sum(axis=1)
+    bias_fractions = np.linspace(0.02, 0.9, 5)
+    multi_indices = _total_degree_indices(spatial_dimension, degree=power)
     candidate_parameters: list[np.ndarray] = []
     candidate_coefficients: list[np.ndarray] = []
-    for direction in directions:
-        for bias in candidate_biases:
+    for direction, threshold in zip(directions, corner_thresholds):
+        for fraction in bias_fractions:
+            bias = threshold + fraction * (bias_range - threshold)
             candidate_parameters.append(np.concatenate([direction, [bias]]))
             candidate_coefficients.append(
-                _affine_cube_coefficients(direction, float(bias), multi_indices)
+                _affine_power_coefficients(
+                    direction,
+                    float(bias),
+                    power,
+                    multi_indices,
+                )
             )
 
     coefficient_matrix = np.stack(candidate_coefficients, axis=1)
-    # The first row is the constant coefficient.  Projecting it out fixes the
-    # explicit constant feature and lets QR choose the remaining P_3 basis.
+    candidate_matrix = np.stack(candidate_parameters, axis=0)
+    # Move to L^2-isometric coordinates, drop the component along the constant
+    # feature, and normalize: pivoted QR then ranks candidates by how much new
+    # L^2 direction each one adds, independently of the monomial scaling.
+    #
+    # The monomial route is the reference one and stays in force wherever it
+    # is numerically sound.  Its Gram matrix is a tensor-product Hilbert
+    # matrix, which stops being positive definite in double precision at
+    # ``power`` around twelve; there the quadrature route supplies the same
+    # isometry without ever expanding the ridge power in monomials.
+    try:
+        gram_factor = _monomial_box_gram_factor(multi_indices)
+    except np.linalg.LinAlgError:
+        gram_factor = None
+    if gram_factor is not None:
+        isometric = gram_factor @ coefficient_matrix
+        # The constant function has monomial coefficients e_0, so its
+        # isometric coordinate is the first column of the factor.
+        constant_column = gram_factor[:, 0]
+        rank_columns = coefficient_matrix
+        constant_rank_column = np.eye(polynomial_dimension)[:, 0]
+    else:
+        isometric, constant_column = _quadrature_box_isometry(
+            spatial_dimension,
+            power,
+            candidate_matrix,
+        )
+        rank_columns = isometric
+        constant_rank_column = constant_column
+    constant_direction = constant_column / np.linalg.norm(constant_column)
+    deflated = isometric - np.outer(constant_direction, constant_direction @ isometric)
+    deflated /= np.maximum(np.linalg.norm(deflated, axis=0), np.finfo(float).tiny)
     _, _, pivots = scipy.linalg.qr(
-        coefficient_matrix[1:, :],
+        deflated,
         mode="economic",
         pivoting=True,
         check_finite=False,
     )
-    selected = np.stack(candidate_parameters, axis=0)[pivots[:supplement_count]]
+    selected = candidate_matrix[pivots[:supplement_count]]
     augmented = np.column_stack(
         [
-            np.eye(polynomial_dimension)[:, 0],
-            coefficient_matrix[:, pivots[:supplement_count]],
+            constant_rank_column,
+            rank_columns[:, pivots[:supplement_count]],
         ]
     )
     if np.linalg.matrix_rank(augmented) != polynomial_dimension:
-        raise RuntimeError("Failed to construct a complete cubic polynomial supplement.")
+        raise RuntimeError(
+            f"Failed to construct a complete degree-{power} polynomial supplement."
+        )
     selected.setflags(write=False)
     return selected
 
@@ -160,16 +336,19 @@ def _polynomial_supplement_parameters_cached(
 def polynomial_supplement_parameters(
     spatial_dimension: int,
     *,
+    power: int = 3,
     bias_range: float = DEFAULT_BIAS_RANGE,
 ) -> np.ndarray:
-    """Return ridge parameters whose restrictions supplement ``P_3``."""
+    """Return ridge parameters whose restrictions supplement ``P_power``."""
 
     if spatial_dimension not in (2, 3):
         raise ValueError("polynomial supplements are implemented for d in {2, 3}")
+    validate_activation_power(power)
     if bias_range <= math.sqrt(float(spatial_dimension)):
-        raise ValueError("bias_range must exceed sqrt(d) for the P_3 supplement")
+        raise ValueError("bias_range must exceed sqrt(d) for the polynomial supplement")
     return _polynomial_supplement_parameters_cached(
         spatial_dimension,
+        int(power),
         float(bias_range),
     ).copy()
 
@@ -178,6 +357,7 @@ def quasi_uniform_features(
     width: int,
     spatial_dimension: int,
     *,
+    power: int = DEFAULT_ACTIVATION_POWER,
     bias_range: float = DEFAULT_BIAS_RANGE,
     dtype: torch.dtype = torch.float64,
     device: torch.device | str = "cpu",
@@ -189,17 +369,21 @@ def quasi_uniform_features(
     midpoint layers in the relative bias, and each layer has a
     quasi-uniform direction set (equispaced angles in 2D, a Fibonacci lattice
     in 3D) with deterministic rotations.  Parameters outside this domain give
-    either the zero function or an ordinary cubic on the box.  Instead of
-    wasting a positive fraction of ``width`` on those degenerate rows, a fixed
-    QR-selected set of globally positive ridge cubics supplies ``P_3`` exactly.
-    Together with the evaluator's constant column, this is the finite
-    polynomial supplement used in the approximation theorem.
+    either the zero function or an ordinary degree-``power`` polynomial on the
+    box.  Instead of wasting a positive fraction of ``width`` on those
+    degenerate rows, a fixed QR-selected set of globally positive ridge powers
+    supplies ``P_power`` exactly.  Together with the evaluator's constant
+    column, this is the finite polynomial supplement used in the approximation
+    theorem.  Its size ``binom(d + power, power)`` grows like ``power^d`` but
+    not with ``width``; at small ``width`` and large ``power`` it can consume a
+    noticeable share of the budget, which is why the drivers report both counts.
     """
 
     if width < 0:
         raise ValueError("width must be nonnegative")
     if spatial_dimension not in (2, 3):
         raise ValueError("quasi-uniform parameters are implemented for d in {2, 3}")
+    validate_activation_power(power)
     if not (
         math.isfinite(bias_range)
         and bias_range > math.sqrt(float(spatial_dimension))
@@ -210,6 +394,7 @@ def quasi_uniform_features(
 
     supplement = polynomial_supplement_parameters(
         spatial_dimension,
+        power=power,
         bias_range=bias_range,
     )
     supplement_count = min(width, supplement.shape[0])
@@ -360,7 +545,7 @@ def parameter_set_diagnostics(
     )
 
 
-def _relu3_positive_parts(
+def _relu_positive_parts(
     points: torch.Tensor,
     parameters: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -378,57 +563,80 @@ def _relu3_positive_parts(
     return directions, torch.relu(preactivation)
 
 
-def _prepend_constant_values(
+def _augmented_feature_tensor(
     points: torch.Tensor,
-    random_values: torch.Tensor,
-) -> torch.Tensor:
-    return torch.cat(
-        [
-            torch.ones(
-                points.shape[0],
-                1,
-                dtype=points.dtype,
-                device=points.device,
-            ),
-            random_values,
-        ],
-        dim=1,
-    )
+    feature_count: int,
+    trailing_shape: tuple[int, ...],
+    leading_value: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Allocate a feature tensor and return it beside its random-feature view.
 
-
-def relu3_feature_values(
-    points: torch.Tensor,
-    parameters: torch.Tensor,
-) -> torch.Tensor:
-    """Evaluate only ReLU-cubic feature values.
-
-    This is the memory-light path for projections and diagnostics that do not
-    use derivatives.  As in :func:`relu3_feature_data`, the leading column is
-    the deterministic constant feature ``1``.
+    Column zero holds the deterministic constant feature, whose value is one
+    and whose every derivative vanishes; ``leading_value`` selects which.  The
+    random columns are returned as a strided view so callers can write them
+    with ``out=``/``copy_`` instead of concatenating a separate block, which
+    would double the peak footprint of the largest tensor in an evaluation.
     """
 
-    _, positive = _relu3_positive_parts(points, parameters)
-    return _prepend_constant_values(points, positive.pow(3))
+    tensor = torch.empty(
+        points.shape[0],
+        feature_count + 1,
+        *trailing_shape,
+        dtype=points.dtype,
+        device=points.device,
+    )
+    tensor[:, 0] = leading_value
+    return tensor, tensor[:, 1:]
 
 
-def relu3_feature_box_means(parameters: torch.Tensor) -> torch.Tensor:
-    """Integrate all ReLU-cubic features exactly over the unit box.
+def relu_power_feature_values(
+    points: torch.Tensor,
+    parameters: torch.Tensor,
+    power: int = DEFAULT_ACTIVATION_POWER,
+) -> torch.Tensor:
+    """Evaluate only ``rho_power`` feature values.
+
+    This is the memory-light path for projections and diagnostics that do not
+    use derivatives.  As in :func:`relu_power_feature_data`, the leading column
+    is the deterministic constant feature ``1``.
+    """
+
+    _, positive = _relu_positive_parts(points, parameters)
+    values, random_values = _augmented_feature_tensor(
+        points, parameters.shape[0], (), 1.0
+    )
+    random_values.copy_(positive.pow_(power))
+    return values
+
+
+def relu_power_feature_box_means(
+    parameters: torch.Tensor,
+    power: int = DEFAULT_ACTIVATION_POWER,
+) -> torch.Tensor:
+    """Integrate all ``rho_power`` features exactly over the unit box.
 
     For a crossing hyperplane, reflect coordinates with negative direction
-    components and apply the inclusion--exclusion antiderivative formula.  A
-    component at floating-point zero is removed before division.  Globally
-    positive affine cubics use their stable closed-form third moment instead;
-    globally negative features integrate to zero.  The leading returned entry
-    is the exact mean of the constant feature.
+    components and apply the inclusion--exclusion antiderivative formula: each
+    of the ``active_dimension`` integrations raises the exponent by one and
+    divides by the new exponent, giving the vertex sum of
+    ``relu(.)^(power + active_dimension)`` over
+    ``prod(magnitudes) * (power+1)...(power+active_dimension)``.  A component at
+    floating-point zero is removed before division.  Globally positive affine
+    powers are degree-``power`` polynomials, so a tensor Gauss--Legendre rule
+    with ``ceil((power+1)/2)`` nodes per axis integrates them exactly and
+    without the cancellation the inclusion--exclusion form would suffer there;
+    globally negative features integrate to zero.  The leading returned entry is
+    the exact mean of the constant feature.
     """
 
     if parameters.ndim != 2:
         raise ValueError("parameters must be a matrix")
     if not parameters.dtype.is_floating_point:
         raise ValueError("parameters must use a floating-point dtype")
+    validate_activation_power(power)
     spatial_dimension = parameters.shape[1] - 1
     if spatial_dimension not in (2, 3):
-        raise ValueError("exact ReLU-cubic box means are implemented for d in {2, 3}")
+        raise ValueError("exact ReLU-power box means are implemented for d in {2, 3}")
 
     means = torch.zeros(
         parameters.shape[0] + 1,
@@ -456,14 +664,33 @@ def relu3_feature_box_means(parameters: torch.Tensor) -> torch.Tensor:
 
     positive_mask = lower >= 0.0
     if bool(positive_mask.any()):
-        positive_directions = cleaned_directions[positive_mask]
-        centred_mean = biases[positive_mask] + 0.5 * positive_directions.sum(dim=1)
-        # If X_i ~ U(0,1), the centred third moment of omega @ X is zero and
-        # its variance is sum(omega_i^2)/12.
-        means[1:][positive_mask] = (
-            centred_mean.pow(3)
-            + 0.25 * centred_mean * positive_directions.square().sum(dim=1)
+        nodes, node_weights = np.polynomial.legendre.leggauss((power + 2) // 2)
+        axis_nodes = torch.from_numpy(0.5 * (nodes + 1.0)).to(
+            dtype=parameters.dtype,
+            device=parameters.device,
         )
+        axis_weights = torch.from_numpy(0.5 * node_weights).to(
+            dtype=parameters.dtype,
+            device=parameters.device,
+        )
+        grids = torch.meshgrid(*([axis_nodes] * spatial_dimension), indexing="ij")
+        quadrature_points = torch.stack([grid.reshape(-1) for grid in grids], dim=1)
+        weight_grids = torch.meshgrid(
+            *([axis_weights] * spatial_dimension),
+            indexing="ij",
+        )
+        quadrature_weights = torch.stack(
+            [grid.reshape(-1) for grid in weight_grids],
+            dim=1,
+        ).prod(dim=1)
+        positive_parameters = parameters[positive_mask]
+        preactivation = (
+            quadrature_points @ positive_parameters[:, :spatial_dimension].T
+            + positive_parameters[:, spatial_dimension].unsqueeze(0)
+        )
+        means[1:][positive_mask] = (
+            quadrature_weights.unsqueeze(1) * preactivation.pow(power)
+        ).sum(dim=0)
 
     crossing_indices = torch.nonzero(
         (lower < 0.0) & (upper > 0.0),
@@ -477,7 +704,7 @@ def relu3_feature_box_means(parameters: torch.Tensor) -> torch.Tensor:
             direction < 0.0
         ].sum()
         active_dimension = int(magnitudes.numel())
-        power = 3 + active_dimension
+        vertex_power = power + active_dimension
         numerator = torch.zeros((), dtype=parameters.dtype, device=parameters.device)
         for vertex in itertools.product((0, 1), repeat=active_dimension):
             vertex_tensor = torch.tensor(
@@ -487,9 +714,9 @@ def relu3_feature_box_means(parameters: torch.Tensor) -> torch.Tensor:
             )
             value = torch.relu(oriented_bias + torch.dot(magnitudes, vertex_tensor))
             sign = -1.0 if (active_dimension - sum(vertex)) % 2 else 1.0
-            numerator = numerator + sign * value.pow(power)
+            numerator = numerator + sign * value.pow(vertex_power)
         denominator = magnitudes.prod() * float(
-            math.prod(range(4, 4 + active_dimension))
+            math.prod(range(power + 1, power + 1 + active_dimension))
         )
         integral = numerator / denominator
         # Roundoff can only create a tiny negative value in this nonnegative
@@ -498,68 +725,47 @@ def relu3_feature_box_means(parameters: torch.Tensor) -> torch.Tensor:
     return means
 
 
-def relu3_feature_values_and_gradients(
+def relu_power_feature_values_and_gradients(
     points: torch.Tensor,
     parameters: torch.Tensor,
+    power: int = DEFAULT_ACTIVATION_POWER,
 ) -> ValueGradientTuple:
-    """Evaluate ReLU-cubic values and gradients without forming Hessians."""
+    """Evaluate ``rho_power`` values and gradients without forming Hessians."""
 
-    directions, positive = _relu3_positive_parts(points, parameters)
-    values = _prepend_constant_values(points, positive.pow(3))
-    random_gradients = (
-        3.0 * positive.pow(2).unsqueeze(2) * directions.unsqueeze(0)
+    directions, positive = _relu_positive_parts(points, parameters)
+    feature_count = parameters.shape[0]
+    values, random_values = _augmented_feature_tensor(points, feature_count, (), 1.0)
+    gradients, random_gradients = _augmented_feature_tensor(
+        points, feature_count, (points.shape[1],), 0.0
     )
-    gradients = torch.cat(
-        [
-            torch.zeros(
-                points.shape[0],
-                1,
-                points.shape[1],
-                dtype=points.dtype,
-                device=points.device,
-            ),
-            random_gradients,
-        ],
-        dim=1,
+    first_derivative = positive.pow(power - 1).mul_(float(power))
+    torch.mul(
+        first_derivative.unsqueeze(2),
+        directions.unsqueeze(0),
+        out=random_gradients,
     )
+    del first_derivative
+    random_values.copy_(positive.pow_(power))
     return values, gradients
 
 
-def relu3_feature_data(
+def relu_power_feature_values_and_hessians(
     points: torch.Tensor,
     parameters: torch.Tensor,
+    power: int = DEFAULT_ACTIVATION_POWER,
     *,
     hessian_components: Iterable[tuple[int, int]] | None = None,
-) -> ArrayTuple:
-    """Evaluate ReLU-cubic features, gradients, and selected Hessian entries.
+) -> ValueGradientTuple:
+    """Evaluate ``rho_power`` values and Hessian entries, skipping gradients.
 
-    The first column is the deterministic feature ``1``.  Parameters have
-    shape ``(N, d + 1)`` and are interpreted as ``(omega, bias)``.  Call
-    :func:`relu3_feature_values` or
-    :func:`relu3_feature_values_and_gradients` when higher derivatives are not
-    needed, so the corresponding tensors are never allocated.
+    The fourth-order graph norm of the plate uses values and second
+    derivatives but never the gradients of the dictionary, which would be
+    another ``Q x (N+1) x d`` block.
     """
 
-    directions, positive = _relu3_positive_parts(points, parameters)
+    directions, positive = _relu_positive_parts(points, parameters)
     spatial_dimension = points.shape[1]
-    values = _prepend_constant_values(points, positive.pow(3))
-    random_gradients = (
-        3.0 * positive.pow(2).unsqueeze(2) * directions.unsqueeze(0)
-    )
-    gradients = torch.cat(
-        [
-            torch.zeros(
-                points.shape[0],
-                1,
-                spatial_dimension,
-                dtype=points.dtype,
-                device=points.device,
-            ),
-            random_gradients,
-        ],
-        dim=1,
-    )
-
+    feature_count = parameters.shape[0]
     if hessian_components is None:
         components = tuple(
             (row, column)
@@ -568,38 +774,76 @@ def relu3_feature_data(
         )
     else:
         components = tuple(hessian_components)
+
+    values, random_values = _augmented_feature_tensor(points, feature_count, (), 1.0)
+    hessians, random_hessians = _augmented_feature_tensor(
+        points, feature_count, (len(components),), 0.0
+    )
     if components:
-        random_hessians = torch.stack(
-            [
-                6.0
-                * positive
-                * directions[:, row].unsqueeze(0)
-                * directions[:, column].unsqueeze(0)
-                for row, column in components
-            ],
-            dim=2,
+        second_derivative = positive.pow(power - 2).mul_(float(power * (power - 1)))
+        for index, (row, column) in enumerate(components):
+            entry = random_hessians[..., index]
+            torch.mul(second_derivative, directions[:, row].unsqueeze(0), out=entry)
+            entry.mul_(directions[:, column].unsqueeze(0))
+        del second_derivative
+    random_values.copy_(positive.pow_(power))
+    return values, hessians
+
+
+def relu_power_feature_data(
+    points: torch.Tensor,
+    parameters: torch.Tensor,
+    power: int = DEFAULT_ACTIVATION_POWER,
+    *,
+    hessian_components: Iterable[tuple[int, int]] | None = None,
+) -> ArrayTuple:
+    """Evaluate ``rho_power`` features, gradients, and selected Hessian entries.
+
+    The first column is the deterministic feature ``1``.  Parameters have
+    shape ``(N, d + 1)`` and are interpreted as ``(omega, bias)``.  Call
+    :func:`relu_power_feature_values` or
+    :func:`relu_power_feature_values_and_gradients` when higher derivatives are
+    not needed, so the corresponding tensors are never allocated.
+    """
+
+    directions, positive = _relu_positive_parts(points, parameters)
+    spatial_dimension = points.shape[1]
+    feature_count = parameters.shape[0]
+    if hessian_components is None:
+        components = tuple(
+            (row, column)
+            for row in range(spatial_dimension)
+            for column in range(row, spatial_dimension)
         )
     else:
-        random_hessians = torch.empty(
-            points.shape[0],
-            parameters.shape[0],
-            0,
-            dtype=points.dtype,
-            device=points.device,
-        )
-    hessians = torch.cat(
-        [
-            torch.zeros(
-                points.shape[0],
-                1,
-                len(components),
-                dtype=points.dtype,
-                device=points.device,
-            ),
-            random_hessians,
-        ],
-        dim=1,
+        components = tuple(hessian_components)
+
+    values, random_values = _augmented_feature_tensor(points, feature_count, (), 1.0)
+    gradients, random_gradients = _augmented_feature_tensor(
+        points, feature_count, (spatial_dimension,), 0.0
     )
+    hessians, random_hessians = _augmented_feature_tensor(
+        points, feature_count, (len(components),), 0.0
+    )
+
+    # Descending derivative order: each power of the positive part is consumed
+    # before the next one overwrites it, so only one scratch block is live at a
+    # time and the final power can be taken in place.
+    if components:
+        second_derivative = positive.pow(power - 2).mul_(float(power * (power - 1)))
+        for index, (row, column) in enumerate(components):
+            entry = random_hessians[..., index]
+            torch.mul(second_derivative, directions[:, row].unsqueeze(0), out=entry)
+            entry.mul_(directions[:, column].unsqueeze(0))
+        del second_derivative
+    first_derivative = positive.pow(power - 1).mul_(float(power))
+    torch.mul(
+        first_derivative.unsqueeze(2),
+        directions.unsqueeze(0),
+        out=random_gradients,
+    )
+    del first_derivative
+    random_values.copy_(positive.pow_(power))
     return values, gradients, hessians
 
 
@@ -650,30 +894,56 @@ def _open_uniform_knots(basis_count: int, degree: int) -> np.ndarray:
 
 
 def _row_tensor_product(matrices: list[np.ndarray]) -> scipy.sparse.csr_matrix:
-    """Form row-wise tensor products while retaining local spline support."""
+    """Form row-wise tensor products while retaining local spline support.
+
+    Each factor holds at most ``degree + 1`` nonzeros per row, so the product
+    holds at most ``(degree + 1)^d``.  Gathering those supports into
+    fixed-width arrays keeps the construction vectorized: the row-by-row
+    ``itertools.product`` this replaces cost ``(degree + 1)^d`` Python-level
+    iterations per row, which dominated evaluation once the degree grew past
+    three.
+    """
 
     row_count = matrices[0].shape[0]
     widths = [matrix.shape[1] for matrix in matrices]
     column_count = math.prod(widths)
-    row_indices: list[int] = []
-    column_indices: list[int] = []
-    values: list[float] = []
+    if row_count == 0:
+        return scipy.sparse.csr_matrix((0, column_count))
 
-    for row in range(row_count):
-        supports: list[list[tuple[int, float]]] = []
-        for matrix in matrices:
-            nonzero = np.flatnonzero(np.abs(matrix[row]) > 1.0e-14)
-            supports.append([(int(index), float(matrix[row, index])) for index in nonzero])
-        for factors in itertools.product(*supports):
-            multi_index = tuple(index for index, _ in factors)
-            value = math.prod(entry for _, entry in factors)
-            if value == 0.0:
-                continue
-            row_indices.append(row)
-            column_indices.append(int(np.ravel_multi_index(multi_index, widths)))
-            values.append(value)
+    strides = np.cumprod([1, *widths[:0:-1]])[::-1]
+    accumulated_values: np.ndarray | None = None
+    accumulated_columns: np.ndarray | None = None
+    for matrix, stride in zip(matrices, strides):
+        mask = np.abs(matrix) > 1.0e-14
+        support = max(int(mask.sum(axis=1).max()), 1)
+        # A stable argsort of the negated mask lists the nonzero columns of
+        # each row first, in their original order, and pads with arbitrary
+        # zero columns that the value mask then neutralizes.
+        order = np.argsort(~mask, axis=1, kind="stable")[:, :support]
+        values = np.where(
+            np.take_along_axis(mask, order, axis=1),
+            np.take_along_axis(matrix, order, axis=1),
+            0.0,
+        )
+        columns = order * stride
+        if accumulated_values is None:
+            accumulated_values, accumulated_columns = values, columns
+            continue
+        accumulated_values = (
+            accumulated_values[:, :, None] * values[:, None, :]
+        ).reshape(row_count, -1)
+        accumulated_columns = (
+            accumulated_columns[:, :, None] + columns[:, None, :]
+        ).reshape(row_count, -1)
+
+    flat_values = accumulated_values.reshape(-1)
+    nonzero = flat_values != 0.0
+    rows = np.repeat(np.arange(row_count), accumulated_values.shape[1])
     return scipy.sparse.csr_matrix(
-        (values, (row_indices, column_indices)),
+        (
+            flat_values[nonzero],
+            (rows[nonzero], accumulated_columns.reshape(-1)[nonzero]),
+        ),
         shape=(row_count, column_count),
     )
 
@@ -689,7 +959,13 @@ class TensorSplineEvaluation:
 
 @dataclass(frozen=True)
 class TensorSplineSpace:
-    """Boundary-adapted tensor-product cubic B-spline space on ``[0,1]^d``."""
+    """Boundary-adapted tensor-product B-spline space on ``[0,1]^d``.
+
+    ``sobolev_order`` boundary layers are removed per face, which for an open
+    knot vector of any degree gives exactly zero trace (``m=1``) or zero trace
+    and normal derivative (``m=2``).  The space saturates at Sobolev index
+    ``degree + 1``.
+    """
 
     spatial_dimension: int
     sobolev_order: int
@@ -716,6 +992,11 @@ class TensorSplineSpace:
     ) -> "TensorSplineSpace":
         if sobolev_order not in (1, 2):
             raise ValueError("only H1 and H2 Ritz spaces are supported")
+        if degree < max(3, sobolev_order + 1):
+            raise ValueError(
+                f"spline degree must be at least {max(3, sobolev_order + 1)} for "
+                f"Sobolev order {sobolev_order}; got {degree}"
+            )
         axis_active = max(
             degree + 1,
             int(math.ceil(minimum_dimension ** (1.0 / spatial_dimension))),
@@ -801,81 +1082,131 @@ class RitzProjectedFeatures:
     coefficients: np.ndarray
     gram_residual: float
     quadrature_samples: int
+    activation_power: int = DEFAULT_ACTIVATION_POWER
 
     @property
     def feature_count(self) -> int:
         return self.coefficients.shape[1]
 
-    def evaluate_values(self, points: torch.Tensor) -> torch.Tensor:
-        """Evaluate projected values without forming derivative matrices."""
+    @property
+    def degree(self) -> int:
+        return self.space.degree
+
+    def _batched(
+        self,
+        points: torch.Tensor,
+        derivative_order: int,
+        selected_hessians: tuple[int, ...] | None,
+        batch_size: int,
+        outputs: list[np.ndarray],
+    ) -> None:
+        """Project ``points`` in row blocks, writing into ``outputs`` in place.
+
+        A tensor-product spline row carries ``(degree + 1)^d`` nonzeros, so the
+        intermediate sparse blocks grow steeply with the degree.  Blocking keeps
+        peak memory proportional to ``batch_size`` rather than to the whole
+        evaluation set, without changing any value.  Callers pass the
+        destinations -- possibly strided views into one derivative-major array --
+        so no block is ever copied a second time to be concatenated or stacked.
+        """
 
         point_array = points.detach().cpu().numpy()
-        spline_values = self.space.evaluate(
-            point_array,
-            derivative_order=0,
-        ).values
-        values = spline_values @ self.coefficients
-        return torch.from_numpy(np.asarray(values)).to(
-            dtype=points.dtype,
-            device=points.device,
+        for start in range(0, point_array.shape[0], batch_size):
+            stop = min(start + batch_size, point_array.shape[0])
+            data = self.space.evaluate(
+                point_array[start:stop],
+                derivative_order=derivative_order,
+            )
+            matrices = [data.values, *data.gradients]
+            if selected_hessians is not None:
+                matrices.extend(data.hessians[index] for index in selected_hessians)
+            if len(matrices) != len(outputs):
+                raise ValueError(
+                    f"expected {len(outputs)} spline blocks, got {len(matrices)}"
+                )
+            for destination, matrix in zip(outputs, matrices):
+                destination[start:stop] = np.asarray(matrix @ self.coefficients)
+
+    def _allocate_output(self, point_count: int, *trailing: int) -> np.ndarray:
+        """Allocate one derivative-major destination for :meth:`_batched`."""
+
+        return np.empty(
+            (point_count, self.feature_count, *trailing),
+            dtype=self.coefficients.dtype,
         )
+
+    def evaluate_values(
+        self,
+        points: torch.Tensor,
+        *,
+        batch_size: int = 8_192,
+    ) -> torch.Tensor:
+        """Evaluate projected values without forming derivative matrices."""
+
+        values = self._allocate_output(points.shape[0])
+        self._batched(points, 0, None, batch_size, [values])
+        return torch.from_numpy(values).to(dtype=points.dtype, device=points.device)
 
     def evaluate_values_and_gradients(
         self,
         points: torch.Tensor,
+        *,
+        batch_size: int = 8_192,
     ) -> ValueGradientTuple:
         """Evaluate projected values and gradients without forming Hessians."""
 
-        point_array = points.detach().cpu().numpy()
-        spline_data = self.space.evaluate(point_array, derivative_order=1)
-        values = spline_data.values @ self.coefficients
-        gradients = np.stack(
-            [matrix @ self.coefficients for matrix in spline_data.gradients],
-            axis=2,
+        dimension = self.space.spatial_dimension
+        values = self._allocate_output(points.shape[0])
+        gradients = self._allocate_output(points.shape[0], dimension)
+        self._batched(
+            points,
+            1,
+            None,
+            batch_size,
+            [values, *(gradients[:, :, axis] for axis in range(dimension))],
         )
-        return (
-            torch.from_numpy(np.asarray(values)).to(
-                dtype=points.dtype,
-                device=points.device,
-            ),
-            torch.from_numpy(np.asarray(gradients)).to(
-                dtype=points.dtype,
-                device=points.device,
-            ),
+        to_tensor = lambda array: torch.from_numpy(array).to(
+            dtype=points.dtype,
+            device=points.device,
         )
+        return to_tensor(values), to_tensor(gradients)
 
     def evaluate(
         self,
         points: torch.Tensor,
         *,
         hessian_components: tuple[tuple[int, int], ...] | None = None,
+        batch_size: int = 8_192,
     ) -> ArrayTuple:
-        point_array = points.detach().cpu().numpy()
-        spline_data = self.space.evaluate(point_array)
-        values = spline_data.values @ self.coefficients
-        gradients = np.stack(
-            [matrix @ self.coefficients for matrix in spline_data.gradients],
-            axis=2,
-        )
+        dimension = self.space.spatial_dimension
         all_components = tuple(
             (row, column)
-            for row in range(self.space.spatial_dimension)
-            for column in range(row, self.space.spatial_dimension)
+            for row in range(dimension)
+            for column in range(row, dimension)
         )
         selected = all_components if hessian_components is None else hessian_components
         component_map = {component: index for index, component in enumerate(all_components)}
-        hessians = np.stack(
+        order = tuple(component_map[component] for component in selected)
+
+        values = self._allocate_output(points.shape[0])
+        gradients = self._allocate_output(points.shape[0], dimension)
+        hessians = self._allocate_output(points.shape[0], len(order))
+        self._batched(
+            points,
+            2,
+            order,
+            batch_size,
             [
-                spline_data.hessians[component_map[component]] @ self.coefficients
-                for component in selected
+                values,
+                *(gradients[:, :, axis] for axis in range(dimension)),
+                *(hessians[:, :, index] for index in range(len(order))),
             ],
-            axis=2,
         )
-        return (
-            torch.from_numpy(np.asarray(values)).to(dtype=points.dtype, device=points.device),
-            torch.from_numpy(np.asarray(gradients)).to(dtype=points.dtype, device=points.device),
-            torch.from_numpy(np.asarray(hessians)).to(dtype=points.dtype, device=points.device),
+        to_tensor = lambda array: torch.from_numpy(array).to(
+            dtype=points.dtype,
+            device=points.device,
         )
+        return to_tensor(values), to_tensor(gradients), to_tensor(hessians)
 
     def boundary_residual(self, *, samples_per_face: int = 33) -> float:
         grid = np.linspace(0.0, 1.0, samples_per_face)
@@ -904,12 +1235,14 @@ def build_ritz_projected_features(
     *,
     sobolev_order: int,
     auxiliary_dimension: int,
+    power: int = DEFAULT_ACTIVATION_POWER,
+    degree: int = 3,
     quadrature_samples: int | None = None,
     quadrature_seed: int = 91_003,
     regularization: float = 1.0e-12,
     batch_size: int | None = None,
 ) -> RitzProjectedFeatures:
-    """Project ReLU-cubic features into a boundary-adapted spline space.
+    """Project ``rho_power`` features into a boundary-adapted spline space.
 
     The Sobolev inner product is discretized with an independent Monte Carlo
     rule.  Boundary conditions remain exact because every auxiliary basis
@@ -918,13 +1251,20 @@ def build_ritz_projected_features(
     total quadrature count.  The Monte Carlo points are drawn once before
     batching, hence changing ``batch_size`` does not change the quadrature
     rule.
+
+    ``degree`` sets the spline saturation exponent ``degree + 1``.  Keep it at
+    or above the dictionary's saturation index ``s_cap(d) = (d + 2*power+1)/2``,
+    otherwise this auxiliary space -- not the dictionary -- limits the achievable
+    graph error.
     """
 
+    validate_activation_power(power, sobolev_order)
     spatial_dimension = parameters.shape[1] - 1
     space = TensorSplineSpace.with_minimum_dimension(
         spatial_dimension,
         sobolev_order,
         auxiliary_dimension,
+        degree=degree,
     )
     sample_count = quadrature_samples or max(4 * space.dimension, 2_048)
     if batch_size is not None and batch_size < 1:
@@ -969,15 +1309,17 @@ def build_ritz_projected_features(
             derivative_order=sobolev_order,
         )
         if sobolev_order == 1:
-            raw_values, raw_gradients = relu3_feature_values_and_gradients(
+            raw_values, raw_gradients = relu_power_feature_values_and_gradients(
                 batch_points,
                 cpu_parameters,
+                power,
             )
             raw_hessians = None
         else:
-            raw_values, raw_gradients, raw_hessians = relu3_feature_data(
+            raw_values, raw_gradients, raw_hessians = relu_power_feature_data(
                 batch_points,
                 cpu_parameters,
+                power,
             )
         accumulate_moment(spline.values, raw_values.numpy(), sqrt_weights)
         for axis, matrix in enumerate(spline.gradients):
@@ -1009,7 +1351,13 @@ def build_ritz_projected_features(
     relative_residual = float(
         np.linalg.norm(residual) / max(np.linalg.norm(cross), np.finfo(float).tiny)
     )
-    return RitzProjectedFeatures(space, coefficients, relative_residual, sample_count)
+    return RitzProjectedFeatures(
+        space,
+        coefficients,
+        relative_residual,
+        sample_count,
+        activation_power=int(power),
+    )
 
 
 @dataclass(frozen=True)
@@ -1158,15 +1506,50 @@ def factorize_l2_ball_least_squares(
     matrix: np.ndarray,
     rhs: np.ndarray,
 ) -> L2BallLeastSquaresFactor:
-    """Compute the SVD factorization shared by every downstream solver."""
+    """Compute the SVD factorization shared by every downstream solver.
 
-    left, singular_values, right_transpose = scipy.linalg.svd(
-        matrix,
-        full_matrices=False,
-        overwrite_a=False,
-        check_finite=False,
-        lapack_driver="gesdd",
-    )
+    ``matrix`` is overwritten: callers hand over a reduced system they no
+    longer need, and the LAPACK copy it would otherwise take is another
+    ``m x m`` block at the widths where memory binds.
+    """
+
+    # SciPy's OpenBLAS SVD is the historical default.  The rented CPU image
+    # also ships a PyTorch build linked against Intel MKL; on the large
+    # three-dimensional reduced systems MKL is substantially faster.  Keep
+    # the backend opt-in so the published/reference numbers remain unchanged
+    # unless a run explicitly requests it (``LS_SVD_BACKEND=torch``).
+    svd_backend = os.environ.get("LS_SVD_BACKEND", "scipy").strip().lower()
+    if svd_backend in {"torch", "pytorch", "mkl"}:
+        thread_token = os.environ.get("LS_SVD_THREADS")
+        if thread_token:
+            try:
+                thread_count = int(thread_token)
+            except ValueError as exc:
+                raise ValueError("LS_SVD_THREADS must be a positive integer") from exc
+            if thread_count < 1:
+                raise ValueError("LS_SVD_THREADS must be a positive integer")
+            torch.set_num_threads(thread_count)
+        torch_matrix = torch.from_numpy(np.asarray(matrix))
+        left_t, singular_t, right_t = torch.linalg.svd(
+            torch_matrix,
+            full_matrices=False,
+        )
+        left = left_t.numpy()
+        singular_values = singular_t.numpy()
+        right_transpose = right_t.numpy()
+        del left_t, singular_t, right_t, torch_matrix
+    elif svd_backend in {"scipy", "openblas"}:
+        left, singular_values, right_transpose = scipy.linalg.svd(
+            matrix,
+            full_matrices=False,
+            overwrite_a=True,
+            check_finite=False,
+            lapack_driver="gesdd",
+        )
+    else:
+        raise ValueError(
+            "LS_SVD_BACKEND must be one of scipy/openblas or torch/pytorch/mkl"
+        )
     return L2BallLeastSquaresFactor(
         right_transpose=right_transpose,
         singular_values=singular_values,

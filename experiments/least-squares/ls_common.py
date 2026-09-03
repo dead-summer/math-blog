@@ -193,10 +193,10 @@ def build_quadrature_rule(
     return points, weights
 
 
-def generate_features(N: int, dim: int) -> torch.Tensor:
-    """Build the deterministic quasi-uniform ReLU-cubic parameters (omega, bias)."""
+def generate_features(N: int, dim: int, power: int) -> torch.Tensor:
+    """Build the deterministic quasi-uniform ``rho_power`` parameters (omega, bias)."""
 
-    return quasi_uniform_features(N, dim, dtype=DTYPE, device=DEVICE)
+    return quasi_uniform_features(N, dim, power=power, dtype=DTYPE, device=DEVICE)
 
 
 def iter_point_batches(point_count: int, batch_size: int) -> Iterator[tuple[int, int]]:
