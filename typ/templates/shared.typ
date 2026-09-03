@@ -116,6 +116,9 @@
 
   show figure.where(kind: table): set figure.caption(position: top)
   show figure.where(kind: table): set block(breakable: true)
+  // 算法浮动体沿用表格的惯例：标题在上，可跨页
+  show figure.where(kind: "algorithm"): set figure.caption(position: top)
+  show figure.where(kind: "algorithm"): set block(breakable: true)
 
   show: it => context if shiroa-sys-target() == "paged" {
     set page(numbering: "1")
