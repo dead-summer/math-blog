@@ -4,9 +4,9 @@ Examples
 --------
 Run the ten-repeat width study for two-dimensional elasticity::
 
-    python study_runner.py main --model elasticity-2d
+    python study_runner.py order --model elasticity-2d
 
-Run the prescribed training-sample and Ritz-dimension ablations::
+Run the prescribed training-sample and Ritz-dimension sweeps::
 
     python study_runner.py q --model elasticity-2d
     python study_runner.py k --model plate
@@ -16,8 +16,9 @@ repeats only randomize the training samples and the projection quadrature.
 Each configured algorithm (ball / ridge / tsvd) selects its hyperparameter
 on an independent validation rule before the final test evaluation; all
 candidates share one spectral factorization of the assembled system.  The
-runner writes raw records and mean/sample-standard-deviation summaries in both
-JSON and CSV.
+paper reports ``ball`` only -- see ``README.md`` and ``solvers.py`` for why the
+three are one spectral-filter family.  The runner writes raw records and
+mean/sample-standard-deviation summaries in both JSON and CSV.
 Full default studies are intentionally expensive.
 """
 
@@ -28,6 +29,7 @@ import csv
 import importlib.util
 import json
 import math
+import os
 import sys
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -35,6 +37,7 @@ from types import ModuleType
 from typing import Any, Iterable
 
 import numpy as np
+import torch
 
 
 ROOT = Path(__file__).resolve().parent
@@ -48,7 +51,39 @@ from system_backends import VALID_SYSTEM_BACKENDS  # noqa: E402
 DEFAULT_WIDTHS = (200, 400, 600, 800, 1000)
 DEFAULT_Q_RATIOS = (1, 2, 4, 8, 16, 32)
 DEFAULT_K_RATIOS = (1.0, 2.0, 4.0)
-DEFAULT_NU_VALUES = (0.49, 0.499, 0.4999, 0.49999, 0.499999)
+DEFAULT_ACTIVATION_POWERS = (3, 5, 7, 9)
+# Width at which the power study is run, per model.  The 2-D
+# elasticity width is the outcome of a capacity probe: N=500 leaves enough
+# rows for Q=16(N+1) while keeping the k=9 solve above the algebraic floor.
+# Other models retain the top of their order ladder.
+POWER_STUDY_WIDTHS = {
+    "elasticity-2d": 500,
+    "plane-stress": 1000,
+    "plate": 1000,
+    "elasticity-3d": 1000,
+}
+# Model-specific power-study capacity settings.  These are applied before
+# CLI overrides, so an explicit --q-ratio, --ritz-degree, or
+# --projection-samples still wins.  The two 2-D studies that resolve k=9 use a
+# matched p=10 Ritz space and a fixed projection rule; the plate needs only
+# Q=8(N+1), as established by the paired Q=8 versus Q=16 capacity probe.
+POWER_STUDY_Q_RATIOS = {
+    "elasticity-2d": 16,
+    "plate": 8,
+}
+POWER_STUDY_RITZ_DEGREES = {
+    "elasticity-2d": 10,
+    "plate": 10,
+}
+POWER_STUDY_PROJECTION_SAMPLES = {
+    "elasticity-2d": 12_808,
+    "plate": 12_808,
+}
+# The plate's default deflection is a polynomial of total degree eight, which a
+# rho_k dictionary reproduces exactly once its P_k supplement covers it.  That
+# would make the power study measure polynomial reproduction instead of
+# ridge approximation, so this study uses an analytic non-polynomial solution.
+POWER_STUDY_SOLUTIONS = {"plate": "trig"}
 
 
 @dataclass(frozen=True)
@@ -58,7 +93,7 @@ class ModelSpec:
     width_fields: tuple[str, str]
     feature_width_names: tuple[str, str]
     primary_metrics: tuple[str, str]
-    supports_k_ablation: bool
+    supports_k_sweep: bool
 
 
 MODEL_SPECS = {
@@ -68,7 +103,7 @@ MODEL_SPECS = {
         width_fields=("N_s", "N_u"),
         feature_width_names=("N_s", "N_u"),
         primary_metrics=("sigma_hdiv_error", "u_h1_error"),
-        supports_k_ablation=True,
+        supports_k_sweep=True,
     ),
     "elasticity-3d": ModelSpec(
         key="elasticity-3d",
@@ -76,7 +111,7 @@ MODEL_SPECS = {
         width_fields=("N_s", "N_u"),
         feature_width_names=("N_s", "N_u"),
         primary_metrics=("sigma_hdiv_error", "u_h1_error"),
-        supports_k_ablation=False,
+        supports_k_sweep=False,
     ),
     "plane-stress": ModelSpec(
         key="plane-stress",
@@ -84,7 +119,7 @@ MODEL_SPECS = {
         width_fields=("N_s", "N_u"),
         feature_width_names=("N_s", "N_u"),
         primary_metrics=("sigma_hdiv_error", "u_h1_error"),
-        supports_k_ablation=False,
+        supports_k_sweep=False,
     ),
     "plate": ModelSpec(
         key="plate",
@@ -92,7 +127,7 @@ MODEL_SPECS = {
         width_fields=("N_m", "N_u"),
         feature_width_names=("N_m", "N_u"),
         primary_metrics=("M_hdivdiv_error", "w_h2_error"),
-        supports_k_ablation=True,
+        supports_k_sweep=True,
     ),
 }
 
@@ -130,14 +165,14 @@ def benchmark_kwargs(
         "Q_test": q_test,
         "sampling_method": cfg.sampling_method,
         "interior_seed": interior_seed,
+        # Every model records ``manufactured_solution``, so it must reach the
+        # builder for every model: a configuration that names a solution the
+        # run then ignores is indistinguishable in the results file from one
+        # that honoured it.
+        "manufactured_solution": cfg.manufactured_solution,
         "test_seed": test_seed,
     }
-    if spec.key in {"elasticity-2d", "elasticity-3d"}:
-        kwargs.update(
-            body_force_batch_size=cfg.body_force_batch_size,
-            manufactured_solution=cfg.manufactured_solution,
-        )
-    elif spec.key == "plane-stress":
+    if spec.key != "plate":
         kwargs["body_force_batch_size"] = cfg.body_force_batch_size
     else:
         kwargs["h"] = cfg.h
@@ -154,10 +189,14 @@ def build_feature_space(
     kwargs = {
         spec.feature_width_names[0]: getattr(cfg, spec.width_fields[0]),
         spec.feature_width_names[1]: getattr(cfg, spec.width_fields[1]),
+        "activation_power": cfg.activation_power,
+        "ritz_degree": cfg.ritz_degree,
         "ritz_ratio": cfg.ritz_ratio,
         "projection_samples": cfg.projection_samples,
         "projection_seed": projection_seed,
     }
+    if hasattr(cfg, "projection_batch_size"):
+        kwargs["projection_batch_size"] = cfg.projection_batch_size
     return module.build_shared_feature_space(**kwargs)
 
 
@@ -197,7 +236,10 @@ def run_configuration(
 
     Returns one record per configured algorithm.  All candidates and all
     algorithms share the same assembled system and its single spectral
-    factorization, so the ladder sweeps only repeat cheap filtering.
+    factorization, so the ladder sweeps only repeat cheap filtering.  The
+    validation and test rules differ only in their quadrature points, and the
+    residual system depends on the training points alone, so the same system
+    and factorization carry over from selection to reporting.
     """
 
     seed = 100_000 * (run_index + 1)
@@ -251,7 +293,6 @@ def run_configuration(
                 selected_score = score
                 selected_hyper = hyper
         selections[algorithm_id] = (selected_hyper, selected_score, scores)
-    del validation_data
 
     test_benchmark = module.build_shared_benchmark(
         **benchmark_kwargs(
@@ -262,7 +303,13 @@ def run_configuration(
             test_seed=seed + 41,
         )
     )
-    test_data = module.prepare_experiment(cfg, test_benchmark, feature_space)
+    test_data = module.retarget_experiment_data(
+        cfg,
+        validation_data,
+        test_benchmark,
+        feature_space,
+    )
+    del validation_data, validation_benchmark
     projection = (
         feature_space.projected_w
         if spec.key == "plate"
@@ -291,6 +338,8 @@ def run_configuration(
             "N": int(getattr(cfg, spec.width_fields[0])),
             "Q": int(cfg.Q_train),
             "K": int(projection.space.dimension),
+            "activation_power": int(cfg.activation_power),
+            "ritz_degree": int(projection.degree),
             "ritz_ratio": float(cfg.ritz_ratio),
             "projection_samples": int(projection.quadrature_samples),
             "projection_gram_residual": float(projection.gram_residual),
@@ -303,6 +352,10 @@ def run_configuration(
             "training_seed": train_seed,
             "system_backend": str(getattr(cfg, "system_backend", "direct")),
             "direct_solver": str(cfg.direct_solver),
+            "direct_rcond": float(cfg.direct_rcond),
+            # The power study replaces the plate's polynomial deflection,
+            # so the target field is part of a record's provenance.
+            "manufactured_solution": str(getattr(cfg, "manufactured_solution", "default")),
             "nu": float(cfg.nu),
             **asdict(result),
         }
@@ -414,8 +467,20 @@ def study_configurations(
     spec: ModelSpec,
     *,
     widths: tuple[int, ...],
+    q_ratio: int | None = None,
 ) -> Iterable[tuple[str, Any]]:
-    if study == "main":
+    """Yield one configuration per requested study bucket.
+
+    ``q_ratio`` is an optional explicit training-sample ratio.  The historical
+    defaults remain unchanged when it is omitted; exposing it lets large
+    three-dimensional runs use a deliberately chosen MC density instead of the
+    old hard-coded ``4(N+1)`` in both the order and power studies.
+    """
+
+    if q_ratio is not None and q_ratio <= 0:
+        raise ValueError("q_ratio must be positive when provided")
+    if study == "order":
+        ratio = q_ratio or 4
         for width in widths:
             yield (
                 f"N-{width}",
@@ -424,7 +489,7 @@ def study_configurations(
                     **{
                         spec.width_fields[0]: width,
                         spec.width_fields[1]: width,
-                        "Q_train": 4 * (width + 1),
+                        "Q_train": ratio * (width + 1),
                     },
                 ),
             )
@@ -445,8 +510,8 @@ def study_configurations(
             )
         return
     if study == "k":
-        if not spec.supports_k_ablation:
-            raise ValueError(f"K ablation is not prescribed for {spec.key}")
+        if not spec.supports_k_sweep:
+            raise ValueError(f"K sweep is not prescribed for {spec.key}")
         width = 400
         for ratio in DEFAULT_K_RATIOS:
             yield (
@@ -462,11 +527,35 @@ def study_configurations(
                 ),
             )
         return
-    if study == "nu":
-        if spec.key != "elasticity-3d":
-            raise ValueError("The near-incompressible nu scan is defined for elasticity-3d")
-        for nu in DEFAULT_NU_VALUES:
-            yield (f"nu-{nu:.6g}", replace(base_cfg, nu=nu))
+    if study == "power":
+        # The prescribed default width is model-specific.  A single explicit
+        # ``--widths`` value overrides it, which is useful for the large 3-D
+        # power campaign where N is selected by a prior capacity probe.
+        width = (
+            POWER_STUDY_WIDTHS[spec.key]
+            if widths == DEFAULT_WIDTHS
+            else widths[0]
+        )
+        overrides = {
+            spec.width_fields[0]: width,
+            spec.width_fields[1]: width,
+            "Q_train": (
+                q_ratio
+                if q_ratio is not None
+                else POWER_STUDY_Q_RATIOS.get(spec.key, 4)
+            )
+            * (width + 1),
+            # Hold one auxiliary space fixed across all powers.  Models with a
+            # prescribed matched degree receive it when base_cfg is built.
+            "ritz_degree": base_cfg.ritz_degree,
+        }
+        if spec.key in POWER_STUDY_SOLUTIONS:
+            overrides["manufactured_solution"] = POWER_STUDY_SOLUTIONS[spec.key]
+        for power in DEFAULT_ACTIVATION_POWERS:
+            yield (
+                f"k-{power}",
+                replace(base_cfg, **overrides, activation_power=power),
+            )
         return
     raise ValueError(f"Unknown study {study}")
 
@@ -479,14 +568,51 @@ def run_study(args: argparse.Namespace) -> None:
         if hasattr(module, "default_config")
         else module.LeastSquaresConfig()
     )
+    if args.study == "power":
+        power_defaults: dict[str, Any] = {}
+        if spec.key in POWER_STUDY_RITZ_DEGREES:
+            power_defaults["ritz_degree"] = POWER_STUDY_RITZ_DEGREES[spec.key]
+        if spec.key in POWER_STUDY_PROJECTION_SAMPLES:
+            power_defaults["projection_samples"] = (
+                POWER_STUDY_PROJECTION_SAMPLES[spec.key]
+            )
+        if power_defaults:
+            base_cfg = replace(base_cfg, **power_defaults)
     if args.test_points is not None:
         base_cfg = replace(base_cfg, Q_test=args.test_points)
     if args.projection_samples is not None:
         base_cfg = replace(base_cfg, projection_samples=args.projection_samples)
+    if args.projection_batch_size is not None:
+        if not hasattr(base_cfg, "projection_batch_size"):
+            raise ValueError("--projection-batch-size is unsupported by this model")
+        base_cfg = replace(base_cfg, projection_batch_size=args.projection_batch_size)
     if args.system_backend is not None:
         base_cfg = replace(base_cfg, system_backend=args.system_backend)
     if args.direct_solver is not None:
         base_cfg = replace(base_cfg, direct_solver=args.direct_solver)
+    if args.direct_batch_size is not None:
+        base_cfg = replace(base_cfg, direct_batch_size=args.direct_batch_size)
+    if args.direct_qr_block_size is not None:
+        base_cfg = replace(base_cfg, direct_qr_block_size=args.direct_qr_block_size)
+    if args.evaluation_batch_size is not None:
+        base_cfg = replace(base_cfg, evaluation_batch_size=args.evaluation_batch_size)
+    if args.body_force_batch_size is not None:
+        base_cfg = replace(base_cfg, body_force_batch_size=args.body_force_batch_size)
+    if args.direct_rcond is not None:
+        base_cfg = replace(base_cfg, direct_rcond=args.direct_rcond)
+    if args.ritz_degree is not None:
+        base_cfg = replace(base_cfg, ritz_degree=args.ritz_degree)
+    if args.ritz_ratio is not None:
+        if args.study == "k":
+            raise ValueError("--ritz-ratio conflicts with the k study, which sweeps it")
+        base_cfg = replace(base_cfg, ritz_ratio=args.ritz_ratio)
+    if args.activation_power is not None:
+        base_cfg = replace(base_cfg, activation_power=args.activation_power)
+    if args.manufactured_solution is not None:
+        base_cfg = replace(
+            base_cfg,
+            manufactured_solution=args.manufactured_solution,
+        )
     if args.algorithms is not None:
         base_cfg = replace(
             base_cfg,
@@ -499,19 +625,53 @@ def run_study(args: argparse.Namespace) -> None:
         "tsvd": args.tsvd_rconds,
     }
     records: list[dict[str, Any]] = []
-    shared_nu_ladders: dict[str, tuple[float, ...]] | None = None
     configurations = list(
-        study_configurations(args.study, base_cfg, spec, widths=args.widths)
+        study_configurations(
+            args.study,
+            base_cfg,
+            spec,
+            widths=args.widths,
+            q_ratio=args.q_ratio,
+        )
     )
+    if args.activation_powers is not None:
+        if args.study != "power":
+            raise ValueError("--activation-powers is only valid for the power study")
+        requested_powers = set(args.activation_powers)
+        configurations = [
+            (label, cfg)
+            for label, cfg in configurations
+            if cfg.activation_power in requested_powers
+        ]
+        found_powers = {cfg.activation_power for _, cfg in configurations}
+        missing_powers = requested_powers - found_powers
+        if missing_powers:
+            raise ValueError(
+                "activation powers are not prescribed by this study: "
+                f"{sorted(missing_powers)}"
+            )
+    # ``run_offset`` lets independent worker processes execute disjoint
+    # repetitions concurrently.  The default remains zero, preserving the
+    # original serial campaign and its deterministic seeds.
+    width_overrides: dict[str, int] = {}
+    if args.stress_width is not None:
+        width_overrides[spec.width_fields[0]] = args.stress_width
+    if args.displacement_width is not None:
+        width_overrides[spec.width_fields[1]] = args.displacement_width
+    if width_overrides:
+        configurations = [
+            (label, replace(cfg, **width_overrides)) for label, cfg in configurations
+        ]
+
     for label, cfg in configurations:
-        for run_index in range(args.repeats):
+        for local_run_index in range(args.repeats):
+            run_index = args.run_offset + local_run_index
             print(
                 f"\n=== study={args.study}, model={spec.key}, "
-                f"config={label}, run={run_index + 1}/{args.repeats} ==="
+                f"config={label}, run={run_index + 1} "
+                f"(worker offset={args.run_offset}, local {local_run_index + 1}/{args.repeats}) ==="
             )
             ladders = dict(base_ladders)
-            if args.study == "nu" and shared_nu_ladders is not None:
-                ladders.update(shared_nu_ladders)
             new_records = run_configuration(
                 module,
                 spec,
@@ -528,14 +688,12 @@ def run_study(args: argparse.Namespace) -> None:
                 record["study"] = args.study
                 record["configuration"] = label
             records.extend(new_records)
-            if args.study == "nu" and shared_nu_ladders is None:
-                shared_nu_ladders = {}
-                for record in new_records:
-                    value = record["hyperparameter"]
-                    shared_nu_ladders[record["algorithm"]] = (
-                        math.inf if value == "inf" else float(value),
-                    )
 
+    # Fields that identify a bucket rather than measure it.  activation_power
+    # and ritz_degree belong here even though they are integers: aggregating
+    # them into a mean would hide them from every consumer that keys a summary
+    # row back to its dictionary (plot_convergence's reference rates, the
+    # floor comparison in approximation-floors/run_solver_gap.py).
     group_fields = (
         "study",
         "model",
@@ -543,6 +701,10 @@ def run_study(args: argparse.Namespace) -> None:
         "algorithm",
         "system_backend",
         "direct_solver",
+        "direct_rcond",
+        "manufactured_solution",
+        "activation_power",
+        "ritz_degree",
         "N",
         "Q",
         "K",
@@ -552,7 +714,7 @@ def run_study(args: argparse.Namespace) -> None:
     output_dir = (
         Path(args.output_dir)
         if args.output_dir is not None
-        else ROOT / "results" / spec.key / args.study
+        else ROOT / "results" / spec.key / (args.output_name or args.study)
     )
     save_records(output_dir, records, summary)
     print(f"Saved raw records and mean ± std summaries to {output_dir}")
@@ -560,10 +722,79 @@ def run_study(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("study", choices=("main", "q", "k", "nu"))
+    parser.add_argument("study", choices=("order", "q", "k", "power"))
     parser.add_argument("--model", choices=tuple(MODEL_SPECS), required=True)
+    parser.add_argument(
+        "--output-name",
+        default=None,
+        help="results subdirectory name; defaults to the study name. Use it to "
+             "keep one study's runs at different activation powers apart.",
+    )
+    parser.add_argument(
+        "--activation-power",
+        type=int,
+        default=None,
+        help="override the driver's default activation power for every configuration",
+    )
+    parser.add_argument(
+        "--manufactured-solution",
+        default=None,
+        help="override the driver's manufactured solution for every configuration",
+    )
+    parser.add_argument(
+        "--activation-powers",
+        type=parse_int_list,
+        default=None,
+        help="comma-separated subset of the prescribed power-study powers; "
+             "only valid with study=power",
+    )
+    parser.add_argument(
+        "--ritz-degree",
+        type=int,
+        default=None,
+        help="override the auxiliary B-spline degree for every configuration",
+    )
+    parser.add_argument(
+        "--stress-width",
+        type=int,
+        default=None,
+        help="override the first width field (N_s / N_m) for every configuration, "
+             "leaving the second at the value the study prescribes; the paper's "
+             "runs keep the two equal",
+    )
+    parser.add_argument(
+        "--displacement-width",
+        type=int,
+        default=None,
+        help="override the second width field (N_u) for every configuration",
+    )
+    parser.add_argument(
+        "--ritz-ratio",
+        type=float,
+        default=None,
+        help="override the auxiliary space ratio K/(N+1) for every configuration; "
+             "the k study sweeps it, but every other study keeps the model default",
+    )
     parser.add_argument("--repeats", type=int, default=10)
+    parser.add_argument(
+        "--run-offset",
+        type=int,
+        default=0,
+        help=(
+            "zero-based repetition index offset; useful when several workers "
+            "run disjoint repeats concurrently (default: 0)"
+        ),
+    )
     parser.add_argument("--widths", type=parse_int_list, default=DEFAULT_WIDTHS)
+    parser.add_argument(
+        "--q-ratio",
+        type=int,
+        default=None,
+        help=(
+            "power-study MC training ratio Q/(N+1); model default is "
+            "16 for elasticity-2d, 8 for plate, and 4 otherwise"
+        ),
+    )
     parser.add_argument(
         "--algorithms",
         type=parse_str_list,
@@ -588,6 +819,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-points", type=int)
     parser.add_argument("--projection-samples", type=int)
     parser.add_argument(
+        "--projection-batch-size",
+        type=int,
+        default=None,
+        help="batch size for the Monte Carlo Ritz projection (elasticity models)",
+    )
+    parser.add_argument(
         "--system-backend",
         choices=VALID_SYSTEM_BACKENDS,
         help="least-squares system backend (default: model config)",
@@ -597,14 +834,63 @@ def build_parser() -> argparse.ArgumentParser:
         choices=VALID_DIRECT_SOLVERS,
         help="direct backend assembly/compression method (default: model config)",
     )
+    parser.add_argument(
+        "--direct-batch-size",
+        type=int,
+        default=None,
+        help="number of training points per streaming-TSQR block (default: model config)",
+    )
+    parser.add_argument(
+        "--direct-qr-block-size",
+        type=int,
+        default=None,
+        help="TSQR panel block size passed to DTPQRT (default: model config)",
+    )
+    parser.add_argument(
+        "--evaluation-batch-size",
+        type=int,
+        default=None,
+        help="test quadrature block size used during error evaluation (default: model config)",
+    )
+    parser.add_argument(
+        "--body-force-batch-size",
+        type=int,
+        default=None,
+        help="batch size for manufactured body-force autodiff (default: model config)",
+    )
+    parser.add_argument(
+        "--direct-rcond",
+        type=float,
+        default=None,
+        help="relative truncation level of the pseudo-inverse used by the ball "
+             "solve (default: model config)",
+    )
     parser.add_argument("--output-dir")
     return parser
 
 
 def main() -> None:
+    # The rented host has 32 allocated CPUs.  When several independent widths
+    # run concurrently, PyTorch otherwise keeps its process-wide default
+    # thread pool (typically all visible cores), causing severe oversubscription
+    # even though OPENBLAS_NUM_THREADS is capped.  An explicit opt-in keeps
+    # single-process runs fast while making the campaign's parallel groups
+    # predictable.
+    thread_token = os.environ.get("LS_TORCH_THREADS")
+    if thread_token:
+        try:
+            thread_count = int(thread_token)
+        except ValueError as exc:
+            raise ValueError("LS_TORCH_THREADS must be a positive integer") from exc
+        if thread_count < 1:
+            raise ValueError("LS_TORCH_THREADS must be a positive integer")
+        torch.set_num_threads(thread_count)
+        torch.set_num_interop_threads(1)
     args = build_parser().parse_args()
     if args.repeats < 1:
         raise ValueError("--repeats must be positive")
+    if args.run_offset < 0:
+        raise ValueError("--run-offset must be nonnegative")
     run_study(args)
 
 
