@@ -42,6 +42,16 @@ $$\min_{\boldsymbol c \in \mathcal C_{N,B}} \|\boldsymbol R_{N,Q}\boldsymbol c -
 - `defaults.json` 的 `algorithms_to_run` 保持三项，重跑才与 `results/`、`results-archive/` 的口径一致（归档 CSV 的 `algorithm` 列含三种）。只要 `ball`，加 `--algorithms ball`。
 - 三维 Hu--Zhang 最终实验固定取 $B=\infty$，不在验证集上选择预算；二维与板的逐种子选择结果记在 `hyperparameters` 列。
 
+### 字典规模口径：`--widths` 与论文的 $N$
+
+命令行的 `--widths` 与 CSV 的 `N` 列数的是脚本铺放的参数对个数。实现另有一列显式常数特征（`rfm_core._augmented_feature_tensor` 写入的第 0 列），它与多项式区那 $\dim P_k - 1$ 对参数一起构成 $P_k(\Omega)$ 的一组基。论文的 $N$ 数的是字典元素个数，两者相差这一列：
+
+$$N_{\text{论文}} = \texttt{width} + 1.$$
+
+因此正文表格与图中的 $N \in \{201, 401, 601, 801, 1001\}$ 对应 `--widths 200,400,600,800,1000`，幂次实验的 $N=501$、$N=1001$ 对应 `--widths 500`、`--widths 1000`。正文把训练求积写作 $Q = r N$，代码里就是 `ratio * (width + 1)`（`study_runner.py`），两者数值相同。`plot_convergence.py` 在读入 `summary.csv` 后统一换算，作图与对数拟合都在论文口径下进行，`results/observed-orders.csv` 的 `dictionary_sizes` 列即论文的 $N$。
+
+论文与实现选的 $P_k(\Omega)$ 基不同（论文取 $\dim P_k$ 对参数，实现取常数列加 $\dim P_k - 1$ 对参数），但张成的离散空间逐项相同，只有系数球的 $\ell^2$ 几何随基而变。
+
 ## 论文数字 → 命令 → 数据
 
 命令都在本目录下运行；`<model>` 取 `elasticity-2d`、`elasticity-3d`、`plane-stress`、`plate`。不带 `results/` 前缀的文件位于 `approximation-floors/results/`。

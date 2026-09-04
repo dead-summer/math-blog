@@ -13,6 +13,13 @@ Reads the ``summary.csv`` files ``study_runner.py`` writes under
 Tables are not generated: the paper's tables are written by hand against these
 CSVs.
 
+The ``N`` column of ``summary.csv`` records the runner's ``width`` argument,
+which counts only the parameter pairs it places; the implementation carries one
+further dictionary element, the explicit constant column that completes the
+polynomial supplement to a basis of ``P_k``.  The paper's ``N`` is the number of
+dictionary elements, so everything reported here is plotted and fitted against
+``width + 1``.
+
 Usage::
 
     python plot_convergence.py
@@ -49,6 +56,10 @@ COLOR_REFERENCE = "#8A8A8A"
 # The paper reports the coefficient-ball algorithm; the other registered
 # solvers only appear in the text's solver comparison, not in these figures.
 PAPER_ALGORITHM = "ball"
+
+# Dictionary size in the paper's sense, derived from the runner's width.  See
+# the module docstring: the constant column is a dictionary element too.
+DICTIONARY_SIZE = "dictionary_size"
 
 MODELS = {
     "elasticity-2d": {
@@ -130,7 +141,9 @@ def load_summary(model: str, study: str) -> list[dict]:
         for row in csv.DictReader(handle):
             if row.get("algorithm", PAPER_ALGORITHM) != PAPER_ALGORITHM:
                 continue
-            rows.append({key: _maybe_float(value) for key, value in row.items()})
+            parsed = {key: _maybe_float(value) for key, value in row.items()}
+            parsed[DICTIONARY_SIZE] = parsed["N"] + 1
+            rows.append(parsed)
     return rows
 
 
@@ -215,13 +228,13 @@ def collect_orders() -> list[dict]:
                 continue
             power = int(rows[0]["activation_power"])
             for metric in spec["metrics"]:
-                x, mean, _ = series(rows, "N", metric)
+                x, mean, _ = series(rows, DICTIONARY_SIZE, metric)
                 orders.append({
                     "model": model,
                     "study": study,
                     "activation_power": power,
                     "lambda": "",
-                    "widths": " ".join(f"{value:g}" for value in x),
+                    "dictionary_sizes": " ".join(f"{value:g}" for value in x),
                     "metric": metric,
                     "observed_order": f"{observed_order(x, mean):.4f}",
                 })
@@ -231,13 +244,13 @@ def collect_orders() -> list[dict]:
         if len(rows) < 2:
             continue
         for metric in MODELS["elasticity-2d"]["metrics"]:
-            x, mean, _ = series(rows, "N", metric)
+            x, mean, _ = series(rows, DICTIONARY_SIZE, metric)
             orders.append({
                 "model": "elasticity-2d",
                 "study": "near-incompressible",
                 "activation_power": int(rows[0]["activation_power"]),
                 "lambda": f"{lam:g}",
-                "widths": " ".join(f"{value:g}" for value in x),
+                "dictionary_sizes": " ".join(f"{value:g}" for value in x),
                 "metric": metric,
                 "observed_order": f"{observed_order(x, mean):.4f}",
             })
@@ -261,12 +274,12 @@ def figure_order(model: str) -> Path | None:
         ("o", "s"),
         spec["metric_labels"],
     ):
-        x, mean, std = series(rows, "N", metric)
+        x, mean, std = series(rows, DICTIONARY_SIZE, metric)
         draw(ax, x, mean, std, color, label, marker)
 
     beta = reference_beta(spec, power)
     reference = x ** (-beta)
-    _, first_mean, _ = series(rows, "N", spec["metrics"][0])
+    _, first_mean, _ = series(rows, DICTIONARY_SIZE, spec["metrics"][0])
     ax.plot(
         x,
         first_mean[0] / reference[0] * reference,
@@ -301,7 +314,7 @@ def figure_power(model: str) -> Path | None:
     # depend on k, so this is only an equal-constant heuristic, not a fixed-N
     # quantitative prediction.
     betas = np.array([reference_beta(spec, int(p)) for p in powers])
-    width = float(sorted(rows, key=lambda row: row["activation_power"])[0]["N"])
+    width = float(sorted(rows, key=lambda row: row["activation_power"])[0][DICTIONARY_SIZE])
     _, mean, _ = series(rows, "activation_power", spec["metrics"][0])
     ax.plot(
         powers,
@@ -357,7 +370,7 @@ def figure_near_incompressible_2d() -> Path | None:
     for ax, metric, ylabel in zip(axes, spec["metrics"], spec["metric_labels"]):
         for lam, color, marker in zip(lambdas, colors, markers):
             material_rows = [row for row in rows if row["lambda"] == lam]
-            x, mean, std = series(material_rows, "N", metric)
+            x, mean, std = series(material_rows, DICTIONARY_SIZE, metric)
             exponent = round(math.log10(lam))
             if lam >= 1000 and math.isclose(lam, 10.0**exponent):
                 parameter_label = rf"$\lambda=10^{{{exponent}}}$"
