@@ -42,7 +42,7 @@ $
       norm(bold(tau))_(bold(H)(div))^2 & := norm(bold(tau))_(L^2)^2 + norm(div bold(tau))_(L^2)^2, \
   norm(bold(tau))_(bold(H)(div div))^2 & := norm(bold(tau))_(L^2)^2 + norm(div div bold(tau))_(L^2)^2.
 $
-本文以下标 $"LE"$（linear elasticity，线弹性）与 $"KL"$（Kirchhoff--Love 板弯曲）区分两类问题的算子、泛函与函数空间。以 $(bold(sigma), bold(u))$ 表示线弹性未知量，以 $(bold(M), w)$ 表示板弯曲未知量。$bold(T)_alpha$ 表示对称张量基。对非负量 $A$ 与 $B$，记 $A lt.tilde B$ 表示存在常数 $C > 0$ 使 $A <= C B$，其中 $C$ 不依赖于 Lamé 常数 $lambda$ 与任何离散参数，具体依赖关系在上下文中给出。$A gt.tilde B$ 即 $B lt.tilde A$。记 $A tilde.eq B$ 表示 $A lt.tilde B$ 与 $B lt.tilde A$ 同时成立，即 $A$ 与 $B$ 同阶，其中两侧常数满足同一约定。
+本文以下标 $"LE"$（linear elasticity，线弹性）与 $"KL"$（Kirchhoff--Love 板弯曲）区分两类问题的算子、泛函与函数空间。以 $(bold(sigma), bold(u))$ 表示线弹性未知量，以 $(bold(M), w)$ 表示板弯曲未知量。$bold(T)_alpha$ 表示对称张量基。对非负量 $A$ 与 $B$，记 $A lt.tilde B$ 表示存在常数 $C > 0$ 使 $A <= C B$，其中 $C$ 不依赖于 Lamé 常数 $lambda$ 与任何离散参数，具体依赖关系在上下文中给出。$A gt.tilde B$ 即 $B lt.tilde A$。记 $A tilde.eq B$ 表示 $A lt.tilde B$ 与 $B lt.tilde A$ 同时成立，即 $A$ 与 $B$ 同阶，其中两侧常数满足同一约定。以 $bb(P)$ 与 $EE$ 分别表示概率与期望，$EE$ 的下标区分取期望所对的样本组。
 
 == 线弹性
 
@@ -828,7 +828,7 @@ $
 
 上一节的两个连续投影都不能精确计算：$Pi_D^(m)$ 的投影方程以整个 $H_0^m (Omega)$ 为检验空间，$Pi_"tr"$ 含区域上的积分，在一般区域上均无精确形式。本节分两步将其离散。第一步把 $Pi_D^(m)$ 投影方程的检验空间截断为有限维协调子空间，方程化为有限阶线性方程组。$Pi_"tr"$ 无投影方程，不经此步。第二步把 $Pi_D^(m)$ 方程中的 $H^m$ 内积与 $Pi_"tr"$ 的平均迹积分换成 Monte Carlo 估计，得到完全离散的投影。
 
-第一步：截断检验空间。对 $m in {1,2}$ 取任意有限维协调辅助空间
+第一步：截断检验空间。对 $m in {1,2}$ 取任意有限维协调空间
 $
   V_K^(m) subset H_0^m (Omega),
   quad dim V_K^(m)=K,
@@ -844,7 +844,7 @@ $
 - 线弹性取 $m=1$：$Pi_(D,K)^(1)$ 逐分量作用于位移字典空间 $hat(bold(U))_("LE",N)$，像空间逐分量含于 $V_K^(1)$，从而是 $H_0^1(Omega; RR^d)$ 的有限维子空间。
 - 板弯曲取 $m=2$：$Pi_(D,K)^(2)$ 作用于挠度字典空间 $hat(U)_("KL",N)$，像空间含于 $V_K^(2) subset H_0^2(Omega)$。
 
-$Pi_(D,K)^(m)$ 是线性映射，故两个试探空间的维数都不超过相应字典空间的维数。辅助空间只用于投影方程的离散化，不引入新的模型未知量。
+$Pi_(D,K)^(m)$ 是线性映射，故两个试探空间的维数都不超过相应字典空间的维数。协调空间只用于投影方程的离散化，不引入新的模型未知量。
 
 $Pi_(D,K)^(m)$ 的定义方程以 $H^m$ 内积为双线性形式，故 $v-Pi_(D,K)^(m) v$ 与 $V_K^(m)$ 在该内积下正交。$V_K^(m)$ 有限维从而闭，$Pi_(D,K)^(m)$ 因而是 $H^m (Omega)$ 到 $V_K^(m)$ 的正交投影。由该正交性，对任意 $z_K in V_K^(m)$，
 $
@@ -852,7 +852,7 @@ $
   = norm(v-Pi_(D,K)^(m) v)_(H^m (Omega))^2
   + norm(Pi_(D,K)^(m) v-z_K)_(H^m (Omega))^2.
 $
-取 $z_K=0$ 得 $norm(Pi_(D,K)^(m) v)_(H^m (Omega))<=norm(v)_(H^m (Omega))$，而 $Pi_(D,K)^(m)$ 在 $V_K^(m)$ 上为恒等，故算子范数为 $1$。上式右端第二项非负，故 $norm(v-z_K)_(H^m (Omega))$ 在 $z_K=Pi_(D,K)^(m) v$ 处取到最小值，即 $Pi_(D,K)^(m) v$ 是 $v$ 在 $V_K^(m)$ 中关于 $H^m$ 范数的最佳逼近。记辅助空间的最佳逼近量为
+取 $z_K=0$ 得 $norm(Pi_(D,K)^(m) v)_(H^m (Omega))<=norm(v)_(H^m (Omega))$，而 $Pi_(D,K)^(m)$ 在 $V_K^(m)$ 上为恒等，故算子范数为 $1$。上式右端第二项非负，故 $norm(v-z_K)_(H^m (Omega))$ 在 $z_K=Pi_(D,K)^(m) v$ 处取到最小值，即 $Pi_(D,K)^(m) v$ 是 $v$ 在 $V_K^(m)$ 中关于 $H^m$ 范数的最佳逼近。记该空间的最佳逼近量为
 $
   cal(E)_(m,K)(v)
   := inf_(z_K in V_K^(m))
@@ -861,7 +861,7 @@ $
   quad v in H^m (Omega).
 $
 <eq:aux-best-approx>
-向量场以分量乘积空间及相应乘积 $H^m$ 范数定义同一记号。下述引理说明 $Pi_(D,K)^(m)$ 恰是连续投影 $Pi_D^(m)$ 在辅助空间上的截断，并将截断误差归结为最佳逼近量。
+向量场以分量乘积空间及相应乘积 $H^m$ 范数定义同一记号。下述引理说明 $Pi_(D,K)^(m)$ 恰是连续投影 $Pi_D^(m)$ 向有限维协调空间的截断，并将截断误差归结为最佳逼近量。
 
 #lemma(title: [Ritz 投影是连续投影的截断])[
   对任意 $v in H^m (Omega)$，
@@ -888,19 +888,18 @@ $
   由 @eq:aux-best-approx，右端的范数即 $cal(E)_(m,K)(Pi_D^(m) v)$。证毕。
 ]
 
-@lem:ritz-truncation 把截断误差归结为 $Pi_D^(m) v$ 在辅助空间中的最佳逼近量，其阶取决于 $Pi_D^(m) v$ 的正则性。$v$ 取原始字典场 $hat(v)_N$ 时，$rho_k$ 特征经 $Pi_D^(m)$ 投影后的 Sobolev 正则性没有现成估计。以 $H_0^m (Omega)$ 中的场 $v_star$ 为比较对象则不需要这一正则性：对任意 $v_star in H_0^m (Omega)$ 与 $hat(v)_N in H^m (Omega)$，由三角不等式、@eq:aux-best-approx 与 $Pi_(D,K)^(m)$ 的非扩张性，
+@lem:ritz-truncation 把截断误差归结为 $Pi_D^(m) v$ 在 $V_K^(m)$ 中的最佳逼近量，其阶取决于 $Pi_D^(m) v$ 的正则性。$v$ 取原始字典场 $hat(v)_N$ 时，$rho_k$ 特征经 $Pi_D^(m)$ 投影后的 Sobolev 正则性没有现成估计。以 $H_0^m (Omega)$ 中的场 $v_star$ 为比较对象则不需要这一正则性：对任意 $v_star in H_0^m (Omega)$ 与 $hat(v)_N in H^m (Omega)$，由三角不等式、@eq:aux-best-approx 与 $Pi_(D,K)^(m)$ 的非扩张性，
 $
-  norm(v_star-Pi_(D,K)^(m)hat(v)_N)_(H^m)
-  & <= norm(v_star-Pi_(D,K)^(m)v_star)_(H^m)
-  + norm(Pi_(D,K)^(m)(v_star-hat(v)_N))_(H^m) \
-  & <= cal(E)_(m,K)(v_star)
-  + norm(v_star-hat(v)_N)_(H^m).
+  norm(v_star-Pi_(D,K)^(m)hat(v)_N)_(H^m) & <= norm(v_star-Pi_(D,K)^(m)v_star)_(H^m)
+                                            + norm(Pi_(D,K)^(m)(v_star-hat(v)_N))_(H^m) \
+                                          & <= cal(E)_(m,K)(v_star)
+                                            + norm(v_star-hat(v)_N)_(H^m).
 $
 <eq:finite-projection-transfer>
-这是连续投影传递估计 @eq:projection-transfer 的有限维形式。第一项只刻画辅助空间截断，且只涉及 $v_star$ 自身的正则性。第二项完整保留无约束字典的逼近能力。
+这是连续投影传递估计 @eq:projection-transfer 的有限维形式。第一项只刻画协调空间截断，且只涉及 $v_star$ 自身的正则性。第二项完整保留无约束字典的逼近能力。
 
 第二步：内积与积分的 Monte Carlo 离散。取 $Omega$ 上的独立均匀样本
-${bold(x)_r^"R"}_(r=1)^(Q_"R")$ 离散 $H^m$ 内积。记多重指标个数为 $n_(bold(alpha)) := binom(d+m, m)$，将满足 $abs(bold(alpha)) <= m$ 的多重指标按固定次序排为 $bold(alpha)_1, dots, bold(alpha)_(n_(bold(alpha)))$，并定义至 $m$ 阶导数的点值算子
+${bold(x)_("R",r)}_(r=1)^(Q_"R")$ 离散 $H^m$ 内积。记多重指标个数为 $n_(bold(alpha)) := binom(d+m, m)$，将满足 $abs(bold(alpha)) <= m$ 的多重指标按固定次序排为 $bold(alpha)_1, dots, bold(alpha)_(n_(bold(alpha)))$，并定义至 $m$ 阶导数的点值算子
 $
   cal(L)_m (bold(x)): H^m (Omega) -> RR^(n_(bold(alpha))),
   quad
@@ -919,14 +918,14 @@ $
 $
   (v,z)_(H^m,Q_"R")
   := abs(Omega)/Q_"R" sum_(r=1)^(Q_"R")
-  cal(L)_m (bold(x)_r^"R")v dot cal(L)_m (bold(x)_r^"R")z.
+  cal(L)_m (bold(x)_("R",r))v dot cal(L)_m (bold(x)_("R",r))z.
 $
 将投影方程中的 $H^m$ 内积换成该求积内积，所得投影记作 $tilde(Pi)_(D,K,Q_"R")^(m)$。平均迹投影中的积分以另一组独立均匀样本
-${bold(y)_r}_(r=1)^(Q_"tr")$ 作 Monte Carlo 估计，定义
+${bold(x)_("tr",r)}_(r=1)^(Q_"tr")$ 作 Monte Carlo 估计，定义
 $
   tilde(Pi)_("tr",Q_"tr") bold(tau)
   := bold(tau)-1/d (
-    1/Q_"tr" sum_(r=1)^(Q_"tr") tr(bold(tau)(bold(y)_r))
+    1/Q_"tr" sum_(r=1)^(Q_"tr") tr(bold(tau)(bold(x)_("tr",r)))
   ) bold(I).
 $
 两组投影构造样本相互独立，分别用于近似 Ritz 投影方程的内积与平均迹积分。
@@ -955,9 +954,19 @@ $
     node((2, 1), [$bold(z)_(N,Q,K)$ \ #text(0.75em)[计算解]], name: <z-out>),
     edge(<z-raw>, <z-cont>, [#text(0.8em)[连续投影]], "->", stroke: 0.6pt + theme.main-color),
     edge(<z-cont>, <z-ritz>, [#text(0.8em)[投影空间截断]], "->", stroke: 0.6pt + theme.main-color),
-    edge(<z-raw>, <z-emp>, [#text(0.8em)[投影的数值积分实现]], "->", label-side: right, stroke: 0.6pt + theme.main-color),
     edge(
-      <z-ritz>, <z-emp>, [#text(0.8em)[投影求积误差]], "<->",
+      <z-raw>,
+      <z-emp>,
+      [#text(0.8em)[投影的数值积分实现]],
+      "->",
+      label-side: right,
+      stroke: 0.6pt + theme.main-color,
+    ),
+    edge(
+      <z-ritz>,
+      <z-emp>,
+      [#text(0.8em)[投影求积误差]],
+      "<->",
       stroke: (paint: theme.main-color, thickness: 0.6pt, dash: "dashed"),
     ),
     edge(<z-emp>, <z-out>, $bold(c)=bold(c)^"out"$, "->", stroke: 0.6pt + theme.main-color),
@@ -967,20 +976,20 @@ $
 
 对于线弹性问题，给定系数向量 $bold(c) in RR^((n_s+d)N)$，定义应力--位移字典场及其投影场为
 $
-  hat(bold(z))_N (bold(c)) & := (hat(bold(sigma))_N (bold(c)), hat(bold(u))_N (bold(c))), \
-  bold(z)_N (bold(c)) & := (Pi_"tr" hat(bold(sigma))_N (bold(c)), Pi_D^(1) hat(bold(u))_N (bold(c))), \
-  bold(z)_(N,K)(bold(c)) & := (Pi_"tr" hat(bold(sigma))_N (bold(c)), Pi_(D,K)^(1) hat(bold(u))_N (bold(c))), \
+       hat(bold(z))_N (bold(c)) & := (hat(bold(sigma))_N (bold(c)), hat(bold(u))_N (bold(c))), \
+            bold(z)_N (bold(c)) & := (Pi_"tr" hat(bold(sigma))_N (bold(c)), Pi_D^(1) hat(bold(u))_N (bold(c))), \
+         bold(z)_(N,K)(bold(c)) & := (Pi_"tr" hat(bold(sigma))_N (bold(c)), Pi_(D,K)^(1) hat(bold(u))_N (bold(c))), \
   tilde(bold(z))_(N,K)(bold(c)) & := (
-    tilde(Pi)_("tr",Q_"tr") hat(bold(sigma))_N (bold(c)),
-    tilde(Pi)_(D,K,Q_"R")^(1) hat(bold(u))_N (bold(c))
-  ).
+                                    tilde(Pi)_("tr",Q_"tr") hat(bold(sigma))_N (bold(c)),
+                                    tilde(Pi)_(D,K,Q_"R")^(1) hat(bold(u))_N (bold(c))
+                                  ).
 $
 
 对于 Kirchhoff--Love 板弯曲问题，给定系数向量 $bold(c) in RR^(4N)$，相应的弯矩--挠度字典场及其投影场定义为
 $
-  hat(bold(z))_N (bold(c)) & := (hat(bold(M))_N (bold(c)), hat(w)_N (bold(c))), \
-  bold(z)_N (bold(c)) & := (hat(bold(M))_N (bold(c)), Pi_D^(2) hat(w)_N (bold(c))), \
-  bold(z)_(N,K)(bold(c)) & := (hat(bold(M))_N (bold(c)), Pi_(D,K)^(2) hat(w)_N (bold(c))), \
+       hat(bold(z))_N (bold(c)) & := (hat(bold(M))_N (bold(c)), hat(w)_N (bold(c))), \
+            bold(z)_N (bold(c)) & := (hat(bold(M))_N (bold(c)), Pi_D^(2) hat(w)_N (bold(c))), \
+         bold(z)_(N,K)(bold(c)) & := (hat(bold(M))_N (bold(c)), Pi_(D,K)^(2) hat(w)_N (bold(c))), \
   tilde(bold(z))_(N,K)(bold(c)) & := (hat(bold(M))_N (bold(c)), tilde(Pi)_(D,K,Q_"R")^(2) hat(w)_N (bold(c))).
 $
 由于弯矩空间不要求平均迹规范，采用精确积分的 Ritz 投影场与数值积分后的投影场具有相同的弯矩分量，其差异仅来自挠度投影的数值积分。
@@ -1028,9 +1037,9 @@ $
 
 对于线弹性问题，两个残差在每个样本点共有 $n_s + d$ 个分量，故 $bold(A)_("LE",N,Q) in RR^((n_s+d)Q times m_N), bold(b)_("LE",N,Q) in RR^((n_s+d)Q)$。对于板弯曲问题，共有 $3 + 1$ 个分量，因此 $bold(A)_("KL",N,Q) in RR^(4Q times m_N), bold(b)_("KL",N,Q) in RR^(4Q)$。离散泛函因此可写成如下形式：
 $
-  cal(J)_("LE",Q)(tilde(bold(z))_(N,K)(bold(c))) &= norm(bold(A)_("LE",N,Q) bold(c)-bold(b)_("LE",N,Q))_(ell^2)^2,\
-  cal(J)_("KL",Q)(tilde(bold(z))_(N,K)(bold(c))) &= norm(bold(A)_("KL",N,Q) bold(c)-bold(b)_("KL",N,Q))_(ell^2)^2,
-  quad
+  cal(J)_("LE",Q)(tilde(bold(z))_(N,K)(bold(c))) & = norm(bold(A)_("LE",N,Q) bold(c)-bold(b)_("LE",N,Q))_(ell^2)^2, \
+  cal(J)_("KL",Q)(tilde(bold(z))_(N,K)(bold(c))) & = norm(bold(A)_("KL",N,Q) bold(c)-bold(b)_("KL",N,Q))_(ell^2)^2,
+                                                   quad
 $
 <eq:train-objective>
 
@@ -1145,54 +1154,18 @@ $
 
 == 投影离散与求积误差
 
-投影的空间截断与数值积分各引入一类误差：把投影方程的检验空间截断为 $V_K^(m)$ 产生确定性的逼近误差，用 Monte Carlo 求积实现投影方程与平均迹积分则产生随机的实现误差。本节依次估计二者，前者关于辅助空间维数 $K$，后者关于投影样本数 $Q_"tr"$ 与 $Q_"R"$。求积误差须在系数球上一致成立，因而 @eq:coeff-ball 的预算 $B$ 进入相应估计。
-
-=== 辅助空间的逼近率
-
-为使 @eq:finite-projection-transfer 中的截断误差 $cal(E)_(m,K)(v_star)$ 具有显式的 $K$ 阶，设辅助空间满足以下逼近性质：存在 $r_m>m$，使得对任意 $s>=m$ 与 $v in H^s (Omega) inter H_0^m (Omega)$ 有
-$
-  cal(E)_(m,K)(v)
-  lt.tilde K^(-(min(s, r_m)-m)\/d)
-  norm(v)_(H^s (Omega)),
-$
-<eq:aux-approx-rate>
-其中隐含常数与 $K$、$v$ 无关，$r_m$ 为辅助空间的逼近饱和指数。@eq:aux-approx-rate 是逼近论中标准的网格尺寸型误差估计在拟一致条件 $h tilde.eq K^(-1\/d)$ 下的改写，本文不予证明：有限元插值误差按 $h^(s-m)$ 衰减，见 @BrennerScott2008 定理 4.4.20，逐单元范数到整体 $H^m$ 范数的转换见同书注 4.4.27，饱和指数 $r_m$ 由该定理对局部多项式次数的要求给出。其隐含常数虽与 $K$、$v$ 无关，却依赖于所用族取定的次数与剖分正则性参数，因而随下文为匹配 $r_m$ 而抬高次数一并增大。
-
-在线弹性中，上式逐分量用于 $bold(u)_star$，取 $m=1$、$s=s_(bold(u))$，相应的 Ritz 截断误差记为 $epsilon_("LE","Rtrunc")(K):=cal(E)_(1,K)(bold(u)_star)$。在板弯曲中用于 $w_star$，取 $m=2$、$s=s_w$，相应记为 $epsilon_("KL","Rtrunc")(K):=cal(E)_(2,K)(w_star)$。因此，Ritz 截断误差与字典逼近误差都只要求精确解自身的 Sobolev 正则性。
-
-辅助空间维数 $K$ 与字典规模 $N$ 可分别选取。考虑 $K tilde.eq N$ 的配置，对正则指数为 $s in [m,s_"cap" (d)]$ 的位移或挠度分量，@cor:quasi-uniform-rate 给出的字典逼近阶为 $N^(-(s-m)\/d)$，而 @eq:aux-approx-rate 给出
-$
-  cal(E)_(m,K)(v_star)
-  lt.tilde N^(-(min(s,r_m)-m)\/d) norm(v_star)_(H^s (Omega)).
-$
-由传递估计 @eq:finite-projection-transfer，投影后的逼近误差受这两项之和控制。比较两个误差上界的指数，Ritz 截断误差与该分量的字典逼近阶相匹配的条件为
-$
-  (min(s,r_m)-m)/d >= (s-m)/d,
-  quad "即" quad r_m >= s.
-$
-若要求这一匹配对整个正则性区间 $s in [m,s_"cap" (d)]$ 统一成立，可选取
-$
-  r_m >= s_"cap" (d).
-$
-<eq:degree-match-abstract>
-对于给定解，可按相应分量的正则指数选取 $r_m$。若仅要求 Ritz 截断误差保持整体字典逼近阶 $N^(-beta)$，其中 $beta$ 为相应模型的 $beta_"LE"$ 或 $beta_"KL"$，则比较指数所得的条件为 $min(s,r_m)>=m+d beta$。由 $beta$ 的定义已有 $s>=m+d beta$，故此时取 $r_m>=m+d beta$ 即可。
+本节估计总误差中由约束投影的空间截断与数值积分引入的三类误差。平均迹投影没有检验空间截断，只因区域均值的 Monte Carlo 估计产生积分误差。本质边界投影则先因检验空间截断产生 Ritz 逼近误差，再因 $H^m$ 内积的 Monte Carlo 离散产生求积误差。第一类误差与协调空间无关，后两类误差关于 $K$ 的阶由协调空间族的逼近估计与逆估计决定。本节按此依赖关系依次估计这三类误差。
 
 === 平均迹投影的积分误差
 
-线弹性的采用数值积分的平均迹投影由独立求积规则下各原始应力特征的样本均值构造，并在实现中通过消去一个常数球应力自由度施加。因此离散系数对该独立规则精确满足零平均迹规范，与连续规范之间的偏差则由下述 $epsilon_("LE","trquad")$ 度量。记 Ritz 内积求积所引起的投影场误差为 $epsilon_("LE","Rquad")$，平均迹积分误差为 $epsilon_("LE","trquad")$，并合记
+记平均迹投影在系数球上的一致投影差为
 $
-  epsilon_("LE","projquad")^2
-  := epsilon_("LE","Rquad")^2+epsilon_("LE","trquad")^2.
-$
-其中 $epsilon_("LE","trquad")$ 具体控制系数球上一致的投影差
-$
-  sup_(bold(c) in cal(C)_(N,B))
+  epsilon_("LE","trquad") = sup_(bold(c) in cal(C)_(N,B))
   norm(
     (tilde(Pi)_("tr",Q_"tr")-Pi_"tr")
     hat(bold(sigma))_N (bold(c))
   )_(bold(H)(div)),
 $
-该差是常数球张量，故其散度为零，只需控制独立 Monte Carlo 样本均值与连续平均值之差。分析时先将数值积分后的投影场与精确 $Pi_"tr"$ 投影场比较，再对后者应用 @thm:elasticity-stability。
 
 #theorem(title: [平均迹投影积分误差])[
   在系数约束 $cal(C)_(N,B)$ 下，平均迹投影积分误差满足
@@ -1208,9 +1181,11 @@ $
   $
     (tilde(Pi)_("tr",Q_"tr") - Pi_"tr") hat(bold(sigma))_N (bold(c))
     = - 1/d Delta(bold(c)) bold(I),
-    quad
+  $
+  其中
+  $
     Delta(bold(c))
-    := 1/Q_"tr" sum_(r=1)^(Q_"tr") tr(hat(bold(sigma))_N (bold(c))(bold(y)_r))
+    := 1/Q_"tr" sum_(r=1)^(Q_"tr") tr(hat(bold(sigma))_N (bold(c))(bold(x)_("tr",r)))
     - 1/abs(Omega) integral_Omega tr(hat(bold(sigma))_N (bold(c))) dif x.
   $
   常数球张量的散度为零，且 $norm(bold(I))_(L^2(Omega)) = sqrt(d abs(Omega))$，故投影差的 $bold(H)(div)$ 范数就是 $L^2$ 范数：
@@ -1223,7 +1198,7 @@ $
   $
     Delta(bold(c)) = sum_(j,alpha) c_(j,alpha) tr(bold(T)_alpha) Delta_j,
     quad
-    Delta_j := 1/Q_"tr" sum_(r=1)^(Q_"tr") xi_(bold(sigma),j)(bold(y)_r)
+    Delta_j := 1/Q_"tr" sum_(r=1)^(Q_"tr") xi_(bold(sigma),j)(bold(x)_("tr",r))
     - 1/abs(Omega) integral_Omega xi_(bold(sigma),j) dif x,
   $
   即每个应力特征的迹均值误差 $Delta_j$ 与系数的内积。对该内积用 Cauchy--Schwarz，并注意基 ${bold(T)_alpha}$ 正交归一给出 $sum_alpha tr(bold(T)_alpha)^2 = sum_alpha (bold(T)_alpha, bold(I))_F^2 = norm(bold(I))_F^2 = d$，于是在系数球上
@@ -1232,10 +1207,10 @@ $
     <= B/sqrt(m_N) (sum_(j,alpha) tr(bold(T)_alpha)^2 Delta_j^2)^(1\/2)
     = B sqrt(d/m_N) (sum_(j=1)^N Delta_j^2)^(1\/2).
   $
-  最后对每个 $Delta_j$ 作方差估计：${bold(y)_r}$ 为独立均匀样本，故 $EE Delta_j = 0$，且
+  最后对每个 $Delta_j$ 作方差估计：${bold(x)_("tr",r)}$ 为独立均匀样本，故 $EE Delta_j = 0$，且
   $
     EE Delta_j^2
-    = 1/Q_"tr" op("Var")(xi_(bold(sigma),j)(bold(y)_1))
+    = 1/Q_"tr" op("Var")(xi_(bold(sigma),j)(bold(x)_("tr",1)))
     <= C_xi^2/Q_"tr",
     quad
     C_xi := max_(1<=j<=N) norm(xi_(bold(sigma),j))_(L^oo (Omega)),
@@ -1249,9 +1224,268 @@ $
   即得结论。证毕。
 ]
 
+=== 容许协调空间族
+
+Ritz 投影 $Pi_(D,K)^(m)$ 对任意有限维协调空间 $V_K^(m) subset H_0^m (Omega)$ 都有定义，但空间截断误差的衰减和后续求积方程的谱稳定性都取决于空间族 ${V_K^(m)}_K$ 随 $K$ 加密的方式。为分别提供所需的逼近估计与逆估计，本文考虑下述的容许协调空间族。
+
+#definition(title: [容许协调空间族])[
+  设 $m in {1,2}$。称有限维空间族 ${V_K^(m)}_K$ 为容许协调空间族，若每个 $V_K^(m) subset H_0^m (Omega)$，$dim V_K^(m)=K$，存在 $r_m>m$ 及与 $K$ 无关的常数 $C_"apx"$、$C_"inv"$，使下述两条对族中每个 $K$ 成立。
+
+  + 逼近率：对任意 $s>=m$ 与 $v in H^s (Omega) inter H_0^m (Omega)$，
+    $
+      cal(E)_(m,K)(v)
+      <= C_"apx" K^(-(min(s, r_m)-m)\/d)
+      norm(v)_(H^s (Omega)),
+    $
+    <eq:aux-approx-rate>
+    其中 $C_"apx"$ 可依赖于 $s$，与 $v$ 无关。
+  + 逆估计：对任意 $z_K in V_K^(m)$，
+    $
+      max_(abs(bold(alpha)) <= m)
+      norm(partial^bold(alpha) z_K)_(L^oo (Omega))
+      <= C_"inv" K^(1\/2) norm(z_K)_(H^m (Omega)).
+    $
+    <eq:aux-inverse>
+
+  称 $r_m$ 为该族的逼近饱和指数。
+]<def:aux-admissible>
+
+下述两例在单位盒上给出这样的空间族，二者共用同一组张量积 B 样条空间。
+
+#definition(title: [开放均匀 B 样条基])[
+  设 $Omega=(0,1)^d$、$h^(-1) in NN$ 且 $p>=1$，记
+  $
+    n_h:=h^(-1)+p,
+    quad
+    (upsilon_ell)_(ell=0)^(n_h+p)
+    :=(underbrace(0\, dots.c\, 0, p+1),h,2h,dots,1-h,
+      underbrace(1\, dots.c\, 1, p+1)).
+  $
+  该节点向量的端点各重复 $p+1$ 次，内部节点单重。为避免与系数预算 $B$ 混淆，以直立体 $upright(B)_(i,q)$ 记 B 样条。对 $0<=i<=n_h+p-1$ 定义
+  $
+    upright(B)_(i,0)(x)
+    := cases(
+      1 & quad upsilon_i<=x<upsilon_(i+1),
+      0 & quad "otherwise",
+    )
+  $
+  并对 $1<=q<=p$、$0<=i<=n_h+p-q-1$ 作 Cox--de Boor 递推
+  $
+    upright(B)_(i,q)(x)
+    := (x-upsilon_i)/(upsilon_(i+q)-upsilon_i)
+    upright(B)_(i,q-1)(x)
+    + (upsilon_(i+q+1)-x)/(upsilon_(i+q+1)-upsilon_(i+1))
+    upright(B)_(i+1,q-1)(x).
+  $
+  分母为零的项约定为零，最终得到的 $p$ 次基函数在 $x=1$ 处取左极限值。相应的 $d$ 维张量积空间为
+  $
+    bold(S)_(p,h)^d
+    :=(span {upright(B)_(i,p):0<=i<=n_h-1})^(times.o d).
+  $
+]<def:bspline-basis>
+
+开放端点性质给出
+$
+             upright(B)_(i,p)|_(partial(0, 1))=0 & arrow.l.r.double 1<=i<=n_h-2, \
+  upright(B)_(i,p)|_(partial(0, 1))
+  =partial_x upright(B)_(i,p)|_(partial(0, 1))=0 & arrow.l.r.double 2<=i<=n_h-3.
+$
+因而，对 $m in {1,2}$、$p>=m$ 且 $n_h>=2m+1$，
+$
+        bold(S)_(p,h)^d inter H_0^m (Omega) & =(span {upright(B)_(i,p):m<=i<=n_h-1-m})^(times.o d), \
+  dim (bold(S)_(p,h)^d inter H_0^m (Omega)) & =(n_h-2m)^d.
+$
+<eq:bspline-conforming-subspaces>
+
+@fig:ls-bspline-basis 以 $d=1$、$p=2$、$h=1\/4$ 为例展示 @def:bspline-basis，此时 $n_h=6$。图中以 $upright(B)_i:=upright(B)_(i,2)$ 简记六个二次 B 样条，轴下方堆叠的短线标出节点重数。
+
+#figure(
+  code-image(class: "center", theme => canvas({
+    import draw: *
+
+    // 具体例子: p = 2, h = 1/4, 节点 (0,0,0, 1/4, 1/2, 3/4, 1,1,1)
+    let W = 7.2
+    let H = 2.2
+
+    let col-keep = theme.main-color
+    let col-h1 = rgb("#b3261e")
+    let col-h2 = rgb("#1a5fb4")
+    let col-grid = rgb("#9aa0a6")
+
+    // 六个二次 B 样条
+    let B0(x) = if x <= 0.25 { calc.pow(1 - 4 * x, 2) } else { 0 }
+    let B1(x) = if x <= 0.25 { 8 * x - 24 * x * x } else if x <= 0.5 { 2 - 8 * x + 8 * x * x } else { 0 }
+    let B2(x) = if x <= 0.25 { 8 * x * x } else if x <= 0.5 { -16 * x * x + 12 * x - 1.5 } else if x <= 0.75 {
+      8 * x * x - 12 * x + 4.5
+    } else { 0 }
+    let B3(x) = B2(1 - x)
+    let B4(x) = B1(1 - x)
+    let B5(x) = if x >= 0.75 { calc.pow(4 * x - 3, 2) } else { 0 }
+    let Bs = (B0, B1, B2, B3, B4, B5)
+    let cols = (col-h1, col-h2, col-keep, col-keep, col-h2, col-h1)
+
+    // 左：单变量基
+    for k in (1, 2, 3) {
+      line((W * k / 4, 0), (W * k / 4, H), stroke: (paint: col-grid, thickness: 0.4pt, dash: "dashed"))
+    }
+    line((0, 0), (W, 0), stroke: 0.7pt + col-keep)
+
+    let n-samples = 48
+    for (i, Bi) in Bs.enumerate() {
+      let pts = ()
+      for s in range(n-samples + 1) {
+        let x = s / n-samples
+        pts.push((W * x, H * Bi(x)))
+      }
+      line(..pts, stroke: 1.1pt + cols.at(i))
+    }
+
+    // 曲线峰值旁标注直立体 B_i
+    let label-pos = (
+      (0.065 * W, 0.88 * H),
+      (0.125 * W + 0.18, 0.72 * H),
+      (0.375 * W, 0.86 * H),
+      (0.625 * W, 0.86 * H),
+      (0.875 * W - 0.18, 0.72 * H),
+      (0.935 * W, 0.88 * H),
+    )
+    for i in range(6) {
+      content(
+        label-pos.at(i),
+        text(0.75em, fill: cols.at(i), eval("$upright(B)_" + str(i) + "$", mode: "markup")),
+      )
+    }
+
+    // 节点重数：轴下方堆叠短横线
+    for (xk, m) in ((0, 3), (0.25, 1), (0.5, 1), (0.75, 1), (1, 3)) {
+      for r in range(m) {
+        line(
+          (W * xk - 0.09, -0.10 - r * 0.055),
+          (W * xk + 0.09, -0.10 - r * 0.055),
+          stroke: 1.2pt + col-grid,
+        )
+      }
+    }
+    let knot-labels = ((0, $0$), (0.25, $1\/4$), (0.5, $1\/2$), (0.75, $3\/4$), (1, $1$))
+    for (xk, lab) in knot-labels {
+      content((W * xk, -0.42), text(0.7em, fill: col-grid, lab))
+    }
+
+    // 图例
+    let ly = -0.85
+    line((0.2, ly), (0.55, ly), stroke: 1.1pt + col-h1)
+    content((1.05, ly), text(0.7em)[迹非零])
+    line((2.1, ly), (2.45, ly), stroke: 1.1pt + col-h2)
+    content((3.5, ly), text(0.7em)[仅法向导数非零])
+    line((4.8, ly), (5.15, ly), stroke: 1.1pt + col-keep)
+    content((6.45, ly), text(0.7em)[迹与法向导数均为零])
+  })),
+  caption: [$d=1$ 开放均匀节点向量上的单变量 B 样条基（$p=2$，$h=1\/4$）],
+)<fig:ls-bspline-basis>
+
+#example(title: [单位盒上的 $H_0^1$ B 样条空间])[
+  取 $p>=1$ 且 $n_h>=3$。按 @eq:bspline-conforming-subspaces 筛除迹非零的张量积基函数，得
+  $
+    V_h^(1)
+    :=(span {upright(B)_(i,p):1<=i<=n_h-2})^(times.o d)
+    =bold(S)_(p,h)^d inter H_0^1(Omega),
+    quad K:=dim V_h^(1).
+  $
+  随 $h$ 减小而逐次加密网格，所得空间满足 @def:aux-admissible，构成容许协调空间族，其逼近饱和指数为 $r_1=p+1$。
+]
+
+#proof[
+  固定 $p$。内部节点单重，结合 @eq:bspline-conforming-subspaces 得
+  $
+    bold(S)_(p,h)^d & subset C^(p-1)(overline(Omega)) inter H^p(Omega)
+                      subset H^1(Omega), \
+            V_h^(1) & =bold(S)_(p,h)^d inter H_0^1(Omega)
+                      subset H_0^1(Omega), \
+                  K & =(n_h-2)^d=(h^(-1)+p-2)^d
+                      tilde.eq h^(-d).
+  $
+  保齐次边界的样条准插值估计与逐单元逆估计分别给出（参见 @Schumaker2007 与 @TakacsTakacs2016）
+  $
+    inf_(z_h in V_h^(1)) norm(v-z_h)_(H^1(Omega))
+    &lt.tilde h^(min(s, p+1)-1) norm(v)_(H^s(Omega)),
+    && s>=1,
+    quad v in H^s(Omega) inter H_0^1(Omega), \
+    max_(abs(bold(alpha))<=1)
+    norm(partial^bold(alpha) z_h)_(L^oo(Omega))
+    &lt.tilde h^(-d\/2) norm(z_h)_(H^1(Omega)),
+    && z_h in V_h^(1).
+  $
+  代入 $h tilde.eq K^(-1\/d)$ 即得 @eq:aux-approx-rate、@eq:aux-inverse 与 $r_1=p+1$。证毕。
+]
+
+#example(title: [单位盒上的 $H_0^2$ B 样条空间])[
+  取 $p>=2$ 且 $n_h>=5$。按 @eq:bspline-conforming-subspaces 筛除迹或法向导数非零的张量积基函数，得
+  $
+    V_h^(2)
+    :=(span {upright(B)_(i,p):2<=i<=n_h-3})^(times.o d)
+    =bold(S)_(p,h)^d inter H_0^2(Omega),
+    quad K:=dim V_h^(2).
+  $
+  随 $h$ 减小而逐次加密网格，所得空间满足 @def:aux-admissible，构成容许协调空间族，其逼近饱和指数为 $r_2=p+1$。
+]
+
+#proof[
+  固定 $p$。内部节点单重，结合 @eq:bspline-conforming-subspaces 得
+  $
+    bold(S)_(p,h)^d & subset C^(p-1)(overline(Omega)) inter H^p(Omega)
+                      subset H^2(Omega), \
+            V_h^(2) & =bold(S)_(p,h)^d inter H_0^2(Omega)
+                      subset H_0^2(Omega), \
+                  K & =(n_h-4)^d=(h^(-1)+p-4)^d
+                      tilde.eq h^(-d).
+  $
+  保齐次边界的样条准插值估计与逐单元逆估计分别给出（参见 @Schumaker2007 与 @TakacsTakacs2016）
+  $
+    inf_(z_h in V_h^(2)) norm(v-z_h)_(H^2(Omega))
+    &lt.tilde h^(min(s, p+1)-2) norm(v)_(H^s(Omega)),
+    && s>=2,
+    quad v in H^s(Omega) inter H_0^2(Omega), \
+    max_(abs(bold(alpha))<=2)
+    norm(partial^bold(alpha) z_h)_(L^oo(Omega))
+    &lt.tilde h^(-d\/2) norm(z_h)_(H^2(Omega)),
+    && z_h in V_h^(2).
+  $
+  代入 $h tilde.eq K^(-1\/d)$ 即得 @eq:aux-approx-rate、@eq:aux-inverse 与 $r_2=p+1$。证毕。
+]
+
+上述两例直接说明 @def:aux-admissible 所定义的空间族非空。
+
+协调空间维数 $K$ 与字典规模 $N$ 可分别选取。考虑 $K tilde.eq N$ 的配置，对正则指数为 $s in [m,s_"cap" (d)]$ 的位移或挠度分量，@cor:quasi-uniform-rate 给出的字典逼近阶为 $N^(-(s-m)\/d)$，而 @eq:aux-approx-rate 给出
+$
+  cal(E)_(m,K)(v_star)
+  lt.tilde N^(-(min(s, r_m)-m)\/d) norm(v_star)_(H^s (Omega)).
+$
+由传递估计 @eq:finite-projection-transfer，投影后的逼近误差受这两项之和控制。对给定解，为使 Ritz 截断误差不降低整体字典逼近阶 $N^(-beta)$，其中 $beta$ 为相应模型的 $beta_"LE"$ 或 $beta_"KL"$，只需令上述截断误差上界的衰减指数满足
+$
+  (min(s, r_m)-m)/d >= beta,
+$
+即 $min(s, r_m) >= m+d beta$。由 $beta$ 的定义，$m+d beta=min_chi s_chi$，而位移或挠度的正则指数 $s>=min_chi s_chi$，故上述指数条件等价于
+$
+  r_m >= m+d beta.
+$
+因此，保持给定解的整体字典逼近阶，只需协调空间的逼近饱和指数达到各物理变量中最低的正则指数。
+
+若希望协调空间的选取不依赖于具体解的正则性，可利用 $m+d beta=min_chi s_chi<=s_"cap" (d)$，采用更强的统一充分条件
+$
+  r_m >= s_"cap" (d).
+$
+<eq:degree-match-abstract>
+这一条件对允许的全部正则性配置都保证上述要求。当所有物理变量的正则指数均取 $s_"cap" (d)$ 时，两种条件一致。
+
+对上述两个单位盒 B 样条族，$r_m=p+1$，故统一充分条件具体化为
+$
+  p+1 >= s_"cap" (d)=(d+2k+1)/2.
+$
+<eq:degree-match>
+
 === Ritz 投影的 Monte Carlo 积分误差
 
-字典逼近误差与有限维投影传递估计只涉及 Ritz 截断误差。完全离散算法使用 $tilde(Pi)_(D,K,Q_"R")^(m)$，因此还须控制本节的投影积分误差，才能把数值积分投影场与精确积分的 Ritz 投影场连接起来。本节的采样误差由投影样本数 $Q_"R"$ 控制。训练泛函所用的样本数为 $Q$，相应的一致偏差在 @sec:train-mc 中估计。
+前述协调空间的逼近估计已经给出 Ritz 空间截断误差的 $K$ 阶。完全离散算法进一步以 $tilde(Pi)_(D,K,Q_"R")^(m)$ 代替精确积分的 $Pi_(D,K)^(m)$，因此还须利用该空间的逆估计控制投影方程的 Monte Carlo 积分误差。
 
 对于线弹性问题，定义位移场在系数球上的一致 Ritz 投影积分误差为
 $
@@ -1282,14 +1516,15 @@ $
   cal(E)_("R",delta)
   := {norm(bold(G)_(K,Q_"R")-bold(I)_K)_2 <= delta}.
 $
-相应的广义杠杆上界记为
+记 $EE_"R" [dot]$ 为对 Ritz 投影构造样本 ${bold(x)_("R",r)}_(r=1)^(Q_"R")$ 取的期望，$EE_"R" [dot | cal(E)_("R",delta)]$ 为条件于谱稳定事件的条件期望。
+定义
 $
   C_("R",K)^(m)
   := abs(Omega) op("ess sup")_(bold(x) in Omega)
   sup_(0 != z_K in V_K^(m))
   norm(cal(L)_m (bold(x))z_K)_(ell^2)^2 / norm(z_K)_(H^m (Omega))^2.
 $
-以 $sqrt(abs(Omega)) cal(L)_m$ 为采样算子，上式即 @Adcock2025 定义 9.1 与式 (9.3) 中广义 Christoffel 函数的本质上确界。为区别于辅助空间维数 $K$，本文将这一上界记为 $C_("R",K)^(m)$。
+若以 $sqrt(abs(Omega)) cal(L)_m$ 为采样算子，上式即 @Adcock2025 定义 9.1 与式 (9.3) 中广义 Christoffel 函数的本质上确界。
 
 #theorem(title: [Ritz 投影的 Monte Carlo 积分误差])[
   设 $0<delta<1$、$0<eta<1$。若
@@ -1297,11 +1532,11 @@ $
     Q_"R"
     >= C_delta C_("R",K)^(m) log(2 K/eta),
   $
-  其中 $C_delta>0$ 仅依赖于 $delta$，则
+  其中 $C_delta>0$ 仅依赖于 $delta$，则谱稳定事件满足
   $
     bb(P)(cal(E)_("R",delta)) >= 1-eta,
   $
-  且条件于该谱稳定事件有
+  此外，条件于谱稳定事件 $cal(E)_("R",delta)$，Ritz 投影积分误差的均方根满足
   $
     (
       EE_"R" [epsilon_"Rquad"^2 | cal(E)_("R",delta)]
@@ -1330,9 +1565,9 @@ $
   $
     bold(G)_(K,Q_"R")
     = 1/Q_"R" sum_(r=1)^(Q_"R")
-    bold(A)(bold(x)_r^"R")^T bold(A)(bold(x)_r^"R"),
+    bold(A)(bold(x)_("R",r))^T bold(A)(bold(x)_("R",r)),
     quad
-    EE_"R" [bold(A)(bold(x)_1^"R")^T bold(A)(bold(x)_1^"R")]
+    EE_"R" [bold(A)(bold(x)_("R",1))^T bold(A)(bold(x)_("R",1))]
     = bold(I)_K.
   $
   由同一正交归一性，$norm(z_K)_(H^m)=norm(bold(a))_(ell^2)$。代入 @eq:sampling-matrix 并用 $C_("R",K)^(m)$ 的定义，几乎处处有
@@ -1367,10 +1602,9 @@ $
   $
   且 $EE_"R" bold(d)_(Q_"R")=bold(0)$。由样本独立性与连续正交性，交叉项的期望为零。利用第一步定义的 $bold(A)(bold(x))$ 及其算子范数界，得到
   $
-    EE_"R" norm(bold(d)_(Q_"R"))_(ell^2)^2
-    &= 1/Q_"R" integral_Omega
-    norm(bold(A)(bold(x))^T cal(L)_m (bold(x))r)_(ell^2)^2 dif x \
-    &<= C_("R",K)^(m)/Q_"R" norm(r)_(H^m (Omega))^2.
+    EE_"R" norm(bold(d)_(Q_"R"))_(ell^2)^2 & = 1/Q_"R" integral_Omega
+                                             norm(bold(A)(bold(x))^T cal(L)_m (bold(x))r)_(ell^2)^2 dif x \
+                                           & <= C_("R",K)^(m)/Q_"R" norm(r)_(H^m (Omega))^2.
   $
 
   第三步：系数球上的一致估计与条件期望。记需投影场的分量数为 $n_v$：线弹性中 $n_v=d$，板弯曲中 $n_v=1$。令 $xi_(v,j)$ 为相应原始标量特征。用系数球的半径 $B/sqrt(m_N)$、矩阵算子范数不超过 Frobenius 范数，并在 $cal(E)_("R",delta)$ 上使用
@@ -1390,24 +1624,53 @@ $
   证毕。
 ]
 
-若辅助空间还满足局部 Sobolev 逆估计
-$
-  abs(Omega) norm(cal(L)_m (bold(x))z_K)_(ell^2)^2
-  lt.tilde h_K^(-d) norm(z_K)_(H^m (Omega))^2,
-  quad h_K tilde.eq K^(-1\/d),
-$
-则 $C_("R",K)^(m) lt.tilde K$，@thm:rquad-rate 的条件误差界相应化为
-$
-  (EE_"R" [epsilon_"Rquad"^2 | cal(E)_("R",delta)])^(1\/2)
-  lt.tilde B sqrt(K/Q_"R").
-$
-这一结论只需上述逆估计。固定次数、拟一致网格上的协调有限元或样条空间可据此验证（参见 @Schumaker2007 与 @TakacsTakacs2016）。
+对本文采用的容许协调空间族，@thm:rquad-rate 中的 $C_("R",K)^(m)$ 及相应结论可进一步具体化如下。
+
+#corollary(title: [容许协调空间上的 Ritz 投影积分误差])[
+  设 ${V_K^(m)}_K$ 为满足 @def:aux-admissible 的容许协调空间族，则
+  $
+    K/n_(bold(alpha))
+    <= C_("R",K)^(m)
+    <= n_(bold(alpha)) abs(Omega) C_"inv"^2 K.
+  $
+  <eq:leverage-bound>
+  因此，在 @thm:rquad-rate 的其余假设下，只要
+  $
+    Q_"R"
+    >= C_delta n_(bold(alpha)) abs(Omega) C_"inv"^2
+       K log(2K/eta),
+  $
+  则谱稳定事件满足 $bb(P)(cal(E)_("R",delta)) >= 1-eta$。此外，条件于谱稳定事件 $cal(E)_("R",delta)$，Ritz 投影积分误差的均方根满足
+  $
+    (EE_"R" [epsilon_"Rquad"^2 | cal(E)_("R",delta)])^(1\/2)
+    lt.tilde B sqrt(K/Q_"R").
+  $
+  换言之，固定 $delta$ 与 $eta$ 后，充分的样本规模为
+  $Q_"R" gt.tilde K log(2K\/eta)$，而条件均方根误差为
+  $O(B sqrt(K/Q_"R"))$。
+]<cor:rquad-admissible>
+
+#proof[
+  由逆估计 @eq:aux-inverse，对任意 $z_K in V_K^(m)$ 与几乎处处的 $bold(x) in Omega$ 有
+  $
+    abs(Omega) norm(cal(L)_m (bold(x))z_K)_(ell^2)^2
+    <= n_(bold(alpha)) abs(Omega) C_"inv"^2 K
+       norm(z_K)_(H^m (Omega))^2,
+  $
+  这给出 @eq:leverage-bound 的上界。
+
+  再取 $V_K^(m)$ 的任意 $H^m$ 正交归一基 ${phi_k}_(k=1)^K$。矩阵
+  $[cal(L)_m (bold(x)) phi_1, dots, cal(L)_m (bold(x)) phi_K]$
+  的秩不超过 $n_(bold(alpha))$，故其谱范数平方不小于 Frobenius 范数平方的 $1\/n_(bold(alpha))$。后者在 $Omega$ 上的积分为
+  $sum_(k=1)^K norm(phi_k)_(H^m (Omega))^2=K$，从而
+  $C_("R",K)^(m)>=K\/n_(bold(alpha))$。最后将上界代入 @thm:rquad-rate，即得样本条件、谱稳定概率与条件误差估计。证毕。
+]
 
 == Monte Carlo 训练泛函的一致偏差 <sec:train-mc>
 
-本节研究训练泛函采用 Monte Carlo 积分时，在系数球 $cal(C)_(N,B)$ 上的一致偏差。先固定用于构造约束投影的全部样本，从而固定系数到投影场 $tilde(bold(z))_(N,K)(bold(c))$ 的线性映射；随后利用与投影构造样本独立的均匀训练样本，比较同一投影场上的连续泛函与经验泛函。投影构造对这一估计的影响通过投影特征及其导数的一致上界体现。
+本节研究训练泛函采用 Monte Carlo 积分时，在系数球 $cal(C)_(N,B)$ 上的一致偏差。先固定用于构造约束投影的全部样本，从而固定系数到投影场 $tilde(bold(z))_(N,K)(bold(c))$ 的线性映射。随后利用与投影构造样本独立的均匀训练样本，比较同一投影场上的连续泛函与经验泛函。投影构造对这一估计的影响通过投影特征及其导数的一致上界体现。
 
-以下分析同时适用于线弹性与板弯曲，省略模型下标及固定的载荷参数，将相应的连续泛函与经验泛函分别记为 $cal(J)$ 与 $cal(J)_Q$。记 $cal(G)_"proj"$ 为投影构造样本生成的 $sigma$-代数：线弹性中包含构造 Ritz 投影所用的样本 ${bold(x)_r^"R"}_(r=1)^(Q_"R")$ 与平均迹样本 ${bold(y)_r}_(r=1)^(Q_"tr")$，板弯曲中仅包含前者。训练样本 ${bold(x)_ell}_(ell=1)^Q$ 与 $cal(G)_"proj"$ 独立。下文对可积或非负随机变量使用条件期望记号
+以下分析同时适用于线弹性与板弯曲，省略模型下标及固定的载荷参数，将相应的连续泛函与经验泛函分别记为 $cal(J)$ 与 $cal(J)_Q$。记 $cal(G)_"proj"$ 为投影构造样本生成的 $sigma$-代数：线弹性中包含构造 Ritz 投影所用的样本 ${bold(x)_("R",r)}_(r=1)^(Q_"R")$ 与平均迹样本 ${bold(x)_("tr",r)}_(r=1)^(Q_"tr")$，板弯曲中仅包含前者。训练样本 ${bold(x)_ell}_(ell=1)^Q$ 与 $cal(G)_"proj"$ 独立。下文对可积或非负随机变量使用条件期望记号
 $
   EE_"train" [dot] := EE [dot | cal(G)_"proj"].
 $
@@ -1416,41 +1679,64 @@ $
 
 映射 $bold(c) |-> tilde(bold(z))_(N,K)(bold(c))$ 是线性的，故零系数向量 $bold(0) in RR^(m_N)$ 对应的投影场 $tilde(bold(z))_(N,K)(bold(0))$ 为零场。以此为基准，定义关于系数的中心化泛函
 $
-  cal(J)^circle.stroked.tiny (bold(c))
-  &:= cal(J)(tilde(bold(z))_(N,K)(bold(c)))
-      - cal(J)(tilde(bold(z))_(N,K)(bold(0))), \
-  cal(J)_Q^circle.stroked.tiny (bold(c))
-  &:= cal(J)_Q (tilde(bold(z))_(N,K)(bold(c)))
-      - cal(J)_Q (tilde(bold(z))_(N,K)(bold(0))).
+    cal(J)^circle.stroked.tiny (bold(c)) & := cal(J)(tilde(bold(z))_(N,K)(bold(c)))
+                                           - cal(J)(tilde(bold(z))_(N,K)(bold(0))), \
+  cal(J)_Q^circle.stroked.tiny (bold(c)) & := cal(J)_Q (tilde(bold(z))_(N,K)(bold(c)))
+                                           - cal(J)_Q (tilde(bold(z))_(N,K)(bold(0))).
 $
 <eq:centered-risk>
-被扣除的两项分别为载荷模平方的积分及其 Monte Carlo 估计，均与 $bold(c)$ 无关。上述平移不改变各泛函的极小点，也不改变离散目标值的次优性。以下估计中心化后的一致偏差
+被扣除的两项分别为载荷模平方的积分及其 Monte Carlo 估计，均与 $bold(c)$ 无关。这一平移不改变各泛函的极小点，也不改变离散目标值的次优性。以下估计中心化后的一致偏差
 $
   EE_"train" sup_(bold(c) in cal(C)_(N,B))
   abs(cal(J)^circle.stroked.tiny (bold(c))-cal(J)_Q^circle.stroked.tiny (bold(c))).
 $
 
-训练所得系数依赖于训练样本，因此需要对整个系数球作一致控制。采用 @SiegelHongJinHaoXu2023 第 7.1 节的 Rademacher 方法，对称化将上述一致偏差归结为损失函数类的复杂度，二次损失收缩再将其归结为残差类的复杂度与一致上界。@LiuMaoXu2025 第 7 节给出了带系数约束的线性化网络在能量泛函情形下的分析。本文对混合最小二乘残差作相应推导：固定投影特征后，各齐次残差分量都是系数的线性函数，可统一使用有限线性类的 Rademacher 估计。
+采用 @SiegelHongJinHaoXu2023 第 7.1 节的 Rademacher 方法，对称化将上述一致偏差归结为损失函数类的复杂度，二次损失收缩再将其归结为残差类的复杂度与一致上界。
 
 === 投影特征与导数一致界
 
-用 Rademacher 复杂度度量投影特征所生成函数类的采样偏差。对 $Omega$ 上的函数类 $cal(F)$，定义
-$
-  frak(R)_Q (cal(F))
-  := EE_(bold(x)_ell) EE_(epsilon_ell)
-  sup_(h in cal(F)) abs(1/Q sum_(ell=1)^Q epsilon_ell h(bold(x)_ell)),
-$
-其中 ${bold(x)_ell}$ 为独立均匀样本，${epsilon_ell}$ 为独立 Rademacher 变量（各以 $1\/2$ 概率取 $plus.minus 1$）。此处采用上确界内带绝对值的约定，等价于对 $cal(F) union (-cal(F))$ 使用不带绝对值的定义。这样可直接估计双侧一致偏差。
-对于由投影构造样本确定的函数类，以下均在条件于 $cal(G)_"proj"$ 后使用该定义；其中的期望对训练样本与辅助 Rademacher 变量取。
+用 Rademacher 复杂度度量投影特征所生成函数类的采样偏差。
 
-#lemma(title: [对称化（@SiegelHongJinHaoXu2023 定理 4）])[
-  对 $Omega$ 上的函数类 $cal(F)$ 与独立均匀样本，
+#definition(title: [Rademacher 复杂度])[
+  设 $cal(F)$ 为 $Omega$ 上的非空实值可测函数类，${bold(x)_ell}_(ell=1)^Q$ 为 $Omega$ 上的独立均匀样本。取相互独立的 Rademacher 随机变量 ${epsilon_ell}_(ell=1)^Q$，即每个变量均满足
+  $
+    bb(P)(epsilon_ell = 1) = bb(P)(epsilon_ell = -1) = 1/2,
+    quad ell = 1, dots, Q,
+  $
+  并令整组随机变量独立于全部训练样本和投影构造样本。定义 $cal(F)$ 关于均匀分布的 Rademacher 复杂度为
+  $
+    frak(R)_Q (cal(F))
+    := EE_(bold(x)_ell) EE_(epsilon_ell)
+    sup_(h in cal(F)) 1/Q sum_(ell=1)^Q epsilon_ell h(bold(x)_ell).
+  $
+]<def:rademacher-complexity>
+
+#lemma(title: [双侧对称化])[
+  设 $cal(F)$ 为 $Omega$ 上包含零函数的实值可积函数类，${bold(x)_ell}_(ell=1)^Q$ 为 $Omega$ 上的独立均匀样本，并假设所涉上确界可测。则
   $
     EE sup_(h in cal(F))
     abs(1/Q sum_(ell=1)^Q h(bold(x)_ell) - 1/abs(Omega) integral_Omega h dif x)
-    <= 2 frak(R)_Q (cal(F)).
+    <= 4 frak(R)_Q (cal(F)).
   $
 ]<lem:symmetrization>
+
+#proof[
+  记 $P h := 1/abs(Omega) integral_Omega h dif x$ 与 $P_Q h := 1/Q sum_(ell=1)^Q h(bold(x)_ell)$，并用一组与训练样本独立同分布的样本 ${bold(x)'_ell}_(ell=1)^Q$ 定义样本均值 $P'_Q h$。由 Jensen 不等式与两组样本的交换对称性，
+  $
+    EE sup_(h in cal(F)) (P_Q h-P h) & <= EE sup_(h in cal(F)) (P_Q h-P'_Q h) \
+                                     & = EE_(bold(x)_ell, bold(x)'_ell, epsilon_ell)
+                                       sup_(h in cal(F)) 1/Q sum_(ell=1)^Q
+                                       epsilon_ell (h(bold(x)_ell)-h(bold(x)'_ell)) \
+                                     & <= 2 frak(R)_Q (cal(F)).
+  $
+  最后一步分别估计两组样本的上确界，并利用随机符号的对称性。同理，$EE sup_(h in cal(F)) (P h-P_Q h) <= 2 frak(R)_Q (cal(F))$。由于 $0 in cal(F)$，两种单侧上确界均非负，故
+  $
+    sup_(h in cal(F)) abs(P_Q h-P h)
+    <= sup_(h in cal(F)) (P_Q h-P h)
+    + sup_(h in cal(F)) (P h-P_Q h).
+  $
+  对训练样本取期望即得结论。证毕。
+]
 
 由对称化估计，一致训练偏差可归结为损失类的复杂度。损失由投影场的残差构成，因此先明确两类模型的投影特征。分块由各模型的投影作用范围给出：线弹性的 $tilde(Pi)_("tr",Q_"tr")$ 只作用于应力块，板弯曲的弯矩块保持原始字典。边界投影 $tilde(Pi)_(D,K,Q_"R")^(m)$ 在线弹性中逐分量作用于位移（$m=1$），在板弯曲中作用于挠度（$m=2$），故每个模型都只需投影 $N$ 个标量特征。据此将投影基场的全部标量分量分成两族，线弹性为
 $
@@ -1477,7 +1763,7 @@ $
   C_(Pi,K) := sup_(g in cal(D)_(N,K))
   norm(g)_(L^oo (Omega)).
 $
-该定义表示：每个投影特征及其至多 $m$ 阶导数的绝对值，在 $Omega$ 上几乎处处不超过同一个常数 $C_(Pi,K)$。这里“一致”是指该上界适用于族中的所有特征与导数。由于 $cal(D)_(N,K)$ 为有限集，上述上确界可取为最大值，但其有限性仍需假设。$C_(Pi,K)$ 一般依赖于 $N$、$K$ 与投影构造样本；条件于 $cal(G)_"proj"$ 后它是确定的，记号仅显式标出 $K$。先以该上界陈述一般训练偏差估计，再利用本文投影构造的性质给出关于 $K$ 的显式界。
+该定义表示：每个投影特征及其至多 $m$ 阶导数的绝对值，在 $Omega$ 上几乎处处不超过同一个常数 $C_(Pi,K)$。这里“一致”是指该上界适用于族中的所有特征与导数。先以该上界陈述一般训练偏差估计，再利用本文投影构造的性质给出关于 $K$ 的显式界。
 
 导数一致界同时控制各齐次残差分量的取值范围，因而可通过收缩估计，将残差类的复杂度转化为二次损失类的复杂度。所需估计如下，参见 @SiegelHongJinHaoXu2023 定理 5 的证明。
 
@@ -1519,7 +1805,7 @@ $
       + norm(f)_(L^oo (Omega)) B C_(Pi,K)
     ) Q^(-1\/2).
   $
-  两式在满足上述假设的投影样本实现上几乎处处成立。隐含常数仅依赖于 $Omega$、$d$、$mu$ 及板厚 $h$（板弯曲情形），不依赖于 $N$、$Q$、$K$、$B$、$lambda$ 与投影样本的具体实现；投影构造的影响由 $C_(Pi,K)$ 体现。
+  两式在满足上述假设的投影样本实现上几乎处处成立。隐含常数仅依赖于 $Omega$、$d$、$mu$ 及板厚 $h$（板弯曲情形），不依赖于 $N$、$Q$、$K$、$B$、$lambda$ 与投影样本的具体实现。投影构造的影响由 $C_(Pi,K)$ 体现。
 ]<thm:train-generalization>
 
 #proof[
@@ -1547,14 +1833,14 @@ $
   对固定训练样本，使用线性类的 Rademacher 估计（@ShalevShwartzBenDavid2014 第 26.2 节），并由 Cauchy--Schwarz 与 Rademacher 变量的独立性，
   $
     EE_(epsilon_ell) sup_(bold(c) in cal(C)_(N,B))
-    abs(1/Q sum_(ell=1)^Q epsilon_ell g_(bold(c)) (bold(x)_ell))
+    1/Q sum_(ell=1)^Q epsilon_ell g_(bold(c)) (bold(x)_ell)
     &= B/(sqrt(m_N) Q) EE_(epsilon_ell)
     norm(sum_(ell=1)^Q epsilon_ell bold(a)_"res" (bold(x)_ell))_(ell^2) \
     &<= B/(sqrt(m_N) Q)
     (sum_(ell=1)^Q norm(bold(a)_"res" (bold(x)_ell))_(ell^2)^2)^(1\/2) \
     &lt.tilde B C_(Pi,K) Q^(-1\/2).
   $
-  再对训练样本取期望，得 $frak(R)_Q (cal(F)_"res") lt.tilde B C_(Pi,K) Q^(-1\/2)$。系数球的缩放抵消了特征维数带来的 $sqrt(m_N)$ 因子；该界仍可通过 $B$ 与 $C_(Pi,K)$ 依赖于 $N$。
+  再对训练样本取期望，得 $frak(R)_Q (cal(F)_"res") lt.tilde B C_(Pi,K) Q^(-1\/2)$。系数球的缩放抵消了特征维数带来的 $sqrt(m_N)$ 因子，但该界仍可通过 $B$ 与 $C_(Pi,K)$ 依赖于 $N$。
 
   第二步：中心化损失类的复杂度。按 @eq:centered-risk 扣除载荷平方项后，中心化泛函的被积函数为齐次残差分量的平方和，加上平衡残差与载荷的交叉项。记这些被积函数组成的类为 $cal(H)_"loss"$。对各标量残差类应用 @lem:quadratic-structural，并利用 Rademacher 复杂度的次可加性求和，在线弹性中得到
   $
@@ -1569,26 +1855,59 @@ $
     ) B C_(Pi,K) Q^(-1\/2).
   $
 
-  第三步：对称化。训练样本与投影构造样本独立，故条件于 $cal(G)_"proj"$ 后仍为独立均匀样本。对固定的损失类 $cal(H)_"loss"$ 应用 @lem:symmetrization，并计入区域测度，得到
+  第三步：对称化。训练样本与投影构造样本独立，故条件于 $cal(G)_"proj"$ 后仍为独立均匀样本。零系数向量对应恒为零的中心化被积函数，故 $0 in cal(H)_"loss"$。对固定的损失类 $cal(H)_"loss"$ 应用 @lem:symmetrization，并计入区域测度，得到
   $
     EE_"train" sup_(bold(c) in cal(C)_(N,B))
     abs(cal(J)^circle.stroked.tiny (bold(c))-cal(J)_Q^circle.stroked.tiny (bold(c)))
-    <= 2 abs(Omega) frak(R)_Q (cal(H)_"loss").
+    <= 4 abs(Omega) frak(R)_Q (cal(H)_"loss").
   $
   代入第二步的两条复杂度界即得结论。证毕。
 ]
 
-=== 辅助空间维数的显式依赖
+=== 协调空间维数的显式依赖
 
-@thm:train-generalization 以投影特征的导数一致界 $C_(Pi,K)$ 为输入。为将该界写成辅助空间维数 $K$ 的显式函数，以下对本文的投影构造附加假设
-$
-  C_(Pi,K) lt.tilde K^(1\/2).
-$
-<eq:envelope-rate>
-该界在 @thm:rquad-rate 的谱稳定事件 $cal(E)_("R",delta)$ 上对全部投影构造样本的实现一致成立，隐含常数与 $N$、$K$、$B$ 及 $lambda$ 无关。对固定次数、拟一致网格上的协调有限元或样条空间，在投影后特征具有一致 $H^m$ 稳定性的条件下，上式可由局部 Sobolev 逆估计得到。常数可依赖于次数、网格拟一致性与投影稳定性界。Gram 矩阵的谱稳定性保证投影方程可解，导数一致界则还需上述特征稳定性与逆估计。
+@thm:train-generalization 以投影特征的导数一致界 $C_(Pi,K)$ 为输入。对容许协调空间族，该界在谱稳定事件上是 $K$ 的显式函数：逆估计 @eq:aux-inverse 把导数点值归结为 $H^m$ 范数，Gram 矩阵的谱稳定性则给出求积 Ritz 投影的一致 $H^m$ 稳定性。
 
-#corollary(title: [训练泛函一致偏差关于辅助空间维数的估计])[
-  在 @thm:train-generalization 的假设下，若 @eq:envelope-rate 在 $cal(E)_("R",delta)$ 上一致成立，则在该事件上，线弹性满足
+#lemma(title: [投影特征的导数一致界])[
+  设容许协调空间族满足 @def:aux-admissible，$k >= m$。则在 @thm:rquad-rate 的谱稳定事件 $cal(E)_("R",delta)$ 上，对投影构造样本的每个实现有
+  $
+    C_(Pi,K) lt.tilde K^(1\/2),
+  $
+  <eq:envelope-rate>
+  隐含常数仅依赖于 $delta$、$m$、$d$、$Omega$、$C_"inv"$ 与原始特征至 $m$ 阶导数的一致 $L^oo$ 上界，与 $N$、$K$、$Q_"R"$、$B$ 及 $lambda$ 无关。
+]<lem:envelope-rate>
+
+#proof[
+  $cal(B)_(N,K)$ 中未经 Ritz 投影的特征是原始特征与常数之差：板弯曲的弯矩特征就是原始特征，线弹性的应力特征被减去的常数不超过原始应力特征的一致 $L^oo$ 上界。原始特征逐分量属于 $W^(k,oo)(Omega)$ 且参数域有界，故这些特征至 $m$ 阶导数的 $L^oo$ 范数关于 $j$ 与 $N$ 一致有界。
+
+  对 Ritz 投影特征 $g := tilde(Pi)_(D,K,Q_"R")^(m) xi$，其中 $xi$ 为原始位移或挠度标量特征，记 $g$ 在 $H^m$ 正交归一基 ${phi_k}_(k=1)^K$ 下的系数向量为 $bold(a)$，并记求积半范数 $norm(v)_(H^m,Q_"R") := (v,v)_(H^m,Q_"R")^(1\/2)$。求积投影方程以 $g$ 为检验函数给出 $(g,g)_(H^m,Q_"R") = (xi,g)_(H^m,Q_"R")$。在 $cal(E)_("R",delta)$ 上 $norm(bold(G)_(K,Q_"R")-bold(I)_K)_2 <= delta$，故 $bold(G)_(K,Q_"R")$ 的特征值落在 $[1-delta,1+delta]$ 内，从而
+  $
+    norm(g)_(H^m (Omega))^2
+    = norm(bold(a))_(ell^2)^2
+    <= (bold(a)^T bold(G)_(K,Q_"R") bold(a))/(1-delta)
+    = ((xi,g)_(H^m,Q_"R"))/(1-delta)
+    <= sqrt(1+delta)/(1-delta)
+    norm(xi)_(H^m,Q_"R") norm(g)_(H^m (Omega)),
+  $
+  最后一步对半正定双线性形式 $(dot,dot)_(H^m,Q_"R")$ 用 Cauchy--Schwarz 不等式，并用 $norm(g)_(H^m,Q_"R")^2 = bold(a)^T bold(G)_(K,Q_"R") bold(a) <= (1+delta) norm(bold(a))_(ell^2)^2$。求积半范数由导数点值控制，
+  $
+    norm(xi)_(H^m,Q_"R")^2
+    = abs(Omega)/Q_"R" sum_(r=1)^(Q_"R")
+    norm(cal(L)_m (bold(x)_("R",r)) xi)_(ell^2)^2
+    <= n_(bold(alpha)) abs(Omega)
+    max_(abs(bold(alpha)) <= m) norm(partial^bold(alpha) xi)_(L^oo (Omega))^2,
+  $
+  右端关于 $j$、$N$ 与样本实现一致有界，故 $norm(g)_(H^m (Omega))$ 一致有界。再由逆估计 @eq:aux-inverse，
+  $
+    max_(abs(bold(alpha)) <= m) norm(partial^bold(alpha) g)_(L^oo (Omega))
+    <= C_"inv" K^(1\/2) norm(g)_(H^m (Omega))
+    lt.tilde K^(1\/2).
+  $
+  两族特征的界合并即得结论。证毕。
+]
+
+#corollary(title: [训练泛函一致偏差关于协调空间维数的估计])[
+  在 @thm:train-generalization 的假设下，设容许协调空间族满足 @def:aux-admissible，则在 $cal(E)_("R",delta)$ 上，线弹性满足
   $
     EE_"train" sup_(bold(c) in cal(C)_(N,B))
     abs(cal(J)^circle.stroked.tiny (bold(c))-cal(J)_Q^circle.stroked.tiny (bold(c)))
@@ -1600,35 +1919,35 @@ $
     abs(cal(J)^circle.stroked.tiny (bold(c))-cal(J)_Q^circle.stroked.tiny (bold(c)))
     lt.tilde (B^2 K+norm(f)_(L^oo (Omega)) B sqrt(K)) Q^(-1\/2).
   $
-  隐含常数还依赖于 @eq:envelope-rate 的常数，对该事件内的投影样本实现一致。
+  隐含常数还依赖于 @lem:envelope-rate 的常数，对该事件内的投影样本实现一致。
 ]<cor:train-generalization-k>
 
 #proof[
-  将 @eq:envelope-rate 代入 @thm:train-generalization 即得结论。证毕。
+  将 @lem:envelope-rate 代入 @thm:train-generalization 即得结论。证毕。
 ]
 
-上述 $Q^(-1\/2)$ 刻画训练泛函的 Monte Carlo 一致偏差，$K$ 的出现来自投影特征的导数上界。由于该上界在谱稳定事件上对投影样本一致，可在总误差分析中进一步对投影样本取期望。下一节将训练偏差代入离散目标的极小性比较，再结合残差稳定性与投影误差估计；在图范数均方根误差中，训练积分项相应为 $Q^(-1\/4)$。
+上述 $Q^(-1\/2)$ 刻画训练泛函的 Monte Carlo 一致偏差，$K$ 的出现来自投影特征的导数上界。由于该上界在谱稳定事件上对投影样本一致，可在总误差分析中进一步对投影样本取期望。下一节将训练偏差代入离散目标的极小性比较，再结合残差稳定性与投影误差估计。在图范数均方根误差中，训练积分项相应为 $Q^(-1\/4)$。
 
 == 总误差估计
 
-令 $bold(z)_star$ 表示连续精确解，并记计算解为 $bold(z)_(N,Q,K) := tilde(bold(z))_(N,K)(bold(c)^"out")$，其中 $bold(c)^"out"$ 为求解所得的系数向量。下标 $N$、$Q$ 与 $K$ 分别表示字典特征数、训练点数与协调 Ritz 辅助空间维数。计算解对训练样本的依赖通过 $bold(c)^"out"$ 体现，对系数预算及投影求积规则的依赖从略。以 $epsilon_("LE","opt")$ 与 $epsilon_("KL","opt")$ 分别表示两类模型在离散目标值意义下的代数求解次优性，不区分模型时记为 $epsilon_"opt"$。
+令 $bold(z)_star$ 表示连续精确解，并记计算解为 $bold(z)_(N,Q,K) := tilde(bold(z))_(N,K)(bold(c)^"out")$，其中 $bold(c)^"out"$ 为求解所得的系数向量。下标 $N$、$Q$ 与 $K$ 分别表示字典特征数、训练点数与 Ritz 协调空间维数。计算解对训练样本的依赖通过 $bold(c)^"out"$ 体现，对系数预算及投影求积规则的依赖从略。以 $epsilon_("LE","opt")$ 与 $epsilon_("KL","opt")$ 分别表示两类模型在离散目标值意义下的代数求解次优性，不区分模型时记为 $epsilon_"opt"$。
 
-本节设载荷逐分量属于 $L^oo (Omega)$，协调辅助空间满足 @eq:aux-approx-rate 及
+本节设载荷逐分量属于 $L^oo (Omega)$，容许协调空间族满足 @def:aux-admissible。由 @eq:leverage-bound 与 @lem:envelope-rate，
 $
   C_("R",K)^(m) lt.tilde K,
-  quad C_(Pi,K) lt.tilde K^(1\/2).
+  quad C_(Pi,K) lt.tilde K^(1\/2),
 $
 <eq:total-space-bounds>
-第二个界在谱稳定事件 $cal(E)_("R",delta)$ 上对投影构造样本的实现一致成立。上述逼近与逆估计的常数不依赖于离散规模、$B$ 与 $lambda$。
+其中第二个界在谱稳定事件 $cal(E)_("R",delta)$ 上对投影构造样本的实现一致成立。两个界的常数不依赖于离散规模、$B$ 与 $lambda$。
 
 在线弹性情形下，令 $bold(z)_star=(bold(sigma)_star,bold(u)_star)$，并采用 @sec:train-functional 定义的应力--位移离散场，可得如下总误差估计。
 
 #theorem(title: [线弹性线性化网络完全离散最小二乘误差])[
-  假设 @thm:elasticity-stability 成立，激活幂次 $k >= 2$，应力与位移的参数带点集 $Theta_(bold(sigma),N)^"band"$ 与 $Theta_(bold(u),N)^"band"$ 均满足 @def:quasi-uniform。设 $bold(sigma)_star$ 与 $bold(u)_star$ 的各分量分别属于 $H^(s_(bold(sigma)))(Omega)$ 与 $H^(s_(bold(u)))(Omega)$，$s_chi in [1, s_"cap" (d)]$，且预算 $B$ 满足 @eq:budget。固定 $0<delta,eta<1$，令 $Q_"R" >= C K log(2K/eta)$，其中 $C$ 足够大。期望对训练样本、平均迹样本与 Ritz 投影构造样本取，其中 Ritz 投影构造样本条件于 $cal(E)_("R",delta)$，则
+  假设 @thm:elasticity-stability 成立，激活幂次 $k >= 2$，应力与位移的参数带点集 $Theta_(bold(sigma),N)^"band"$ 与 $Theta_(bold(u),N)^"band"$ 均满足 @def:quasi-uniform，位移协调空间族 ${V_K^(1)}_K$ 满足 @def:aux-admissible。设 $bold(sigma)_star$ 与 $bold(u)_star$ 的各分量分别属于 $H^(s_(bold(sigma)))(Omega)$ 与 $H^(s_(bold(u)))(Omega)$，$s_chi in [1, s_"cap" (d)]$，且预算 $B$ 满足 @eq:budget。固定 $0<delta,eta<1$，令 $Q_"R" >= C K log(2K/eta)$，其中 $C$ 足够大。期望对训练样本、平均迹样本与 Ritz 投影构造样本取，其中 Ritz 投影构造样本条件于 $cal(E)_("R",delta)$，则
   $
     (EE norm(bold(z)_star - bold(z)_(N,Q,K))_(bold(X)_"LE")^2)^(1\/2)
     lt.tilde & N^(-beta_"LE") \
-             & + K^(-(min(s_(bold(u)),r_1)-1)\/d) \
+             & + K^(-(min(s_(bold(u)), r_1)-1)\/d) \
              & + B sqrt(K/Q_"R") \
              & + B Q_"tr"^(-1\/2) \
              & + (B^2 K
@@ -1789,7 +2108,7 @@ $
     cal(J)_"LE" (tilde(bold(z))_(N,K)(bold(c)^"out"); bold(f))
     & <= cal(J)_"LE" (tilde(bold(z))_(N,K)(bold(c)^"cmp"); bold(f)) \
     & quad + cal(J)_("LE",Q) (tilde(bold(z))_(N,K)(bold(c)^"out"))
-      - cal(J)_("LE",Q) (tilde(bold(z))_(N,K)(bold(c)^"cmp")) + 2 delta_("LE",Q) \
+    - cal(J)_("LE",Q) (tilde(bold(z))_(N,K)(bold(c)^"cmp")) + 2 delta_("LE",Q) \
     & <= cal(J)_"LE" (tilde(bold(z))_(N,K)(bold(c)^"cmp"); bold(f)) + 2 delta_("LE",Q) + epsilon_("LE","opt").
   $
   <eq:empirical-chain>
@@ -1797,15 +2116,15 @@ $
   第六步：综合。先控制 @eq:empirical-chain 右端的连续泛函。由 @eq:residual-shift、半范数的三角不等式、@eq:proj-gap-residual、@eq:residual-continuity 与 @eq:comparison-bound，
   $
     cal(J)_"LE" (tilde(bold(z))_(N,K)(bold(c)^"cmp"); bold(f)) & = abs(tilde(bold(z))_(N,K)(bold(c)^"cmp") - bold(z)_star)_(cal(J))^2 \
-                                                         & <= (
-                                                             abs(bold(z)_(N,K)(bold(c)^"cmp") - bold(z)_star)_(cal(J))
-                                                             + abs(tilde(bold(z))_(N,K)(bold(c)^"cmp") - bold(z)_(N,K)(bold(c)^"cmp"))_(cal(J))
-                                                           )^2 \
-                                                         & lt.tilde norm(bold(z)_(N,K)(bold(c)^"cmp") - bold(z)_star)_(bold(X))^2
-                                                           + epsilon_("LE","projquad")^2 \
-                                                         & lt.tilde N^(-2 beta_"LE")
-                                                           + epsilon_("LE","Rtrunc") (K)^2
-                                                           + epsilon_("LE","projquad")^2.
+    & <= (
+      abs(bold(z)_(N,K)(bold(c)^"cmp") - bold(z)_star)_(cal(J))
+      + abs(tilde(bold(z))_(N,K)(bold(c)^"cmp") - bold(z)_(N,K)(bold(c)^"cmp"))_(cal(J))
+    )^2 \
+    & lt.tilde norm(bold(z)_(N,K)(bold(c)^"cmp") - bold(z)_star)_(bold(X))^2
+    + epsilon_("LE","projquad")^2 \
+    & lt.tilde N^(-2 beta_"LE")
+    + epsilon_("LE","Rtrunc") (K)^2
+    + epsilon_("LE","projquad")^2.
   $
   再从左端恢复图范数误差。$bold(z)_(N,K)(bold(c)^"out")$ 与 $bold(z)_star$ 都属于 $bold(X)_"LE"$，故 @eq:residual-coercivity 可用于其差。再由三角不等式、@eq:proj-gap-residual 与 @eq:residual-shift，
   $
@@ -1838,27 +2157,27 @@ $
   隐含常数依赖于区域、材料参数 $mu$、字典参数、固定的谱稳定参数与精确解各分量的 Sobolev 范数，不依赖于 $N$、$Q$、$K$、$B$ 与 $lambda$。由最佳逼近性与 @eq:aux-approx-rate，
   $
     epsilon_("LE","Rtrunc")(K)=cal(E)_(1,K)(bold(u)_star)
-    lt.tilde K^(-(min(s_(bold(u)),r_1)-1)\/d)
+    lt.tilde K^(-(min(s_(bold(u)), r_1)-1)\/d)
     norm(bold(u)_star)_(H^(s_(bold(u)))(Omega)).
   $
   最后依次对平均迹样本与条件于 $cal(E)_("R",delta)$ 的 Ritz 投影构造样本取期望。由条件期望的塔式性质恢复总误差的期望，投影积分项分别由 @thm:trquad-rate 与 @thm:rquad-rate 控制：
   $
-    EE epsilon_("LE","trquad")^2 lt.tilde B^2 Q_"tr"^(-1),
+    EE_"tr" epsilon_("LE","trquad")^2 lt.tilde B^2 Q_"tr"^(-1),
     quad
     EE_"R" [epsilon_("LE","Rquad")^2 | cal(E)_("R",delta)]
     lt.tilde B^2 C_("R",K)^(1) Q_"R"^(-1).
   $
-  代回条件估计，对训练偏差项使用 @cor:train-generalization-k 的一致界，并应用 @eq:total-space-bounds 与辅助空间逼近率，最后开方即得结论；常数还依赖于辅助空间的逼近与逆估计常数。证毕。
+  代回条件估计，对训练偏差项使用 @cor:train-generalization-k 的一致界，并应用 @eq:total-space-bounds 与协调空间逼近率，最后开方即得结论。常数还依赖于协调空间的逼近与逆估计常数。证毕。
 ]
 
 对于板弯曲问题，令 $bold(z)_star=(bold(M)_star,w_star)$，并采用 @sec:train-functional 定义的弯矩--挠度离散场。由于弯矩空间不要求平均迹规范，且采用数值积分得到的 Ritz 挠度属于 $H_0^2(Omega)$，计算解属于 $bold(X)_"KL"$，因而其误差可直接由 @thm:plate-stability 控制。
 
 #theorem(title: [板弯曲线性化网络完全离散最小二乘误差])[
-  假设 @thm:plate-stability 成立，激活幂次 $k >= 3$，弯矩与挠度的参数带点集 $Theta_(bold(M),N)^"band"$ 与 $Theta_(w,N)^"band"$ 均满足 @def:quasi-uniform。设 $bold(M)_star$ 与 $w_star$ 的各分量分别属于 $H^(s_(bold(M)))(Omega)$ 与 $H^(s_w)(Omega)$，$s_chi in [2, s_"cap" (2)]$，且预算 $B$ 满足 @eq:budget。固定 $0<delta,eta<1$，令 $Q_"R" >= C K log(2K/eta)$，其中 $C$ 足够大。期望对训练样本与条件于 $cal(E)_("R",delta)$ 的 Ritz 投影构造样本取，则
+  假设 @thm:plate-stability 成立，激活幂次 $k >= 3$，弯矩与挠度的参数带点集 $Theta_(bold(M),N)^"band"$ 与 $Theta_(w,N)^"band"$ 均满足 @def:quasi-uniform，挠度协调空间族 ${V_K^(2)}_K$ 满足 @def:aux-admissible。设 $bold(M)_star$ 与 $w_star$ 的各分量分别属于 $H^(s_(bold(M)))(Omega)$ 与 $H^(s_w)(Omega)$，$s_chi in [2, s_"cap" (2)]$，且预算 $B$ 满足 @eq:budget。固定 $0<delta,eta<1$，令 $Q_"R" >= C K log(2K/eta)$，其中 $C$ 足够大。期望对训练样本与条件于 $cal(E)_("R",delta)$ 的 Ritz 投影构造样本取，则
   $
     (EE norm(bold(z)_star - bold(z)_(N,Q,K))_(bold(X)_"KL")^2)^(1\/2)
     lt.tilde & N^(-beta_"KL") \
-             & + K^(-(min(s_w,r_2)-2)\/2) \
+             & + K^(-(min(s_w, r_2)-2)\/2) \
              & + B sqrt(K/Q_"R") \
              & + (B^2 K
                  + norm(f)_(L^oo (Omega)) B sqrt(K))^(1\/2) Q^(-1\/4) \
@@ -1871,7 +2190,7 @@ $
 
   由 @sec:train-functional 的定义，采用精确积分的 Ritz 投影场与数值积分后的投影场分别为
   $
-    bold(z)_(N,K)(bold(c)) & = (hat(bold(M))_N (bold(c)), Pi_(D,K)^(2) hat(w)_N (bold(c))), \
+           bold(z)_(N,K)(bold(c)) & = (hat(bold(M))_N (bold(c)), Pi_(D,K)^(2) hat(w)_N (bold(c))), \
     tilde(bold(z))_(N,K)(bold(c)) & = (hat(bold(M))_N (bold(c)), tilde(Pi)_(D,K,Q_"R")^(2) hat(w)_N (bold(c))).
   $
   原始弯矩属于 $bold(Sigma)_"KL"$，两种投影场的挠度分量均属于 $V_K^(2) subset H_0^2(Omega)$，因而二者均属于 $bold(X)_"KL"$。结合弯矩分量的一致性与 $epsilon_("KL","Rquad")$ 的定义，有
@@ -1921,10 +2240,9 @@ $
   $
   精确解的残差为零，且计算解与比较系数的数值积分投影场均属于 $bold(X)_"KL"$。分别对二者与精确解之差应用 @thm:plate-stability 的下界与上界，结合上述投影场误差估计，得到
   $
-    norm(bold(z)_star-bold(z)_(N,Q,K))_(bold(X)_"KL")^2
-    & lt.tilde cal(J)_"KL" (bold(z)_(N,Q,K);f) \
-    & lt.tilde N^(-2 beta_"KL")+epsilon_("KL","Rtrunc")(K)^2
-      +epsilon_("KL","Rquad")^2+delta_("KL",Q)+epsilon_("KL","opt").
+    norm(bold(z)_star-bold(z)_(N,Q,K))_(bold(X)_"KL")^2 & lt.tilde cal(J)_"KL" (bold(z)_(N,Q,K);f) \
+                                                        & lt.tilde N^(-2 beta_"KL")+epsilon_("KL","Rtrunc")(K)^2
+                                                          +epsilon_("KL","Rquad")^2+delta_("KL",Q)+epsilon_("KL","opt").
   $
   对训练样本取条件期望并应用 @thm:train-generalization（$m=2$），得到
   $
@@ -1941,9 +2259,9 @@ $
   将该估计代入前述条件误差界，由 @eq:aux-approx-rate，
   $
     epsilon_("KL","Rtrunc")(K)=cal(E)_(2,K)(w_star)
-    lt.tilde K^(-(min(s_w,r_2)-2)\/2) norm(w_star)_(H^(s_w)(Omega)).
+    lt.tilde K^(-(min(s_w, r_2)-2)\/2) norm(w_star)_(H^(s_w)(Omega)).
   $
-  对训练偏差项使用 @cor:train-generalization-k 的一致界，再应用 @eq:total-space-bounds 并开方，即得结论。稳定性常数仅依赖于 $Omega$、$mu$ 与 $h$，其余常数还依赖于字典参数、固定的谱稳定参数、辅助空间的逼近与逆估计常数及精确解的 Sobolev 范数。在这些量得到一致控制时，误差界中的常数可关于 $lambda$ 一致选取。证毕。
+  对训练偏差项使用 @cor:train-generalization-k 的一致界，再应用 @eq:total-space-bounds 并开方，即得结论。稳定性常数仅依赖于 $Omega$、$mu$ 与 $h$，其余常数还依赖于字典参数、固定的谱稳定参数、协调空间的逼近与逆估计常数及精确解的 Sobolev 范数。在这些量得到一致控制时，误差界中的常数可关于 $lambda$ 一致选取。证毕。
 ]
 
 由 @prop:layered-quasi-uniform，采用前述分层参数点集时，@thm:total-error-le 与 @thm:total-error-kl 关于参数带点集的假设自动成立。
@@ -1958,7 +2276,7 @@ $
 
 === 实验配置与误差指标
 
-四个模型共用 @tbl:ls-design 的配置。材料参数、激活幂次、字典规模、辅助空间的次数与维数、两组求积的规模与系数预算取值序列逐模型取定。两类实验的配置表分开给出：关于 $N$ 的收敛实验列于各节开头，关于幂次 $k$ 的收敛实验另立一表。凡逐模型配置表中重复出现的配置项，均以该表为准。
+四个模型共用 @tbl:ls-design 的配置。材料参数、激活幂次、字典规模、协调空间的次数与维数、两组求积的规模与系数预算取值序列逐模型取定。两类实验的配置表分开给出：关于 $N$ 的收敛实验列于各节开头，关于幂次 $k$ 的收敛实验另立一表。凡逐模型配置表中重复出现的配置项，均以该表为准。
 
 图表报告独立测试规则上各分量图范数误差的十次均值 $bar(e)=1\/10 sum_(j=1)^10 e_j$，误差棒为样本标准差。由 $EE e <= (EE e^2)^(1\/2)$，两条定理也给出相应的条件平均误差界。
 
@@ -2101,7 +2419,7 @@ $
     | 激活幂次 | $k=7$ |
     | 字典规模 | $N in {201,401,601,801,1001}$ |
     | 训练求积 | $Q=4N$ |
-    | 辅助空间 | $p=7$，$K in {441,841,1225,1681,2025}$ |
+    | 协调空间 | $p=7$，$K in {441,841,1225,1681,2025}$ |
     | Ritz 投影求积 | $Q_"R"=12808$ |
     | 系数预算 | $B in {10^2,10^3,10^4,10^5,10^6,oo}$ |
     | $k=3$ 对照实验 | 除激活幂次取 $k=3$ 外，配置同上 |
@@ -2151,7 +2469,7 @@ $k=7$ 时应力与位移实际误差的观测阶分别为 $4.33$ 与 $4.06$，�
     | 激活幂次 | $k in {3,5,7,9}$ |
     | 字典规模 | $N=501$ |
     | 训练求积 | $Q=16N=8016$ |
-    | 辅助空间 | $p=10$，$K=1024$ |
+    | 协调空间 | $p=10$，$K=1024$ |
     | Ritz 投影求积 | $Q_"R"=12808$ |
     | 系数预算 | $B in {10^3,3 times 10^3,10^4,3 times 10^4,oo}$ |
   ],
@@ -2198,7 +2516,7 @@ $k=7$ 时应力与位移实际误差的观测阶分别为 $4.33$ 与 $4.06$，�
     | 激活幂次 | $k=7$ |
     | 字典规模 | $N in {201,401,601,801,1001}$ |
     | 训练求积 | $Q=4N$ |
-    | 辅助空间 | $p=7$，$K in {441,841,1225,1681,2025}$ |
+    | 协调空间 | $p=7$，$K in {441,841,1225,1681,2025}$ |
     | Ritz 投影求积 | $Q_"R"=12808$ |
     | 系数预算 | $B in {10^2,10^3,10^4,10^5,10^6,oo}$ |
   ],
@@ -2243,7 +2561,7 @@ $
   =16(1-2x_1)g_2g_3+32g_1(1-2x_2)g_3+64g_1g_2(1-2x_3)
   !=0.
 $
-取 $bold(sigma)_star=2mu bold(epsilon)(bold(u)_star)+lambda div(bold(u)_star)bold(I)$，再由平衡方程制造体力 $bold(f)=-div bold(sigma)_star$。三维实验的配置见 @tbl:ls-config-order-elasticity-3d。与前述二维模型一致，本实验以 $N$ 为唯一自变量，训练点数 $Q$ 与 Ritz 辅助空间维数 $K$ 按固定比例随 $N$ 配套变化。
+取 $bold(sigma)_star=2mu bold(epsilon)(bold(u)_star)+lambda div(bold(u)_star)bold(I)$，再由平衡方程制造体力 $bold(f)=-div bold(sigma)_star$。三维实验的配置见 @tbl:ls-config-order-elasticity-3d。与前述二维模型一致，本实验以 $N$ 为唯一自变量，训练点数 $Q$ 与 Ritz 协调空间维数 $K$ 按固定比例随 $N$ 配套变化。
 
 #figure(
   three-line-table(
@@ -2259,7 +2577,7 @@ $
     | 激活幂次 | $k=7$ |
     | 字典规模 | $N in {201,401,601,801,1001}$ |
     | 训练求积 | $Q=16N$ 个均匀 Monte Carlo 点 |
-    | 辅助空间 | $p=7$，目标维数 $2N$，实际 $K in {512,1000,1331,1728,2197}$ |
+    | 协调空间 | $p=7$，目标维数 $2N$，实际 $K in {512,1000,1331,1728,2197}$ |
     | Ritz 投影求积 | 固定 $Q_"R"=16384$ 个独立均匀 Monte Carlo 点 |
     | 验证与测试规则 | 分别固定为 $4096$ 与 $32768$ 个点 |
     | 系数预算 | 固定 $B=oo$ |
@@ -2340,7 +2658,7 @@ $
     | 泊松比 | $nu in {5\/11,500\/1001,50000\/100001}$ |
     | 字典规模 | $N in {201,401,601,801,1001}$ |
     | 激活幂次 | $k=7$ |
-    | 辅助空间 | 次数 $p=9$，目标维数 $2N$，实际 $K in {441,841,1225,1681,2025}$ |
+    | 协调空间 | 次数 $p=9$，目标维数 $2N$，实际 $K in {441,841,1225,1681,2025}$ |
     | 训练求积 | $Q=8N$ 个均匀 Monte Carlo 点 |
     | Ritz 投影求积 | $Q_"R"=12808$ 个独立均匀 Monte Carlo 点 |
     | 验证规则 | 张量积 Gauss--Legendre，$64^2=4096$ 点 |
@@ -2413,7 +2731,7 @@ $
     | 激活幂次 | $k=7$ |
     | 字典规模 | $N in {201,401,601,801,1001}$ |
     | 训练求积 | $Q=4N$ |
-    | 辅助空间 | $p=7$，$K in {441,841,1225,1681,2025}$ |
+    | 协调空间 | $p=7$，$K in {441,841,1225,1681,2025}$ |
     | Ritz 投影求积 | $Q_"R"=max(2048, 4K)$ |
     | 系数预算 | $B in {10^2,10^3,10^4,10^5,10^6,oo}$ |
     | $k=3$ 对照实验 | 除激活幂次取 $k=3$ 外，配置同上 |
@@ -2463,7 +2781,7 @@ $k=7$ 时弯矩与挠度实际误差的观测阶分别为 $3.88$ 与 $3.87$，�
     | 激活幂次 | $k in {3,5,7,9}$ |
     | 字典规模 | $N=1001$ |
     | 训练求积 | $Q=8N=8008$ |
-    | 辅助空间 | $p=10$，$K=2025$ |
+    | 协调空间 | $p=10$，$K=2025$ |
     | Ritz 投影求积 | $Q_"R"=12808$ |
     | 系数预算 | $B in {10^2,10^3,10^4,10^5,10^6,oo}$ |
   ],
@@ -2496,7 +2814,7 @@ $k=7$ 时弯矩与挠度实际误差的观测阶分别为 $3.88$ 与 $3.87$，�
 
 本文的主要结果是线弹性与板弯曲的两条残差稳定性定理：混合最小二乘泛函与相应图范数平方双边等价，且等价常数关于 Lamé 常数 $lambda$ 一致，在近不可压缩极限下不退化。在此基础上，本文以准均匀单隐层字典的 Sobolev 逼近率与系数控制（@thm:band-dictionary-rate）为输入，给出两类方程的线性化网络误差分析。误差界对参数带中任意准均匀点集成立，本文的分层构造是其一个实例。字典逼近项是确定性的 $N^(-beta)$，没有独立抽样带来的对数修正，而有限维计算必须显式计入 Ritz 截断与投影积分误差。
 
-误差界同时展示了各离散参数的不同作用：$N$ 控制单隐层逼近，$K$ 控制投影空间，$Q_"R"$ 与 $Q_"tr"$ 控制投影构造中的积分误差，$Q$ 控制训练泛函的 Monte Carlo 一致偏差，而 $B$ 连接逼近表示与泛化控制。特别地，固定其余离散参数时，中心化训练泛函一致偏差的条件期望上界按 $Q^(-1\/2)$ 衰减；由离散极小化比较与残差稳定性得到的图范数均方根误差界中，相应的训练积分项按 $Q^(-1\/4)$ 衰减。
+误差界同时展示了各离散参数的不同作用：$N$ 控制单隐层逼近，$K$ 控制投影空间，$Q_"R"$ 与 $Q_"tr"$ 控制投影构造中的积分误差，$Q$ 控制训练泛函的 Monte Carlo 一致偏差，而 $B$ 连接逼近表示与泛化控制。特别地，固定其余离散参数时，中心化训练泛函一致偏差的条件期望上界按 $Q^(-1\/2)$ 衰减。由离散极小化比较与残差稳定性得到的图范数均方根误差界中，相应的训练积分项按 $Q^(-1\/4)$ 衰减。
 
 激活幂次 $k$ 通过饱和指数 $s_"cap" (d) = (d+2k+1)\/2$ 改变字典逼近项的理论指数。完整算法关于幂次 $k$ 的收敛实验表明，在离散资源与最高幂次相匹配后，二维线弹性与板弯曲在 $k=3,5,7,9$ 上都保持实际误差下降。两类模型的 $k=7$ 实际观测阶也均高于 $k=3$。
 
@@ -2620,22 +2938,7 @@ $k=7$ 时弯矩与挠度实际误差的观测阶分别为 $3.88$ 与 $3.87$，�
   因此 $(bold(M), w)$ 是 $cal(J)_"KL"$ 的全局极小点。证毕。
 ]
 
-= 单位盒上的辅助空间与平均迹实现 <app:box>
-
-计算区域统一取 $Omega=(0,1)^d$。辅助空间采用准均匀开放节点向量上的张量积 B 样条，固定次数 $p>=m$，内部节点取单重，从而空间含于 $H^m(Omega)$。对 $m=1$ 删除边界迹非零的基函数。对 $m=2$ 再删除边界法向导数非零的基函数。开放节点向量每端只有第一个 B 样条取非零端点值，只有前两个可能有非零端点导数（参见 @Schumaker2007），故删除后的空间满足 $V_K^(m) subset H_0^m(Omega)$。
-
-准均匀节点向量上的样条空间对 $H^s (Omega)$ 中的函数具有 $p+1$ 阶逼近（参见 @Schumaker2007）。删除边界基函数所得的约减空间对 $v in H^s (Omega) inter H_0^m (Omega)$ 保持这一阶。故该空间在 @eq:aux-approx-rate 中取 $r_m=p+1$，且 $h_K tilde.eq K^(-1\/d)$，于是
-$
-  cal(E)_(m,K)(v)
-  lt.tilde K^(-(min(s,p+1)-m)\/d) norm(v)_(H^s (Omega)).
-$
-<eq:ritz-rate>
-取 $K tilde.eq N$ 时，@eq:degree-match-abstract 的充分次数条件化为
-$
-  p+1 >= s_"cap" (d)=(d+2k+1)/2.
-$
-<eq:degree-match>
-对 $d in {2,3}$，$k=3$ 时取 $p>=4$ 即可，$k=7$ 时需 $p>=8$。二维线弹性与板弯曲的幂次实验使用 $p=10$，可覆盖到 $k=9$。
+= 单位盒上的平均迹实现 <app:box>
 
 线弹性的平均迹投影采用原始应力特征的精确盒上均值。板弯曲不需要这一步。以下公式说明线弹性实验中的平均迹求积误差为何为零。
 
